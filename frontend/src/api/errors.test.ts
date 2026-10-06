@@ -21,9 +21,23 @@ describe('messages d’erreur', () => {
     expect(errorMessage(new TypeError('boom'))).toBe(errorMessage(new ApiError({ status: 500, code: 'INTERNAL_ERROR', message: '' })));
   });
 
-  it('fieldErrors indexe VALIDATION_ERROR par chemin', () => {
-    const e = new ApiError({ status: 400, code: 'VALIDATION_ERROR', message: '', details: { fields: [{ path: 'email', message: 'Format invalide' }] } });
-    expect(fieldErrors(e)).toEqual({ email: 'Format invalide' });
+  it('F6-B3 : fieldErrors indexe par chemin avec des libellés FR connus, jamais le texte du serveur', () => {
+    const fields = [
+      { path: 'email', message: '"email" must be a valid email <img src=x>' },
+      { path: 'bank.iban', message: 'raw' },
+      { path: 'items.0.quantity', message: 'raw' },
+      { path: 'overrides.maxPerUser', message: 'raw' },
+      { path: 'champInconnu', message: 'texte serveur arbitraire' },
+      { path: '__proto__', message: 'raw' },
+    ];
+    const e = new ApiError({ status: 400, code: 'VALIDATION_ERROR', message: '', details: { fields } });
+    const out = fieldErrors(e);
+    expect(out.email).toBe('Adresse email invalide.');
+    expect(out['bank.iban']).toBe('IBAN invalide.');
+    expect(out['items.0.quantity']).toBe('Quantité invalide.');
+    expect(out['overrides.maxPerUser']).toMatch(/maximum de places par commande/);
+    expect(out.champInconnu).toBe('Valeur invalide : vérifiez ce champ.');
+    for (const m of Object.values(out)) expect(m).not.toMatch(/raw|must be|<img|serveur arbitraire/);
     expect(fieldErrors(new Error('x'))).toEqual({});
   });
 

@@ -89,12 +89,58 @@ export function errorMessage(error: unknown): string {
   return base;
 }
 
-/** Erreurs de champ (VALIDATION_ERROR), indexées par chemin. Messages serveur affichés en texte. */
+const INVALID_DATE = 'Date invalide ou incohérente avec les autres dates de l’événement.';
+const INVALID_EMAIL = 'Adresse email invalide.';
+const INVALID_PRICE = 'Prix invalide (montant positif, en euros).';
+/**
+ * Libellés français des erreurs de champ, par chemin complet puis par dernier segment
+ * (`items.0.quantity` ⇒ `quantity`). Le message brut du serveur n'est jamais affiché.
+ */
+const FIELD_MESSAGES: Partial<Record<string, string>> = {
+  email: INVALID_EMAIL,
+  contactEmail: INVALID_EMAIL,
+  ownerEmail: INVALID_EMAIL,
+  password: 'Mot de passe refusé : 12 à 128 caractères, et pas un mot de passe courant.',
+  newPassword: 'Nouveau mot de passe refusé : 12 à 128 caractères, pas un mot de passe courant, différent de l’actuel.',
+  currentPassword: 'Mot de passe actuel requis.',
+  displayName: 'Nom requis (texte court).',
+  token: 'Lien invalide ou expiré.',
+  title: 'Titre requis (texte court).',
+  description: 'Description trop longue ou invalide.',
+  venue: 'Lieu invalide.',
+  address: 'Adresse invalide.',
+  startsAt: INVALID_DATE,
+  endsAt: 'Fin invalide : elle doit suivre le début et être dans le futur.',
+  salesStartAt: INVALID_DATE,
+  salesEndAt: INVALID_DATE,
+  earlyUntil: INVALID_DATE,
+  timezone: 'Fuseau horaire inconnu.',
+  capacity: 'Capacité invalide (nombre entier positif).',
+  priceCents: INVALID_PRICE,
+  earlyPriceCents: INVALID_PRICE,
+  quantity: 'Quantité invalide.',
+  name: 'Nom requis (texte court).',
+  slug: 'Identifiant d’adresse invalide : lettres minuscules, chiffres et tirets.',
+  iban: 'IBAN invalide.',
+  bic: 'BIC invalide.',
+  beneficiary: 'Nom du bénéficiaire requis.',
+  rescheduleReason: 'Le motif du report est obligatoire.',
+  maxPerUser: 'Valeur invalide : au moins égale au maximum de places par commande.',
+};
+const GENERIC_FIELD_MESSAGE = 'Valeur invalide : vérifiez ce champ.';
+
+/** Libellé français d'une erreur de champ (jamais le texte brut renvoyé par le serveur). */
+export function fieldMessage(path: string): string {
+  const last = path.split('.').pop() ?? path;
+  return lookup(FIELD_MESSAGES, path) ?? lookup(FIELD_MESSAGES, last) ?? GENERIC_FIELD_MESSAGE;
+}
+
+/** Erreurs de champ (VALIDATION_ERROR), indexées par chemin, avec des libellés français connus. */
 export function fieldErrors(error: unknown): Record<string, string> {
   if (!isApiError(error) || error.code !== 'VALIDATION_ERROR') return {};
   const out: Record<string, string> = {};
   for (const f of error.details?.fields ?? []) {
-    if (typeof f.path === 'string' && typeof f.message === 'string' && !(f.path in out)) out[f.path] = f.message;
+    if (typeof f.path === 'string' && !(f.path in out)) out[f.path] = fieldMessage(f.path);
   }
   return out;
 }

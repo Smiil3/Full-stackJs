@@ -72,7 +72,7 @@ describe('inscription', () => {
     await user.type(screen.getByLabelText('Mot de passe'), 'motdepasse123');
     await user.type(screen.getByLabelText('Confirmer le mot de passe'), 'motdepasse123');
     await user.click(screen.getByRole('button', { name: 'Créer mon compte' }));
-    expect(await screen.findByText('Mot de passe trop courant')).toBeInTheDocument();
+    expect(await screen.findByText(/pas un mot de passe courant/)).toBeInTheDocument();
   });
 
   it('contrôles UX : email accentué, mots de passe différents', async () => {
