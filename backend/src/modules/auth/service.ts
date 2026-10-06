@@ -97,10 +97,27 @@ async function checkAccountPassword(user: { id: string; passwordHash: string }, 
   return valid;
 }
 
-async function issueEmailToken(tx: Tx, userId: string, purpose: 'VERIFY_EMAIL' | 'RESET_PASSWORD'): Promise<string> {
+/** Plafonds PAR ADRESSE des mails d'authentification (silencieux côté réponse). */
+export const MAIL_MIN_INTERVAL_MINUTES = 2;
+export const MAIL_MAX_PER_DAY = 10;
+
+/**
+ * Émet un jeton mail sous verrou de la ligne utilisateur (jamais deux liens actifs concurrents).
+ * Retourne null si le plafond par adresse est atteint (1 mail / 2 min, 10 / 24 h) : rien n'est envoyé
+ * et le jeton encore frais n'est PAS invalidé — un tiers ne peut ni bombarder la boîte de la victime,
+ * ni annuler le lien de réinitialisation qu'elle vient de recevoir.
+ */
+async function issueEmailToken(
+  tx: Tx, user: { id: string; email: string }, purpose: 'VERIFY_EMAIL' | 'RESET_PASSWORD',
+): Promise<string | null> {
+  await repo.lockUser(tx, user.id);
+  const now = Date.now();
+  const recent = await repo.countEmailTokensSince(tx, user.id, new Date(now - MAIL_MIN_INTERVAL_MINUTES * 60_000));
+  const daily = await repo.countEmailTokensSince(tx, user.id, new Date(now - 24 * 60 * 60_000));
+  if (recent > 0 || daily >= MAIL_MAX_PER_DAY) return null;
   const raw = randomToken(32);
-  await repo.invalidateEmailTokens(tx, userId, purpose);
-  await repo.createEmailToken(tx, userId, purpose, sha256Hex(raw), addMinutes(new Date(), EMAIL_TOKEN_TTL_MINUTES));
+  await repo.invalidateEmailTokens(tx, user.id, purpose);
+  await repo.createEmailToken(tx, user.id, user.email, purpose, sha256Hex(raw), addMinutes(new Date(now), EMAIL_TOKEN_TTL_MINUTES));
   return raw;
 }
 
@@ -174,22 +191,25 @@ async function registerInner(input: { email: string; password: string; displayNa
       const existing = await tx.user.findUnique({ where: { email } });
       if (existing) {
         if (existing.emailVerifiedAt) {
-          const raw = await issueEmailToken(tx, existing.id, 'RESET_PASSWORD');
-          await enqueueEmail(tx, existing.email, 'accountExists', { displayName: existing.displayName, resetLink: link('/reset-password', raw) });
+          const raw = await issueEmailToken(tx, existing, 'RESET_PASSWORD');
+          if (raw) await enqueueEmail(tx, existing.email, 'accountExists', { displayName: existing.displayName, resetLink: link('/reset-password', raw) });
         } else {
           await tx.user.update({
             where: { id: existing.id },
             data: { passwordHash, displayName, tokenVersion: { increment: 1 }, failedLoginCount: 0, lockedUntil: null, lastFailedLoginAt: null },
           });
           await repo.revokeAllForUser(tx, existing.id);
-          const raw = await issueEmailToken(tx, existing.id, 'VERIFY_EMAIL');
-          await enqueueEmail(tx, existing.email, 'verifyEmail', { displayName, link: link('/verify-email', raw) });
+          // Les liens de l'inscription précédente ne doivent plus fonctionner, même si le plafond d'envoi
+          // empêche d'en émettre un nouveau tout de suite (le renvoi reste possible après 2 min).
+          await repo.invalidateEmailTokens(tx, existing.id, 'VERIFY_EMAIL');
+          const raw = await issueEmailToken(tx, existing, 'VERIFY_EMAIL');
+          if (raw) await enqueueEmail(tx, existing.email, 'verifyEmail', { displayName, link: link('/verify-email', raw) });
         }
         return;
       }
       const user = await tx.user.create({ data: { email, passwordHash, displayName } });
-      const raw = await issueEmailToken(tx, user.id, 'VERIFY_EMAIL');
-      await enqueueEmail(tx, email, 'verifyEmail', { displayName, link: link('/verify-email', raw) });
+      const raw = await issueEmailToken(tx, user, 'VERIFY_EMAIL');
+      if (raw) await enqueueEmail(tx, email, 'verifyEmail', { displayName, link: link('/verify-email', raw) });
     });
   } catch (err) {
     // Deux inscriptions simultanées avec le même email : la seconde échoue sur l'unicité ; réponse inchangée.
@@ -223,8 +243,8 @@ async function resendVerificationInner(rawEmail: string): Promise<void> {
   await transaction(async (tx) => {
     const user = await tx.user.findUnique({ where: { email } });
     if (!user || user.emailVerifiedAt) return;
-    const raw = await issueEmailToken(tx, user.id, 'VERIFY_EMAIL');
-    await enqueueEmail(tx, user.email, 'verifyEmail', { displayName: user.displayName, link: link('/verify-email', raw) });
+    const raw = await issueEmailToken(tx, user, 'VERIFY_EMAIL');
+    if (raw) await enqueueEmail(tx, user.email, 'verifyEmail', { displayName: user.displayName, link: link('/verify-email', raw) });
   });
 }
 
@@ -321,8 +341,8 @@ async function forgotPasswordInner(rawEmail: string): Promise<void> {
   await transaction(async (tx) => {
     const user = await tx.user.findUnique({ where: { email } });
     if (!user) return;
-    const raw = await issueEmailToken(tx, user.id, 'RESET_PASSWORD');
-    await enqueueEmail(tx, user.email, 'resetPassword', { displayName: user.displayName, link: link('/reset-password', raw) });
+    const raw = await issueEmailToken(tx, user, 'RESET_PASSWORD');
+    if (raw) await enqueueEmail(tx, user.email, 'resetPassword', { displayName: user.displayName, link: link('/reset-password', raw) });
   });
 }
 

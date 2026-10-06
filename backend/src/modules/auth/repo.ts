@@ -64,8 +64,15 @@ export async function invalidateEmailTokens(tx: Tx, userId: string, purpose: Ema
   await tx.emailToken.updateMany({ where: { userId, purpose, usedAt: null }, data: { usedAt: new Date() } });
 }
 
-export async function createEmailToken(tx: Tx, userId: string, purpose: EmailTokenPurpose, tokenHash: string, expiresAt: Date): Promise<void> {
-  await tx.emailToken.create({ data: { userId, purpose, tokenHash, expiresAt } });
+export async function createEmailToken(
+  tx: Tx, userId: string, email: string, purpose: EmailTokenPurpose, tokenHash: string, expiresAt: Date,
+): Promise<void> {
+  await tx.emailToken.create({ data: { userId, email, purpose, tokenHash, expiresAt } });
+}
+
+/** Mails d'authentification déjà émis pour ce compte depuis `since` (registre = table des jetons). */
+export function countEmailTokensSince(tx: Tx, userId: string, since: Date): Promise<number> {
+  return tx.emailToken.count({ where: { userId, createdAt: { gt: since } } });
 }
 
 /**
@@ -73,11 +80,14 @@ export async function createEmailToken(tx: Tx, userId: string, purpose: EmailTok
  * Retourne l'utilisateur concerné ou null.
  */
 export async function consumeEmailToken(tx: Tx, tokenHash: string, purpose: EmailTokenPurpose): Promise<string | null> {
+  // Le jeton n'est valable que si l'adresse du compte est toujours celle à laquelle il a été envoyé.
   const rows = await tx.$queryRaw<{ userId: string }[]>`
-    UPDATE "email_tokens" SET "usedAt" = now()
-    WHERE "tokenHash" = ${tokenHash} AND "purpose" = ${purpose}::"EmailTokenPurpose"
-      AND "usedAt" IS NULL AND "expiresAt" > now()
-    RETURNING "userId"`;
+    UPDATE "email_tokens" t SET "usedAt" = now()
+    FROM "users" u
+    WHERE t."tokenHash" = ${tokenHash} AND t."purpose" = ${purpose}::"EmailTokenPurpose"
+      AND t."usedAt" IS NULL AND t."expiresAt" > now()
+      AND u."id" = t."userId" AND u."email" = t."email"
+    RETURNING t."userId"`;
   return rows[0]?.userId ?? null;
 }
 

@@ -67,6 +67,8 @@ describe('inscription et vérification d’email', () => {
   it('renvoi de vérification : 202 toujours, l’ancien lien est invalidé', async () => {
     await api().post(`${A}/register`).send({ email: 'r@test.fr', password: PASSWORD, displayName: 'R' }).expect(202);
     const first = await tokenFromMail('r@test.fr', 'verifyEmail');
+    // Au-delà du délai minimal entre deux mails (2 min).
+    await getDb().emailToken.updateMany({ data: { createdAt: new Date(Date.now() - 3 * 60_000) } });
     const a = await api().post(`${A}/resend-verification`).send({ email: 'r@test.fr' });
     const b = await api().post(`${A}/resend-verification`).send({ email: 'inconnu@test.fr' });
     expect(a.status).toBe(202);
@@ -535,5 +537,78 @@ describe('temps de réponse constant (B2.1 M5)', () => {
   it('le plancher ne peut pas être désactivé hors test', async () => {
     const { parseEnv } = await import('../../src/config/env.js');
     expect(() => parseEnv({ ...process.env, NODE_ENV: 'development', AUTH_RESPONSE_FLOOR_MS: '0' })).toThrow(/AUTH_RESPONSE_FLOOR_MS/);
+  });
+});
+
+describe('plafond d’envoi par adresse et jetons mail (B2.1 M6 / B5)', () => {
+  it('deux demandes rapprochées : un seul mail, le premier lien reste valable', async () => {
+    const u = await createUser({ email: 'bomb@test.fr' });
+    await api().post(`${A}/forgot-password`).send({ email: u.email }).expect(202);
+    const first = await tokenFromMail(u.email, 'resetPassword');
+    await api().post(`${A}/forgot-password`).send({ email: u.email }).expect(202);
+    await api().post(`${A}/forgot-password`).send({ email: u.email }).expect(202);
+    expect(await getDb().emailOutbox.count({ where: { to: u.email } })).toBe(1);
+    await api().post(`${A}/reset-password`).send({ token: first, password: 'nouveau-mot-de-passe-42' }).expect(204);
+  });
+
+  it('après 2 minutes, une nouvelle demande remplace l’ancien lien', async () => {
+    const u = await createUser({ email: 'again@test.fr' });
+    await api().post(`${A}/forgot-password`).send({ email: u.email }).expect(202);
+    const first = await tokenFromMail(u.email, 'resetPassword');
+    await getDb().emailToken.updateMany({ data: { createdAt: new Date(Date.now() - 3 * 60_000) } });
+    await api().post(`${A}/forgot-password`).send({ email: u.email }).expect(202);
+    expect(await getDb().emailOutbox.count({ where: { to: u.email } })).toBe(2);
+    await api().post(`${A}/reset-password`).send({ token: first, password: 'nouveau-mot-de-passe-42' }).expect(400);
+  });
+
+  it('au plus 10 mails d’authentification par 24 h et par compte', async () => {
+    const u = await createUser({ email: 'daily@test.fr' });
+    const old = new Date(Date.now() - 60 * 60_000);
+    await getDb().emailToken.createMany({
+      data: Array.from({ length: 10 }, (_, i) => ({
+        userId: u.id, email: u.email, purpose: 'RESET_PASSWORD' as const, tokenHash: String(i).padStart(64, '0'),
+        expiresAt: old, usedAt: old, createdAt: old,
+      })),
+    });
+    await api().post(`${A}/forgot-password`).send({ email: u.email }).expect(202);
+    expect(await getDb().emailOutbox.count({ where: { to: u.email } })).toBe(0);
+  });
+
+  it('demandes concurrentes : un seul lien actif émis', async () => {
+    const u = await createUser({ email: 'concurrent@test.fr' });
+    await Promise.all(Array.from({ length: 5 }, () => api().post(`${A}/forgot-password`).send({ email: u.email })));
+    expect(await getDb().emailToken.count({ where: { userId: u.id, usedAt: null } })).toBe(1);
+    expect(await getDb().emailOutbox.count({ where: { to: u.email } })).toBe(1);
+  });
+
+  it('jeton lié à l’adresse : inutilisable si l’email du compte a changé', async () => {
+    const u = await createUser({ email: 'bound@test.fr' });
+    await api().post(`${A}/forgot-password`).send({ email: u.email }).expect(202);
+    const token = await tokenFromMail(u.email, 'resetPassword');
+    await getDb().user.update({ where: { id: u.id }, data: { email: 'autre-adresse@test.fr' } });
+    await api().post(`${A}/reset-password`).send({ token, password: 'nouveau-mot-de-passe-42' }).expect(400);
+  });
+
+  it('consommation concurrente d’un même jeton de vérification : un seul succès', async () => {
+    await api().post(`${A}/register`).send({ email: 'race-verify@test.fr', password: PASSWORD, displayName: 'R' }).expect(202);
+    const token = await tokenFromMail('race-verify@test.fr', 'verifyEmail');
+    const results = await Promise.all(Array.from({ length: 5 }, () => api().post(`${A}/verify-email`).send({ token })));
+    expect(results.filter((r) => r.status === 204)).toHaveLength(1);
+    expect(results.filter((r) => r.status === 400)).toHaveLength(4);
+  });
+
+  it('deux reset concurrents avec le même jeton : un seul mot de passe appliqué', async () => {
+    const u = await createUser({ email: 'race-reset@test.fr' });
+    await api().post(`${A}/forgot-password`).send({ email: u.email }).expect(202);
+    const token = await tokenFromMail(u.email, 'resetPassword');
+    const [a, b] = await Promise.all([
+      api().post(`${A}/reset-password`).send({ token, password: 'premier-mot-de-passe-1' }),
+      api().post(`${A}/reset-password`).send({ token, password: 'second-mot-de-passe-22' }),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([204, 400]);
+    const winner = a.status === 204 ? 'premier-mot-de-passe-1' : 'second-mot-de-passe-22';
+    const loser = a.status === 204 ? 'second-mot-de-passe-22' : 'premier-mot-de-passe-1';
+    await api().post(`${A}/login`).send({ email: u.email, password: loser }).expect(401);
+    await api().post(`${A}/login`).send({ email: u.email, password: winner }).expect(200);
   });
 });
