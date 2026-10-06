@@ -58,3 +58,44 @@ describe('multiplicateur de rate limiting', () => {
     expect(parseEnv({ ...process.env, NODE_ENV: 'development', AUTH_RESPONSE_FLOOR_MS: '400', RATE_LIMIT_MULTIPLIER: '10' }).rateLimitMultiplier).toBe(10);
   });
 });
+
+describe('limites réalistes par compte (B9 H2)', () => {
+  it('10 contrôleurs derrière la même IP, 50 scans chacun en une minute (multiplicateur 1) ⇒ aucun 429', async () => {
+    const { orgWithStaff, createEvent } = await import('../fixtures.js');
+    const { loggedInUser } = await import('../helpers.js');
+    const { randomUUID } = await import('node:crypto');
+    const org = await orgWithStaff('nat-salle');
+    const { eventId } = await createEvent(org, { ticketTypes: [{ name: 'A', capacity: 10, priceCents: 0 }], publish: true });
+    const scanners = [];
+    for (let i = 0; i < 10; i += 1) {
+      const s = await loggedInUser();
+      await getDb().membership.create({ data: { orgId: org.id, userId: s.id, role: 'SCANNER' } });
+      scanners.push(s);
+    }
+    await getDb().rateLimitBucket.deleteMany();
+    const app = supertest(createApp({ rateLimitMultiplier: 1 }));
+    const statuses: number[] = [];
+    for (let round = 0; round < 50; round += 1) {
+      const res = await Promise.all(scanners.map((s) => app.post(`/api/v1/orgs/${org.id}/events/${eventId}/checkin/scan`).set(s.auth)
+        .send({ qrPayload: 'qr-inconnu', deviceId: randomUUID(), scanId: randomUUID() })));
+      statuses.push(...res.map((r) => r.status));
+    }
+    expect(statuses.filter((st) => st === 429)).toHaveLength(0);
+    expect(statuses).toHaveLength(500);
+  }, 120_000);
+
+  it('acheteurs derrière un CGNAT : le polling d’une commande est plafonné par compte, pas par IP', async () => {
+    const { loggedInUser } = await import('../helpers.js');
+    const buyers = await Promise.all(Array.from({ length: 5 }, () => loggedInUser()));
+    await getDb().rateLimitBucket.deleteMany();
+    const app = supertest(createApp({ rateLimitMultiplier: 1 }));
+    const { randomUUID } = await import('node:crypto');
+    const statuses: number[] = [];
+    // 5 acheteurs × 100 interrogations = 500 requêtes depuis la même IP (au-delà de 300/min par IP auparavant).
+    for (let round = 0; round < 100; round += 1) {
+      const res = await Promise.all(buyers.map((b) => app.get(`/api/v1/orders/${randomUUID()}`).set(b.auth)));
+      statuses.push(...res.map((r) => r.status));
+    }
+    expect(statuses.filter((st) => st === 429)).toHaveLength(0);
+  }, 120_000);
+});

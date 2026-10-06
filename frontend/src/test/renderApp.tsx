@@ -27,3 +27,15 @@ export async function renderApp(url: string, opts: { as?: string } = {}) {
 }
 
 export const BUYER = 'acheteur@example.test';
+
+/** Contrat v1.15 : place les événements de contrôle du mock dans la fenêtre (début dans 1 h). */
+export async function openCheckinWindow(...eventIds: string[]): Promise<void> {
+  const { mock } = await import('../mocks/core');
+  for (const id of eventIds) {
+    const e = mock.db.events.find((x) => x.id === id);
+    if (!e) continue;
+    e.startsAt = new Date(Date.now() + 3_600_000).toISOString();
+    e.endsAt = new Date(Date.now() + 5 * 3_600_000).toISOString();
+    e.salesEndAt = e.startsAt; // invariant : fin des ventes ≤ fin de l'événement
+  }
+}

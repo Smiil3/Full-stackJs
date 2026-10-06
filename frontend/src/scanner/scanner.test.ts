@@ -9,6 +9,7 @@ import { markPaid } from '../mocks/domain';
 import { server } from '../mocks/server';
 import { DEMO_PASSWORD, IDS } from '../mocks/state';
 import { bytesToBase64url } from '../lib/base64url';
+import { openCheckinWindow } from '../test/renderApp';
 import './cleanup';
 import {
   __wipeScannerForTests,
@@ -65,6 +66,7 @@ const SCAN_ROUTE = 'POST /orgs/:orgId/events/:eventId/checkin/scan';
 
 beforeEach(async () => {
   OWNER = await ownerHash(IDS.userScanner);
+  await openCheckinWindow(IDS.eventConcert, IDS.eventSoldOut);
 });
 afterEach(async () => {
   await __wipeScannerForTests(); // y compris la file (conservée par la purge de fin de session)
@@ -351,7 +353,7 @@ describe('file de synchronisation (revue F4.1)', () => {
     await localScan(scanArgs(qr2 ?? ''));
     const t2 = mock.db.tickets.find((t) => t.qrPayload === qr2);
     if (t2) Object.assign(t2, { status: 'USED', usedAt: '2026-11-14T20:04:00.000Z' });
-    const [first] = await listQueue();
+    const first = (await listQueue()).find((q) => q.qrPayload === qr1); // scan accepté (ordre des horodatages non garanti)
     expect(await syncEvent(ORG, IDS.eventConcert, OWNER)).toEqual({ accepted: 1, conflicts: 1, remaining: 0 });
     expect((await listConflicts(IDS.eventConcert))[0]).toMatchObject({ result: 'ALREADY_USED', seen: false });
     const replay = await apiRequest<{ results: { result: string }[] }>(`/orgs/${ORG}/events/${IDS.eventConcert}/checkin/sync`, {

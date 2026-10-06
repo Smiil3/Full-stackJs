@@ -4,6 +4,7 @@ import { transaction, type Tx } from '../../lib/db.js';
 import { errors } from '../../lib/errors.js';
 import { getLogger } from '../../lib/logger.js';
 import { verifySignature } from '../../lib/pspSignature.js';
+import { consumeQuota } from '../../lib/rateLimitStore.js';
 import { loadOrderForUpdate, refundUnexpectedPayment, settleHeldOrder, tryResettleExpiredOrder } from './settle.js';
 
 interface PspEnvelope {
@@ -42,6 +43,8 @@ const refundDataSchema = Joi.object<{ refundId?: string; paymentId: string }>({
   paymentId: Joi.string().max(100).required(),
 }).unknown(true);
 
+const INVALID_WEBHOOKS_PER_MINUTE = 60;
+
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -70,10 +73,12 @@ function parseEnvelope(raw: Buffer): PspEnvelope | null {
  * - l'événement (providerEventId UNIQUE) est inséré dans la même transaction que son effet (idempotence).
  * Une 5xx ne survient que sur panne réelle (le PSP réessaiera).
  */
-export async function handlePspWebhook(raw: Buffer, signature: string | undefined): Promise<{ received: true }> {
+export async function handlePspWebhook(raw: Buffer, signature: string | undefined, ip: string): Promise<{ received: true }> {
   const check = verifySignature(getEnv().psp.webhookSecret, signature, raw);
   if (!check.ok) {
     getLogger().warn({ reason: check.reason }, 'webhook PSP refusé');
+    // Seules les signatures invalides sont comptées : une notification signée n'est jamais refusée pour débit.
+    await consumeQuota('webhook-invalid', ip, 60_000, INVALID_WEBHOOKS_PER_MINUTE);
     throw errors.validation([{ path: 'Psp-Signature', message: check.reason === 'timestamp' ? 'Horodatage hors tolérance.' : 'Signature invalide.' }], 'Signature invalide.');
   }
   const event = parseEnvelope(raw);

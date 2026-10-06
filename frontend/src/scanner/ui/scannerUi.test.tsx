@@ -1,12 +1,12 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiRequest, login, logout } from '../../api/client';
 import type { Order } from '../../api/types';
 import { injectFault, mock } from '../../mocks/core';
 import { markPaid } from '../../mocks/domain';
 import { DEMO_PASSWORD, IDS } from '../../mocks/state';
-import { renderApp } from '../../test/renderApp';
+import { openCheckinWindow, renderApp } from '../../test/renderApp';
 import { __wipeScannerForTests, pendingCount } from '../db';
 
 /** Concert : mode secours AUTORISÉ (seed mock). Nuit Électro : contrôle en ligne uniquement. */
@@ -19,6 +19,9 @@ beforeAll(async () => {
   await Promise.all([import('./ScannerHomePage'), import('./ScannerPage')]);
 }, 30_000);
 vi.setConfig({ testTimeout: 20_000 });
+beforeEach(async () => {
+  await openCheckinWindow(IDS.eventConcert, IDS.eventSoldOut);
+});
 afterEach(async () => {
   await __wipeScannerForTests();
 });
@@ -198,6 +201,18 @@ describe('scanner — mode SECOURS hors-ligne', () => {
   it('un acheteur sans rôle ne peut pas ouvrir le contrôle d’un collectif', async () => {
     await renderApp(RESCUE, { as: 'acheteur@example.test' });
     expect(await screen.findByRole('heading', { name: 'Accès non autorisé' })).toBeInTheDocument();
+  });
+});
+
+describe('fenêtre de contrôle (v1.15)', () => {
+  it('avant startsAt − 12 h : « Contrôle ouvert à partir du … », sans bouton de contrôle', async () => {
+    const e = mock.db.events.find((x) => x.id === IDS.eventSoldOut);
+    if (e) e.startsAt = '2026-11-14T19:00:00.000Z';
+    if (e) e.endsAt = '2026-11-14T23:00:00.000Z';
+    await renderApp('/scan', { as: 'scanner@nuits.test' });
+    const card = (await screen.findByRole('heading', { name: /Nuit Électro/ })).closest('li') as HTMLElement;
+    expect(within(card).getByText('Contrôle ouvert à partir du sam. 14 nov. 2026, 08:00.')).toBeInTheDocument();
+    expect(within(card).queryByRole('link', { name: 'Contrôler les entrées' })).toBeNull();
   });
 });
 

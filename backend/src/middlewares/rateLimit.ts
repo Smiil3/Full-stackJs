@@ -1,5 +1,7 @@
 import type { RequestHandler } from 'express';
-import { rateLimit, type Options } from 'express-rate-limit';
+import type { Request } from 'express';
+import { ipKeyGenerator, rateLimit, type Options } from 'express-rate-limit';
+import { verifyAccessToken } from '../lib/jwt.js';
 import { PgRateLimitStore } from '../lib/rateLimitStore.js';
 
 export interface RateLimitConfig {
@@ -28,14 +30,44 @@ export function limiter(config: RateLimitConfig, name: string, windowMs: number,
   });
 }
 
+const BEARER = /^Bearer (\S{1,4096})$/;
+
+/**
+ * Clé du limiteur général : le compte (jeton d'accès VALIDE, vérification HMAC peu coûteuse) sinon l'IP.
+ * Des acheteurs derrière un même NAT d'opérateur (CGNAT) ou des contrôleurs sur le wifi d'une salle ne se
+ * pénalisent plus mutuellement.
+ */
+async function accountOrIp(req: Request): Promise<string> {
+  const header = req.headers.authorization;
+  const token = typeof header === 'string' ? BEARER.exec(header)?.[1] : undefined;
+  if (token) {
+    const claims = await verifyAccessToken(token);
+    if (claims) return `user:${claims.userId}`;
+  }
+  return `ip:${ipKeyGenerator(req.ip ?? '0.0.0.0')}`;
+}
+
+/** Routes qui ont leur PROPRE plafond par compte : exemptées du limiteur général (sinon double comptage). */
+const OWN_LIMIT_ROUTES = [
+  /^\/orgs\/[^/]+\/events\/[^/]+\/checkin\/(scan|sync)$/,
+  /^\/orders\/[^/]+$/,
+];
+
 export function buildLimiters(config: RateLimitConfig) {
   return {
-    global: limiter(config, 'global', 60_000, 300),
+    // Filet anti-inondation par IP, large (NAT de salle, CGNAT mobile).
+    globalIp: limiter(config, 'global-ip', 60_000, 3000),
+    // Plafond général par compte (sinon par IP), hors routes à plafond propre.
+    global: limiter(config, 'global', 60_000, 300, {
+      keyGenerator: accountOrIp,
+      skip: (req) => OWN_LIMIT_ROUTES.some((re) => re.test(req.path)),
+    }),
+    // Suivi d'une commande (le front interroge toutes les 2 s après paiement) : par compte.
+    orderPoll: limiter(config, 'order-poll', 60_000, 120, { keyGenerator: accountOrIp }),
     login: limiter(config, 'login', 15 * 60_000, 20),
     register: limiter(config, 'register', 60 * 60_000, 10),
     emailActions: limiter(config, 'email', 60 * 60_000, 10),
     refresh: limiter(config, 'refresh', 60_000, 30),
-    webhook: limiter(config, 'webhook', 60_000, 120),
     // Réservation : 60 / min par IP (opérateurs mobiles en CGNAT : beaucoup d'acheteurs derrière une IP)
     // ET 10 / min par compte (après authentification).
     orders: limiter(config, 'orders', 60_000, 60),

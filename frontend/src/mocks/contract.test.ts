@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { apiPath, apiRequest, login, logout } from '../api/client';
 import type { CheckinSnapshot, EventAdmin, EventPublic, EventStats, Order, OrderAdmin, Page, ScanResponse, SyncResponse, Ticket, WaitlistEntry } from '../api/types';
 import { mock } from './core';
+import { openCheckinWindow } from '../test/renderApp';
 import { DEMO_PASSWORD, IDS } from './state';
 
 const post = <T>(path: string, body?: unknown, headers?: Record<string, string>) => apiRequest<T>(path, { method: 'POST', body, headers });
@@ -220,6 +221,7 @@ describe('MSW — couverture du contrat', () => {
   });
 
   it('stats, export CSV (Blob), snapshot, scan (idempotent par scanId), sync', async () => {
+    await openCheckinWindow(IDS.eventConcert);
     const { ticket } = await buyTicket();
     await logout();
     await login('manager@nuits.test', DEMO_PASSWORD);

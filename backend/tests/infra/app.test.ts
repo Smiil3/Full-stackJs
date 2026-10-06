@@ -123,13 +123,20 @@ describe('ordre des middlewares et limites (B1.1 M1/M2)', () => {
     expect(Number(blocked.headers['retry-after'])).toBeGreaterThan(0);
   });
 
-  it('le webhook a son propre limiteur et n’est pas parsé en JSON', async () => {
-    const strict = supertest(createApp({ rateLimitMultiplier: 0.01 })); // webhook : 1 / min
+  it('webhook : seules les signatures invalides sont limitées, corps non parsé en JSON (B9 M1)', async () => {
+    const strict = supertest(createApp({ rateLimitMultiplier: 1 }));
     const first = await strict.post('/api/v1/webhooks/psp').set('Content-Type', 'application/json').send('{"pas du json');
-    // Corps brut : le parseur JSON n'intervient pas (sinon 400 « JSON invalide »).
-    expect(first.body.error?.message).not.toMatch(/JSON invalide/);
-    const second = await strict.post('/api/v1/webhooks/psp').set('Content-Type', 'application/json').send('{}');
-    expect(second.status).toBe(429);
+    // Corps brut : le parseur JSON n'intervient pas (sinon 400 « JSON invalide » générique) ; signature absente ⇒ 400.
+    expect(first.status).toBe(400);
+    expect(first.body.error.message).not.toMatch(/JSON invalide/);
+    let last = first;
+    for (let i = 0; i < 60; i += 1) last = await strict.post('/api/v1/webhooks/psp').set('Content-Type', 'application/json').set('Psp-Signature', 't=1,v1=00').send('{}');
+    expect(last.status).toBe(429);
+    // Une notification correctement signée passe toujours, même après le plafond des invalides.
+    const { signatureHeader } = await import('../../src/lib/pspSignature.js');
+    const raw = JSON.stringify({ id: 'evt_signe1', type: 'type.inconnu', created: 1, data: {} });
+    const ok = await strict.post('/api/v1/webhooks/psp').set('Content-Type', 'application/json').set('Psp-Signature', signatureHeader(process.env['PSP_WEBHOOK_SECRET']!, raw)).send(raw);
+    expect(ok.status).toBe(200);
   });
 
   it('webhook : corps brut au-delà de 64 ko ⇒ 413', async () => {

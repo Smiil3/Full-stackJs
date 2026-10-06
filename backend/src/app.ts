@@ -86,14 +86,13 @@ export function createApp(options: AppOptions = {}): Express {
   // monté AVANT le parseur JSON pour que le corps ne soit jamais réinterprété.
   app.use(
     '/api/v1/webhooks',
-    limiters.webhook,
     requireJsonContentType,
     express.raw({ type: 'application/json', limit: WEBHOOK_BODY_LIMIT }),
     buildWebhookRouter(),
   );
 
   // Le limiteur global passe avant tout parsing : une rafale de corps volumineux ou malformés est coupée tôt.
-  app.use('/api/v1', limiters.global);
+  app.use('/api/v1', limiters.globalIp, limiters.global);
   app.use(requireJsonContentType);
   // Parseur global (10 ko) pour toutes les routes SAUF la synchronisation hors-ligne : celle-ci a son propre
   // parseur (160 ko) monté dans son routeur APRÈS l'authentification, le contrôle de rôle et le limiteur.

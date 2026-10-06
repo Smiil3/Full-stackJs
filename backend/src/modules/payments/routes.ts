@@ -11,7 +11,7 @@ export function webhooksRouter(): Router {
   const r = Router();
   r.post('/psp', captureRawBody, async (req, res) => {
     const signature = req.headers['psp-signature'];
-    const result = await handlePspWebhook(res.locals['rawBody'] as Buffer, typeof signature === 'string' ? signature : undefined);
+    const result = await handlePspWebhook(res.locals['rawBody'] as Buffer, typeof signature === 'string' ? signature : undefined, req.ip ?? 'inconnue');
     res.status(200).json(checkResponse(ackResponse, result));
   });
   return r;

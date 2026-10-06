@@ -5,7 +5,7 @@ import { SyncForbiddenError } from '../sync';
 import { SessionChangedError } from '../db';
 
 export function scannerErrorMessage(e: unknown): string {
-  if (e instanceof EventNotAvailableError) return 'Événement non disponible au contrôle (non publié, annulé ou terminé depuis plus de 24 h).';
+  if (e instanceof EventNotAvailableError) return 'Événement non disponible au contrôle (contrôle ouvert de 12 h avant le début à 24 h après la fin, événement publié).';
   if (e instanceof EventClosedError) return 'Le contrôle de cet événement est terminé (plus de 24 h après la fin) : contrôle local refusé.';
   if (e instanceof StaleSnapshotError) return 'Liste hors-ligne de plus de 24 h : mettez-la à jour avant de contrôler.';
   if (e instanceof NoSnapshotError) return 'La liste hors-ligne de cet événement n’est pas préparée sur cet appareil.';

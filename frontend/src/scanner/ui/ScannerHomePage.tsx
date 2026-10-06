@@ -7,6 +7,7 @@ import { useAuth } from '../../auth/AuthContext';
 import { roleAtLeast } from '../../auth/roles';
 import { ErrorAlert } from '../../components/ErrorAlert';
 import { PageLoader } from '../../components/PageLoader';
+import { useNow } from '../../lib/hooks/useNow';
 import { useOnline } from '../../lib/hooks/useOnline';
 import { formatDateTime, userTimeZone } from '../../lib/time';
 import { ownerHash, setScannerAccess, type SnapshotMeta } from '../db';
@@ -14,8 +15,12 @@ import { prepareEvent } from '../snapshot';
 import { scannerErrorMessage } from './scannerError';
 import { useLocalSnapshots } from './useScannerData';
 
+/** Contrat v1.15 : contrôle ouvert de startsAt − 12 h à endsAt + 24 h. */
+const CHECKIN_OPENS_BEFORE_MS = 12 * 3_600_000;
+
 function OrgEvents({ orgId, snapshots, onPrepared }: { orgId: string; snapshots: SnapshotMeta[]; onPrepared: () => void }) {
   const { data, error, isPending } = useCheckinEvents(orgId);
+  const now = useNow(60_000);
   const [busy, setBusy] = useState<string | null>(null);
   const [prepError, setPrepError] = useState<unknown>(null);
 
@@ -39,6 +44,16 @@ function OrgEvents({ orgId, snapshots, onPrepared }: { orgId: string; snapshots:
       {data.items.length === 0 ? <li className="muted">Aucun événement à contrôler.</li> : null}
       {data.items.map((e) => {
         const snap = snapshots.find((s) => s.eventId === e.id);
+        const opensAt = Date.parse(e.startsAt) - CHECKIN_OPENS_BEFORE_MS;
+        if (now < opensAt) {
+          return (
+            <li key={e.id} className="card stack">
+              <h2 className="card__title">{e.title}</h2>
+              <p className="muted m-0">{formatDateTime(e.startsAt, e.timezone)}</p>
+              <p className="m-0">Contrôle ouvert à partir du {formatDateTime(new Date(opensAt).toISOString(), e.timezone)}.</p>
+            </li>
+          );
+        }
         return (
           <li key={e.id} className="card stack">
             <h2 className="card__title">{e.title}</h2>

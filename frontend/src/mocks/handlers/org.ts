@@ -152,9 +152,10 @@ function csvCell(value: string): string {
   return /[;"\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
 
-/** Contrat v1.12 : contrôle possible pour un événement PUBLISHED terminé depuis moins de 24 h. */
+/** Contrat v1.15 : contrôle possible de startsAt − 12 h à endsAt + 24 h, événement PUBLISHED. */
 function checkinOpen(e: MockEvent): boolean {
-  return e.status === 'PUBLISHED' && Date.parse(e.endsAt) > Date.now() - 24 * 3_600_000;
+  const now = Date.now();
+  return e.status === 'PUBLISHED' && now >= Date.parse(e.startsAt) - 12 * 3_600_000 && now < Date.parse(e.endsAt) + 24 * 3_600_000;
 }
 
 export const orgHandlers = [
