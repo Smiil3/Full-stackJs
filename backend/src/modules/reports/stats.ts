@@ -10,6 +10,7 @@ interface TypeRow { ticketTypeId: string; name: string; capacity: number; sold: 
 
 /**
  * Chiffres temps réel d'un événement (MANAGER+), agrégés en SQL :
+ * - checkedIn = billets ACTUELLEMENT au statut USED (il baisse si l'événement est annulé : ses billets passent CANCELLED) ;
  * - revenueCents = encaissé net sur les billets (lignes des commandes payées / remboursées − parts remboursées),
  *   frais de service à part (serviceFeeCents = frais encaissés − frais remboursés) ;
  * - refundsToProcess = remboursements à traiter à la main (MANUAL_REQUIRED + FAILED).

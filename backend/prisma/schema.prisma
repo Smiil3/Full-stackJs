@@ -483,6 +483,10 @@ model WaitlistEntry {
   status         WaitlistStatus @default(WAITING)
   offeredAt      DateTime?      @db.Timestamptz(3)
   offerExpiresAt DateTime?      @db.Timestamptz(3)
+  /// Tête de file trop grosse pour les places libres : les places s'accumulent pour elle jusqu'à cette échéance.
+  accumulatingUntil   DateTime? @db.Timestamptz(3)
+  /// Accumulation échue sans assez de places : l'entrée garde son rang mais ne bloque plus les suivantes.
+  accumulationSkipped Boolean   @default(false)
   createdAt      DateTime       @default(now()) @db.Timestamptz(3)
   updatedAt      DateTime       @updatedAt @db.Timestamptz(3)
 

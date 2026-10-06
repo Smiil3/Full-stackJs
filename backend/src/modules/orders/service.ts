@@ -206,7 +206,7 @@ async function reserveAndCreate(tx: Tx, userId: string, idempotencyKey: string, 
 
   // Réservation atomique, le plus tard possible : verrous de ligne ticket_types tenus le minimum de temps.
   for (const item of items) {
-    if (!(await repo.reserve(tx, event.id, item.ticketTypeId, item.quantity))) {
+    if (!(await repo.reserve(tx, event.id, item.ticketTypeId, item.quantity, now))) {
       throw errors.state('SOLD_OUT', 'Plus assez de places disponibles.', { ticketTypeId: item.ticketTypeId });
     }
   }

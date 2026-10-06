@@ -2,7 +2,7 @@ import { getDb, transaction } from '../lib/db.js';
 import { getLogger } from '../lib/logger.js';
 import { enqueueEmail } from '../lib/outbox.js';
 import { releaseHeld } from '../modules/orders/repo.js';
-import { distributeMany } from '../modules/waitlist/distribute.js';
+import { distributeMany, lockWaitlistEntries } from '../modules/waitlist/distribute.js';
 
 /** Commandes traitées au plus par passage du worker. */
 const MAX_PER_TICK = 200;
@@ -47,6 +47,7 @@ export async function expireOrders(): Promise<{ expired: number; failed: number;
           where: { id },
           include: { items: { orderBy: { ticketTypeId: 'asc' } }, user: { select: { email: true, displayName: true } }, event: { select: { title: true } } },
         });
+        await lockWaitlistEntries(tx, order.items.map((i) => i.ticketTypeId));
         for (const item of order.items) await releaseHeld(tx, order.eventId, item.ticketTypeId, item.quantity);
         await enqueueEmail(tx, order.user.email, 'orderExpired', { displayName: order.user.displayName, eventTitle: order.event.title });
         // Places libérées : proposées d'abord à la liste d'attente, dans la même transaction.

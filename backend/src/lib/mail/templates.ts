@@ -11,12 +11,13 @@ export interface TemplatePayloads {
     displayName: string; eventTitle: string; amount: string; reference: string; beneficiary: string; iban: string; bic: string; deadline: string;
   };
   orderExpired: { displayName: string; eventTitle: string };
-  orderRefunded: { displayName: string; eventTitle: string; amount: string; reason: string };
+  /** transferRefundPending : paiement par virement ⇒ remboursement À VENIR par le collectif (pas encore effectué). */
+  orderRefunded: { displayName: string; eventTitle: string; amount: string; reason: string; transferRefundPending: boolean };
   latePaymentRefunded: { displayName: string; eventTitle: string; amount: string };
   duplicatePaymentRefunded: { displayName: string; eventTitle: string; amount: string };
   unexpectedPaymentRefunded: { displayName: string; eventTitle: string; amount: string };
   waitlistOffer: { displayName: string; eventTitle: string; ticketTypeName: string; quantity: number; deadline: string; link: string };
-  eventCancelled: { displayName: string; eventTitle: string; reason: string; amount: string | null };
+  eventCancelled: { displayName: string; eventTitle: string; reason: string; amount: string | null; transferRefundPending: boolean };
   eventRescheduled: { displayName: string; eventTitle: string; oldDate: string; newDate: string; reason: string };
   bankDetailsChanged: { displayName: string; orgName: string; changedBy: string; ibanMasked: string };
   memberAdded: { displayName: string; orgName: string; role: string; addedBy: string };
@@ -43,9 +44,19 @@ function layout(title: string, paragraphs: string[], action?: { label: string; u
 
 const e = escapeHtml;
 
+/** Remboursement carte (effectué) ou virement (À VENIR, effectué à la main par le collectif). */
+function refundSentence(d: Record<string, unknown>, html: boolean): string {
+  const raw = d['amount'];
+  const amount = typeof raw === 'string' || typeof raw === 'number' ? String(raw) : '';
+  const shown = html ? `<strong>${e(amount)}</strong>` : amount;
+  return d['transferRefundPending'] === true
+    ? `Le collectif va vous rembourser ${shown} par virement bancaire (remboursement à venir).`
+    : `Vous êtes remboursé(e) de ${shown}.`;
+}
+
 export function renderTemplate<T extends MailTemplate>(template: T, data: TemplatePayloads[T]): RenderedMail {
   // Chaque branche ne lit que les champs de son gabarit ; toute valeur est échappée.
-  const d = data as unknown as Record<string, string | number | null>;
+  const d = data as unknown as Record<string, string | number | boolean | null>;
   const s = (k: string): string => String(d[k] ?? '');
   switch (template) {
     case 'verifyEmail':
@@ -97,8 +108,8 @@ export function renderTemplate<T extends MailTemplate>(template: T, data: Templa
     case 'orderRefunded':
       return {
         subject: `Remboursement — ${s('eventTitle')}`,
-        html: layout('Commande annulée', [`Bonjour ${e(s('displayName'))},`, `Votre commande pour <strong>${e(s('eventTitle'))}</strong> est annulée (${e(s('reason'))}). Montant remboursé : <strong>${e(s('amount'))}</strong>.`]),
-        text: `Bonjour ${s('displayName')},\nVotre commande pour ${s('eventTitle')} est annulée (${s('reason')}). Remboursement : ${s('amount')}.`,
+        html: layout('Commande annulée', [`Bonjour ${e(s('displayName'))},`, `Votre commande pour <strong>${e(s('eventTitle'))}</strong> est annulée (${e(s('reason'))}).`, refundSentence(d, true)]),
+        text: `Bonjour ${s('displayName')},\nVotre commande pour ${s('eventTitle')} est annulée (${s('reason')}). ${refundSentence(d, false)}`,
       };
     case 'latePaymentRefunded':
       return {
@@ -127,8 +138,8 @@ export function renderTemplate<T extends MailTemplate>(template: T, data: Templa
     case 'eventCancelled':
       return {
         subject: `Événement annulé — ${s('eventTitle')}`,
-        html: layout('Événement annulé', [`Bonjour ${e(s('displayName'))},`, `<strong>${e(s('eventTitle'))}</strong> est annulé : ${e(s('reason'))}.`, d['amount'] ? `Vous êtes remboursé(e) de <strong>${e(s('amount'))}</strong>.` : 'Votre réservation non payée a été annulée.']),
-        text: `Bonjour ${s('displayName')},\n${s('eventTitle')} est annulé : ${s('reason')}.${d['amount'] ? ` Remboursement : ${s('amount')}.` : ''}`,
+        html: layout('Événement annulé', [`Bonjour ${e(s('displayName'))},`, `<strong>${e(s('eventTitle'))}</strong> est annulé : ${e(s('reason'))}.`, d['amount'] ? refundSentence(d, true) : 'Votre réservation non payée a été annulée.']),
+        text: `Bonjour ${s('displayName')},\n${s('eventTitle')} est annulé : ${s('reason')}. ${d['amount'] ? refundSentence(d, false) : ''}`,
       };
     case 'eventRescheduled':
       return {

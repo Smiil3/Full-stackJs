@@ -69,7 +69,7 @@ export async function alreadyOwned(tx: Tx, userId: string, eventId: string): Pro
  * verrouillée par l'UPDATE lui-même. Aucune survente possible, quel que soit le nombre de requêtes
  * simultanées. Refusé aussi si des personnes attendent en liste d'attente (elles sont prioritaires).
  */
-export async function reserve(tx: Tx, eventId: string, ticketTypeId: string, quantity: number): Promise<boolean> {
+export async function reserve(tx: Tx, eventId: string, ticketTypeId: string, quantity: number, now: Date): Promise<boolean> {
   const rows = await tx.$queryRaw<{ id: string }[]>`
     UPDATE "ticket_types" SET "held" = "held" + ${quantity}, "updatedAt" = now()
     WHERE "id" = ${ticketTypeId}::uuid AND "eventId" = ${eventId}::uuid
@@ -78,7 +78,9 @@ export async function reserve(tx: Tx, eventId: string, ticketTypeId: string, qua
       -- avec les places libres (une demande trop grosse ne bloque ni les suivantes ni le public).
       AND NOT EXISTS (SELECT 1 FROM "waitlist_entries" w
                       WHERE w."ticketTypeId" = ${ticketTypeId}::uuid AND w."status" = 'WAITING'
-                        AND w."quantity" <= "capacity" - "sold" - "held")
+                        AND (w."quantity" <= "capacity" - "sold" - "held"
+                             -- La tête de file accumule les places libérées pour elle (contrat 1.14 §6).
+                             OR (w."accumulatingUntil" > ${now} AND NOT w."accumulationSkipped")))
     RETURNING "id"`;
   return rows.length === 1;
 }

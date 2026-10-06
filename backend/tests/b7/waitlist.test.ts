@@ -91,22 +91,39 @@ describe('liste d’attente', () => {
     expect(catalog.body.ticketTypes[0].availability).toBe('SOLD_OUT');
   });
 
-  it('une demande trop grosse garde son rang sans bloquer les suivantes ni le public', async () => {
+  it('équité : la tête de file accumule les places pendant le délai, puis est sautée (rang conservé) au profit de la suivante', async () => {
     const { eventId, ttId, holders } = await soldOutEvent(3);
     const big = await loggedInUser();
     const small = await loggedInUser();
     await join(big, eventId, ttId, 3).expect(201);
     await join(small, eventId, ttId, 1).expect(201);
-    await expireOne(holders[0]!.orderId); // 1 place libre
-    const bigView = await api().get('/api/v1/me/waitlist').set(big.auth).expect(200);
-    expect(bigView.body.items[0]).toMatchObject({ status: 'WAITING', position: 1 });
+    await expireOne(holders[0]!.orderId); // 1 place libre : accumulée pour la tête (3 demandées)
     const smallView = await api().get('/api/v1/me/waitlist').set(small.auth).expect(200);
-    expect(smallView.body.items[0].status).toBe('OFFERED');
-    // Une 2e place se libère : personne d'autre ne tient dedans ⇒ le public peut l'acheter.
-    await expireOne(holders[1]!.orderId);
+    expect(smallView.body.items[0]).toMatchObject({ status: 'WAITING', position: 2 });
+    // Ni au public pendant l'accumulation.
     const pub = await api().post('/api/v1/orders').set((await loggedInUser()).auth).set('Idempotency-Key', randomUUID())
       .send({ eventId, paymentMethod: 'CARD', items: [{ ticketTypeId: ttId, quantity: 1 }] });
-    expect(pub.status).toBe(201);
+    expect(pub.body.error.code).toBe('SOLD_OUT');
+    // Délai d'accumulation échu : la tête est sautée (rang conservé), la suivante est servie.
+    const head = await getDb().waitlistEntry.findFirstOrThrow({ where: { userId: big.id } });
+    testClock.freeze(new Date(head.accumulatingUntil!.getTime() + 1));
+    await expireOne(holders[1]!.orderId);
+    expect((await api().get('/api/v1/me/waitlist').set(small.auth)).body.items[0].status).toBe('OFFERED');
+    const bigView = await api().get('/api/v1/me/waitlist').set(big.auth).expect(200);
+    expect(bigView.body.items[0]).toMatchObject({ status: 'WAITING', position: 1 });
+  });
+
+  it('équité : servie si assez de places se libèrent dans le délai (libérations de 1 en 1)', async () => {
+    const { eventId, ttId, holders } = await soldOutEvent(4);
+    const big = await loggedInUser();
+    const small = await loggedInUser();
+    await join(big, eventId, ttId, 4).expect(201);
+    await join(small, eventId, ttId, 1).expect(201);
+    for (const h of holders) await expireOne(h.orderId);
+    expect((await api().get('/api/v1/me/waitlist').set(big.auth)).body.items[0].status).toBe('OFFERED');
+    expect((await api().get('/api/v1/me/waitlist').set(small.auth)).body.items[0]).toMatchObject({ status: 'WAITING', position: 1 });
+    const tt = await getDb().ticketType.findUniqueOrThrow({ where: { id: ttId } });
+    expect(tt.held).toBe(4);
   });
 
   it('offre expirée ⇒ suivant ; quitter une offre ⇒ suivant', async () => {

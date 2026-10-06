@@ -1,5 +1,5 @@
 /** Caractères qui, en tête de cellule, déclenchent une formule dans un tableur (injection CSV). */
-const FORMULA_TRIGGERS = new Set(['=', '+', '-', '@', '\t', '\r']);
+const FORMULA_TRIGGERS = new Set(['=', '+', '-', '@', '\t', '\r', '\n']);
 
 /**
  * Cellule CSV sûre :
@@ -8,7 +8,9 @@ const FORMULA_TRIGGERS = new Set(['=', '+', '-', '@', '\t', '\r']);
  */
 export function csvCell(value: string | number | null): string {
   let text = value === null ? '' : String(value);
-  if (text.length > 0 && FORMULA_TRIGGERS.has(text.charAt(0))) text = `'${text}`;
+  // Premier caractère OU premier caractère après des espaces de tête (certains tableurs les ignorent).
+  const head = text.replace(/^ +/, '').charAt(0);
+  if (text.length > 0 && (FORMULA_TRIGGERS.has(text.charAt(0)) || FORMULA_TRIGGERS.has(head))) text = `'${text}`;
   if (/[;"\r\n]/.test(text)) text = `"${text.replace(/"/g, '""')}"`;
   return text;
 }

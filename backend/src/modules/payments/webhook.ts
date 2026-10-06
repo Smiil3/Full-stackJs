@@ -139,6 +139,11 @@ async function onPaymentSucceeded(tx: Tx, event: PspEnvelope): Promise<void> {
     : order.paymentMethod !== 'CARD' ? 'commande non payable par carte'
     : order.status === 'PENDING_PAYMENT' && (!order.pspSessionId || data.sessionId !== order.pspSessionId) ? 'session de paiement inconnue pour cette commande'
     : null;
+  // Événement annulé : un paiement d'une commande non payée n'aboutira jamais à des billets ⇒ remboursé.
+  if (order.event.status === 'CANCELLED' && order.status !== 'PAID') {
+    await refundUnexpectedPayment(tx, order, payment, 'EVENT_CANCELLED', 'événement annulé');
+    return;
+  }
   if (mismatch && order.status !== 'PAID') {
     await refundUnexpectedPayment(tx, order, payment, 'UNEXPECTED_PAYMENT', mismatch);
     return;

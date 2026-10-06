@@ -39,13 +39,3 @@ export function findPublished(eventId: string, endedAfter: Date) {
   return getDb().event.findFirst({ where: { id: eventId, status: 'PUBLISHED', endsAt: { gt: endedAfter } }, include });
 }
 
-/** Plus petite demande en attente par type (les places libérées reviennent d'abord à la liste d'attente). */
-export async function smallestWaiting(ticketTypeIds: string[]): Promise<Map<string, number>> {
-  if (ticketTypeIds.length === 0) return new Map();
-  const rows = await getDb().waitlistEntry.groupBy({
-    by: ['ticketTypeId'],
-    where: { ticketTypeId: { in: ticketTypeIds }, status: 'WAITING' },
-    _min: { quantity: true },
-  });
-  return new Map(rows.flatMap((r) => (r._min.quantity === null ? [] : [[r.ticketTypeId, r._min.quantity] as const])));
-}

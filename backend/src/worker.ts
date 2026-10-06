@@ -9,6 +9,7 @@ import { processOutboxBatch } from './lib/outbox.js';
 import { purgeExpiredBuckets } from './lib/rateLimitStore.js';
 import { expireOrders } from './jobs/expireOrders.js';
 import { processRefunds } from './jobs/processRefunds.js';
+import { processEventCancellations } from './jobs/processEventCancellations.js';
 import { expireWaitlistOffers, sweepWaitlist } from './modules/waitlist/service.js';
 
 /**
@@ -39,6 +40,7 @@ const stop = new AbortController();
 async function tick(): Promise<void> {
   const jobs: [string, () => Promise<unknown>][] = [
     ['expireOrders', () => expireOrders()],
+    ['eventCancellations', () => processEventCancellations()],
     ['expireWaitlistOffers', () => expireWaitlistOffers()],
     ['sweepWaitlist', () => sweepWaitlist()],
     ['refunds', () => processRefunds()],

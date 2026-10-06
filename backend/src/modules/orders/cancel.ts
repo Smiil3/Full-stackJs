@@ -4,8 +4,9 @@ import { AppError, errors } from '../../lib/errors.js';
 import { formatEuros } from '../../lib/mail/templates.js';
 import { allocate, floorPercentOf } from '../../lib/money.js';
 import { enqueueEmail } from '../../lib/outbox.js';
+import { getLogger } from '../../lib/logger.js';
 import { loadOrderForUpdate, recordRefund, type RefundReason } from '../payments/settle.js';
-import { distributeMany } from '../waitlist/distribute.js';
+import { distributeMany, lockWaitlistEntries } from '../waitlist/distribute.js';
 import { canSelfCancelPaid, eventCancellationRefund, selfCancellationRefund } from './refund.js';
 import { releaseHeld } from './repo.js';
 import { viewOwnOrder } from './service.js';
@@ -23,6 +24,7 @@ async function cancelUnpaid(tx: Tx, order: LockedOrder, distribute: boolean): Pr
     data: { status: 'CANCELLED', cancelledAt: clock.now(), refundAmountCents: 0 },
   });
   if (count !== 1) throw errors.state('INVALID_STATE', 'La commande a changé d’état entre-temps.');
+  await lockWaitlistEntries(tx, order.items.map((i) => i.ticketTypeId));
   for (const item of order.items) await releaseHeld(tx, order.eventId, item.ticketTypeId, item.quantity);
   if (distribute) await distributeMany(tx, order.items.map((i) => i.ticketTypeId));
 }
@@ -35,19 +37,15 @@ async function cancelUnpaid(tx: Tx, order: LockedOrder, distribute: boolean): Pr
  */
 async function refundPaid(
   tx: Tx, order: LockedOrder, input: { total: number; subtotalPart: number; reason: RefundReason; cancelUsedTickets: boolean; distribute: boolean },
-): Promise<number> {
+): Promise<{ refunded: number; manual: boolean }> {
   const tickets = await tx.ticket.count({ where: { orderItem: { orderId: order.id } } });
   const { count: cancelled } = await tx.ticket.updateMany({
     where: { orderItem: { orderId: order.id }, status: input.cancelUsedTickets ? { in: ['VALID', 'USED'] } : 'VALID' },
     data: { status: 'CANCELLED', usedAt: null },
   });
   if (cancelled !== tickets) throw errors.state('CANCELLATION_CLOSED', 'Un billet de cette commande a déjà été utilisé.');
-  const { count } = await tx.order.updateMany({
-    where: { id: order.id, status: 'PAID' },
-    data: { status: 'REFUNDED', refundAmountCents: input.total, cancelledAt: clock.now() },
-  });
-  if (count !== 1) throw errors.state('INVALID_STATE', 'La commande a changé d’état entre-temps.');
   const shares = allocate(input.subtotalPart, order.items.map((i) => i.unitPriceCents * i.quantity));
+  if (input.distribute) await lockWaitlistEntries(tx, order.items.map((i) => i.ticketTypeId));
   for (const [i, item] of order.items.entries()) {
     await tx.orderItem.update({ where: { id: item.id }, data: { refundedCents: shares[i] ?? 0 } });
     const changed = await tx.$executeRaw`
@@ -56,13 +54,24 @@ async function refundPaid(
     if (changed !== 1) throw new AppError(500, 'INTERNAL_ERROR', 'Incohérence de stock lors de l’annulation.');
   }
   let remaining = input.total;
+  let manual = false;
   const payments = await tx.payment.findMany({ where: { orderId: order.id, status: 'SUCCEEDED' }, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
   for (const payment of payments) {
     if (remaining <= 0) break;
-    remaining -= await recordRefund(tx, { orderId: order.id, paymentId: payment.id, providerPaymentId: payment.providerPaymentId, amountCents: remaining, reason: input.reason });
+    const recorded = await recordRefund(tx, { orderId: order.id, paymentId: payment.id, providerPaymentId: payment.providerPaymentId, amountCents: remaining, reason: input.reason });
+    if (recorded > 0 && payment.providerPaymentId.startsWith('transfer:')) manual = true;
+    remaining -= recorded;
   }
+  // Montant RÉELLEMENT remboursé (après plafonnement au reste remboursable de chaque paiement).
+  const refunded = input.total - remaining;
+  if (remaining > 0) getLogger().warn({ orderId: order.id, expected: input.total, refunded }, 'remboursement plafonné : montant attendu supérieur au remboursable');
+  const { count } = await tx.order.updateMany({
+    where: { id: order.id, status: 'PAID' },
+    data: { status: 'REFUNDED', refundAmountCents: refunded, cancelledAt: clock.now() },
+  });
+  if (count !== 1) throw errors.state('INVALID_STATE', 'La commande a changé d’état entre-temps.');
   if (input.distribute) await distributeMany(tx, order.items.map((i) => i.ticketTypeId));
-  return input.total;
+  return { refunded, manual };
 }
 
 /**
@@ -80,15 +89,18 @@ export async function cancelOwnOrder(userId: string, orderId: string) {
       return;
     }
     if (order.status !== 'PAID') throw errors.state('INVALID_STATE', 'Cette commande ne peut plus être annulée.');
+    // Événement annulé : le remboursement intégral est en cours de traitement par le collectif.
+    if (order.event.status === 'CANCELLED') throw errors.state('CANCELLATION_CLOSED', 'L’événement est annulé : votre remboursement intégral est en cours.');
     const state = { status: order.status, cancellableUntil: order.cancellableUntil, eventStartsAt: order.event.startsAt, scannedTickets: await usedTickets(tx, order.id) };
     if (!canSelfCancelPaid(state, clock.now())) {
       throw errors.state('CANCELLATION_CLOSED', 'L’annulation n’est plus possible pour cette commande.');
     }
     const total = selfCancellationRefund(order);
     const subtotalPart = floorPercentOf(order.subtotalCents, order.refundPercent);
-    await refundPaid(tx, order, { total, subtotalPart, reason: 'SELF_CANCELLATION', cancelUsedTickets: false, distribute: true });
+    const result = await refundPaid(tx, order, { total, subtotalPart, reason: 'SELF_CANCELLATION', cancelUsedTickets: false, distribute: true });
     await enqueueEmail(tx, order.user.email, 'orderRefunded', {
-      displayName: order.user.displayName, eventTitle: order.event.title, amount: formatEuros(total), reason: 'annulation à votre demande',
+      displayName: order.user.displayName, eventTitle: order.event.title, amount: formatEuros(result.refunded),
+      reason: 'annulation à votre demande', transferRefundPending: result.manual,
     });
   });
   return transaction((tx) => viewOwnOrder(tx, userId, orderId));
@@ -100,10 +112,12 @@ export async function cancelOrderForEvent(tx: Tx, orderId: string, reason: strin
   if (!order) return;
   if (order.status === 'PENDING_PAYMENT' || order.status === 'AWAITING_TRANSFER') {
     await cancelUnpaid(tx, order, false);
-    await enqueueEmail(tx, order.user.email, 'eventCancelled', { displayName: order.user.displayName, eventTitle: order.event.title, reason, amount: null });
+    await enqueueEmail(tx, order.user.email, 'eventCancelled', { displayName: order.user.displayName, eventTitle: order.event.title, reason, amount: null, transferRefundPending: false });
   } else if (order.status === 'PAID') {
     const total = eventCancellationRefund(order);
-    await refundPaid(tx, order, { total, subtotalPart: order.subtotalCents, reason: 'EVENT_CANCELLED', cancelUsedTickets: true, distribute: false });
-    await enqueueEmail(tx, order.user.email, 'eventCancelled', { displayName: order.user.displayName, eventTitle: order.event.title, reason, amount: formatEuros(total) });
+    const result = await refundPaid(tx, order, { total, subtotalPart: order.subtotalCents, reason: 'EVENT_CANCELLED', cancelUsedTickets: true, distribute: false });
+    await enqueueEmail(tx, order.user.email, 'eventCancelled', {
+      displayName: order.user.displayName, eventTitle: order.event.title, reason, amount: formatEuros(result.refunded), transferRefundPending: result.manual,
+    });
   }
 }

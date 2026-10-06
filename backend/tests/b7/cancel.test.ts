@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getDb } from '../../src/lib/db.js';
+import { processEventCancellations } from '../../src/jobs/processEventCancellations.js';
 import { testClock } from '../../src/lib/clock.js';
 import { api, lastMail, loggedInUser, PASSWORD, type LoggedIn } from '../helpers.js';
 import { createEvent, orgWithStaff, type OrgFixture } from '../fixtures.js';
@@ -153,7 +154,8 @@ describe('annulation d’un événement', () => {
     await api().post(`/api/v1/events/${ev.eventId}/ticket-types/${ev.ticketTypeIds[0]!}/waitlist`).set(waiting.auth).send({ quantity: 1 }).expect(201);
     await api().post(`/api/v1/orgs/${org.id}/events/${ev.eventId}/cancel`).set(org.manager.auth).send({ reason: 'Intempéries' }).expect(403);
     const res = await api().post(`/api/v1/orgs/${org.id}/events/${ev.eventId}/cancel`).set(org.owner.auth).send({ reason: 'Intempéries' }).expect(200);
-    expect(res.body.status).toBe('CANCELLED');
+    expect(res.body).toMatchObject({ status: 'CANCELLED', cancellationPendingOrders: 2 });
+    expect(await processEventCancellations()).toEqual({ processed: 2, failed: 0 });
     const paidAfter = await getDb().order.findUniqueOrThrow({ where: { id: paid.orderId } });
     expect(paidAfter).toMatchObject({ status: 'REFUNDED', refundAmountCents: paid.total });
     expect(paid.total).toBe(4150);
@@ -166,8 +168,9 @@ describe('annulation d’un événement', () => {
     expect(await lastMail(buyer.email, 'eventCancelled')).not.toBeNull();
     expect(await lastMail(other.email, 'eventCancelled')).not.toBeNull();
     expect(await getDb().auditLog.count({ where: { action: 'event.cancel' } })).toBe(1);
-    const again = await api().post(`/api/v1/orgs/${org.id}/events/${ev.eventId}/cancel`).set(org.owner.auth).send({ reason: 'x' });
-    expect(again.status).toBe(409);
+    // Idempotent : un 2e appel renvoie le même état.
+    const again = await api().post(`/api/v1/orgs/${org.id}/events/${ev.eventId}/cancel`).set(org.owner.auth).send({ reason: 'x' }).expect(200);
+    expect(again.body).toMatchObject({ status: 'CANCELLED', cancellationPendingOrders: 0 });
     // Plus aucune vente possible.
     const late = await api().post('/api/v1/orders').set(other.auth).set('Idempotency-Key', randomUUID())
       .send({ eventId: ev.eventId, paymentMethod: 'CARD', items: [{ ticketTypeId: ev.ticketTypeIds[0]!, quantity: 1 }] });
@@ -182,6 +185,7 @@ describe('annulation d’un événement', () => {
       .send({ eventId: ev.eventId, paymentMethod: 'TRANSFER', items: [{ ticketTypeId: ev.ticketTypeIds[0]!, quantity: 1 }] }).expect(201);
     await api().post(`/api/v1/orgs/${org.id}/orders/${res.body.id as string}/confirm-transfer`).set(org.manager.auth).send({ receivedAmountCents: 2000 }).expect(200);
     await api().post(`/api/v1/orgs/${org.id}/events/${ev.eventId}/cancel`).set(org.owner.auth).send({ reason: 'Salle fermée' }).expect(200);
+    await processEventCancellations();
     const list = await api().get(`/api/v1/orgs/${org.id}/refunds?status=MANUAL_REQUIRED`).set(org.manager.auth).expect(200);
     expect(list.body.items[0]).toMatchObject({ method: 'TRANSFER', reason: 'EVENT_CANCELLED', amountCents: 2000 });
   });

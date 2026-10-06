@@ -72,7 +72,8 @@ export async function tryResettleExpiredOrder(tx: Tx, order: SettlementOrder): P
     const rows = await tx.$queryRaw<{ ok: boolean }[]>`
       SELECT ("sold" + "held" + ${item.quantity} <= "capacity"
               AND NOT EXISTS (SELECT 1 FROM "waitlist_entries" w WHERE w."ticketTypeId" = t."id" AND w."status" = 'WAITING'
-                                AND w."quantity" <= t."capacity" - t."sold" - t."held")) AS ok
+                                AND (w."quantity" <= t."capacity" - t."sold" - t."held"
+                                     OR (w."accumulatingUntil" > ${clock.now()} AND NOT w."accumulationSkipped")))) AS ok
       FROM "ticket_types" t WHERE t."id" = ${item.ticketTypeId}::uuid AND t."eventId" = ${order.eventId}::uuid FOR UPDATE`;
     if (rows[0]?.ok !== true) return false;
   }

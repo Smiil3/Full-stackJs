@@ -97,7 +97,7 @@ export const eventAdminResponse = Joi.object({
   id: uuidStrict, orgId: uuidStrict, title: Joi.string(), description: nullable(Joi.string()), venue: nullable(Joi.string()),
   address: nullable(Joi.string()), isOnline: Joi.boolean(), startsAt: isoDateOutput, endsAt: isoDateOutput, timezone: Joi.string(),
   status: Joi.string().valid('DRAFT', 'PUBLISHED', 'CANCELLED'), salesStartAt: isoDateOutput, salesEndAt: isoDateOutput,
-  overrides: overridesResponse, offlineCheckinEnabled: Joi.boolean(), effectiveRules: publicRulesResponse, ticketTypes: Joi.array().items(ticketTypeAdminResponse),
+  overrides: overridesResponse, offlineCheckinEnabled: Joi.boolean(), cancellationPendingOrders: int, effectiveRules: publicRulesResponse, ticketTypes: Joi.array().items(ticketTypeAdminResponse),
   createdAt: isoDateOutput, updatedAt: isoDateOutput,
 });
 export const eventAdminPage = pageOf(eventAdminResponse);

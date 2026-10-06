@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import supertest from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getDb } from '../../src/lib/db.js';
+import { processEventCancellations } from '../../src/jobs/processEventCancellations.js';
 import { testClock } from '../../src/lib/clock.js';
 import { createApp } from '../../src/app.js';
 import { resetEnvCache } from '../../src/config/env.js';
@@ -51,6 +52,7 @@ describe('billets d’une commande close (B6.1 H1)', () => {
   it('annulation d’événement : tous les billets annulés en base, scan ⇒ CANCELLED, snapshot ⇒ 404', async () => {
     const { eventId, tickets } = await eventWithTickets(2);
     await api().post(`/api/v1/orgs/${org.id}/events/${eventId}/cancel`).set(org.owner.auth).send({ reason: 'Tempête' }).expect(200);
+    await processEventCancellations();
     expect(await getDb().ticket.count({ where: { eventId, status: { not: 'CANCELLED' } } })).toBe(0);
     expect((await scan(eventId, tickets[0]!.qrPayload).expect(200)).body).toEqual({ result: 'CANCELLED', ticket: null, usedAt: null });
     await api().get(url(eventId, 'snapshot')).set(org.scanner.auth).expect(404);

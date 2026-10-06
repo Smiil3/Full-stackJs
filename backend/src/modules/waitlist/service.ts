@@ -10,7 +10,8 @@ import { addHours, addMinutes } from '../../lib/time.js';
 import { alreadyOwned, lockBuyerEvent, lockEventShared } from '../orders/repo.js';
 import { viewOwnOrder } from '../orders/service.js';
 import { resolveEventSettings } from '../settings/resolveEventSettings.js';
-import { distributeWaitlist, releaseOffer } from './distribute.js';
+import { distributeWaitlist, lockWaitlistEntries, releaseOffer, salesOpen } from './distribute.js';
+import { withTxRetry } from '../../lib/txRetry.js';
 
 type EntryWithNames = WaitlistEntry & { event: { title: string }; ticketType: { name: string } };
 
@@ -38,7 +39,7 @@ const withNames = { event: { select: { title: true } }, ticketType: { select: { 
  * places détenues + attendues ≤ plafond par personne).
  */
 export async function join(userId: string, eventId: string, ticketTypeId: string, quantity: number) {
-  return transaction(async (tx) => {
+  return withTxRetry(() => transaction(async (tx) => {
     await lockBuyerEvent(tx, userId, eventId);
     if (!(await lockEventShared(tx, eventId))) throw errors.notFound();
     const event = await tx.event.findUnique({
@@ -47,8 +48,7 @@ export async function join(userId: string, eventId: string, ticketTypeId: string
     });
     const tt = event?.ticketTypes[0];
     if (!event || event.status === 'DRAFT' || !tt || !event.organization.settings) throw errors.notFound();
-    const now = clock.now();
-    if (event.status !== 'PUBLISHED' || now >= event.salesEndAt || now >= event.startsAt) throw errors.state('SALES_CLOSED', 'Les ventes sont terminées pour cet événement.');
+    if (!salesOpen(event, clock.now())) throw errors.state('SALES_CLOSED', 'Les ventes ne sont pas ouvertes pour cet événement.');
     const rules = resolveEventSettings(event.organization.settings, event);
     if (!rules.waitlistEnabled) throw errors.state('WAITLIST_DISABLED', 'La liste d’attente n’est pas ouverte pour cet événement.');
     if (quantity > rules.maxPerOrder) {
@@ -72,7 +72,7 @@ export async function join(userId: string, eventId: string, ticketTypeId: string
     await distributeWaitlist(tx, ticketTypeId);
     const fresh = await tx.waitlistEntry.findUniqueOrThrow({ where: { id: entry.id }, include: withNames });
     return toView(tx, fresh);
-  });
+  }));
 }
 
 export async function myWaitlist(userId: string) {
@@ -81,6 +81,7 @@ export async function myWaitlist(userId: string) {
   return { items: await Promise.all(rows.map((e) => toView(db, e))) };
 }
 
+/** Entrée de l'acheteur (userId dans le filtre) verrouillée ; sinon 404. */
 async function lockOwnEntry(tx: Tx, userId: string, entryId: string): Promise<WaitlistEntry> {
   const rows = await tx.$queryRaw<{ id: string }[]>`
     SELECT "id" FROM "waitlist_entries" WHERE "id" = ${entryId}::uuid AND "userId" = ${userId}::uuid FOR UPDATE`;
@@ -90,23 +91,29 @@ async function lockOwnEntry(tx: Tx, userId: string, entryId: string): Promise<Wa
 
 /** Quitter la liste : une offre en cours libère ses places, qui passent aussitôt au suivant. */
 export async function leave(userId: string, entryId: string): Promise<void> {
-  await transaction(async (tx) => {
+  await withTxRetry(() => transaction(async (tx) => {
     const entry = await lockOwnEntry(tx, userId, entryId);
     if (entry.status !== 'WAITING' && entry.status !== 'OFFERED') throw errors.state('INVALID_STATE', 'Cette inscription n’est plus active.');
+    await lockWaitlistEntries(tx, [entry.ticketTypeId]);
     await tx.waitlistEntry.updateMany({ where: { id: entry.id, status: entry.status }, data: { status: 'LEFT' } });
     if (entry.status === 'OFFERED') {
       await releaseOffer(tx, entry);
       await distributeWaitlist(tx, entry.ticketTypeId);
     }
-  });
+  }));
 }
 
 /**
  * Acceptation d'une offre : commande CARD en attente de paiement sur les places DÉJÀ bloquées par l'offre
  * (aucune nouvelle réservation), prix calculés à l'instant de l'acceptation, mêmes règles figées qu'une commande.
+ * Ordre des verrous : événement (partagé) → entrée → … ; ventes ouvertes ; l'échéance de l'offre fait foi ;
+ * plafond par personne revérifié (l'offre est déjà comptée dans les places détenues).
  */
 export async function accept(userId: string, entryId: string) {
-  const orderId = await transaction(async (tx) => {
+  const orderId = await withTxRetry(() => transaction(async (tx) => {
+    const target = await tx.waitlistEntry.findFirst({ where: { id: entryId, userId }, select: { eventId: true } });
+    if (!target) throw errors.notFound();
+    await lockEventShared(tx, target.eventId);
     const entry = await lockOwnEntry(tx, userId, entryId);
     if (entry.status === 'CONVERTED') {
       const existing = await tx.order.findUnique({ where: { waitlistEntryId: entry.id }, select: { id: true } });
@@ -116,16 +123,19 @@ export async function accept(userId: string, entryId: string) {
     if (entry.status !== 'OFFERED' || !entry.offerExpiresAt || entry.offerExpiresAt <= now) {
       throw errors.state('OFFER_EXPIRED', 'Cette offre a expiré.');
     }
-    await lockEventShared(tx, entry.eventId);
     const event = await tx.event.findUniqueOrThrow({
       where: { id: entry.eventId },
       include: { organization: { select: { settings: true } }, ticketTypes: { where: { id: entry.ticketTypeId } } },
     });
     const tt = event.ticketTypes[0];
-    if (!tt || !event.organization.settings || event.status !== 'PUBLISHED' || now >= event.startsAt) {
+    if (!tt || !event.organization.settings || !salesOpen(event, now)) {
       throw errors.state('SALES_CLOSED', 'Les ventes sont terminées pour cet événement.');
     }
     const rules = resolveEventSettings(event.organization.settings, event);
+    const owned = await alreadyOwned(tx, userId, event.id);
+    if (owned > rules.maxPerUser) {
+      throw errors.unprocessable('LIMIT_EXCEEDED', `Au plus ${rules.maxPerUser} place(s) par personne pour cet événement.`, { max: rules.maxPerUser, alreadyOwned: owned - entry.quantity });
+    }
     const unitPriceCents = priceAt(tt, now).unitPriceCents;
     const subtotalCents = lineTotal(unitPriceCents, entry.quantity);
     const serviceFeeCents = computeServiceFee(subtotalCents, rules.serviceFeeFixedCents, rules.serviceFeeBasisPoints);
@@ -152,7 +162,7 @@ export async function accept(userId: string, entryId: string) {
       if (loaded) await settleHeldOrder(tx, loaded, 'PENDING_PAYMENT');
     }
     return order.id;
-  });
+  }));
   return transaction((tx) => viewOwnOrder(tx, userId, orderId));
 }
 
@@ -163,11 +173,12 @@ export async function expireWaitlistOffers(): Promise<{ expired: number }> {
     const done = await transaction(async (tx) => {
       const rows = await tx.$queryRaw<{ id: string }[]>`
         SELECT "id" FROM "waitlist_entries"
-        WHERE "status" = 'OFFERED' AND "offerExpiresAt" <= now()
+        WHERE "status" = 'OFFERED' AND "offerExpiresAt" <= ${clock.now()}
         ORDER BY "offerExpiresAt", "id" LIMIT 1 FOR UPDATE SKIP LOCKED`;
       const id = rows[0]?.id;
       if (!id) return false;
       const entry = await tx.waitlistEntry.findUniqueOrThrow({ where: { id } });
+      await lockWaitlistEntries(tx, [entry.ticketTypeId]);
       const { count } = await tx.waitlistEntry.updateMany({ where: { id, status: 'OFFERED' }, data: { status: 'EXPIRED' } });
       if (count === 1) {
         await releaseOffer(tx, entry);

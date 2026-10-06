@@ -23,9 +23,9 @@ export type Availability = 'AVAILABLE' | 'LOW' | 'SOLD_OUT';
  * places libres (plus petite demande en attente ≤ places libres), le type est « complet » pour le public :
  * ces places lui reviennent d'abord.
  */
-export function availabilityOf(tt: Pick<TicketType, 'capacity' | 'sold' | 'held'>, smallestWaiting: number | null): Availability {
+export function availabilityOf(tt: Pick<TicketType, 'capacity' | 'sold' | 'held'>, waitlistBlocks: boolean): Availability {
   const remaining = tt.capacity - tt.sold - tt.held;
-  if (remaining <= 0 || (smallestWaiting !== null && smallestWaiting <= remaining)) return 'SOLD_OUT';
+  if (remaining <= 0 || waitlistBlocks) return 'SOLD_OUT';
   return remaining * 10 <= tt.capacity ? 'LOW' : 'AVAILABLE';
 }
 

@@ -1,9 +1,9 @@
 import type { Event, OrganizationSettings, Prisma, Role, TicketType } from '../../generated/prisma/client.js';
 import { diff, writeAudit } from '../../lib/audit.js';
 import { clock } from '../../lib/clock.js';
-import { distributeWaitlist, releaseOffer } from '../waitlist/distribute.js';
-import { cancelOrderForEvent } from '../orders/cancel.js';
-import { transaction, type Tx } from '../../lib/db.js';
+import { withTxRetry } from '../../lib/txRetry.js';
+import { distributeWaitlist, lockWaitlistEntries, releaseOffer } from '../waitlist/distribute.js';
+import { getDb, transaction, type Tx } from '../../lib/db.js';
 import { errors, type FieldError } from '../../lib/errors.js';
 import { iso } from '../../lib/schemas.js';
 import { enqueueEmail } from '../../lib/outbox.js';
@@ -31,7 +31,7 @@ export function toTicketTypeAdmin(tt: TicketType) {
   };
 }
 
-export function toEventAdmin(event: EventWithTypes, settings: OrganizationSettings) {
+export function toEventAdmin(event: EventWithTypes, settings: OrganizationSettings, cancellationPendingOrders = 0) {
   return {
     id: event.id,
     orgId: event.orgId,
@@ -50,6 +50,7 @@ export function toEventAdmin(event: EventWithTypes, settings: OrganizationSettin
     offlineCheckinEnabled: event.offlineCheckinEnabled,
     effectiveRules: toPublicRules(resolveEventSettings(settings, event)),
     ticketTypes: event.ticketTypes.map(toTicketTypeAdmin),
+    cancellationPendingOrders,
     createdAt: iso(event.createdAt),
     updatedAt: iso(event.updatedAt),
   };
@@ -91,16 +92,24 @@ function overridesData(input: OverridesInput | undefined): Partial<EventOverride
   return data;
 }
 
+/** Commandes d'un événement annulé restant à traiter par le worker (0 si l'événement n'est pas annulé). */
+async function pendingCancellations(db: Tx, event: { id: string; status: string }): Promise<number> {
+  if (event.status !== 'CANCELLED') return 0;
+  return db.order.count({ where: { eventId: event.id, status: { in: ['PENDING_PAYMENT', 'AWAITING_TRANSFER', 'PAID'] } } });
+}
+
 async function load(tx: Tx, orgId: string, eventId: string) {
   const event = await repo.findEvent(tx, orgId, eventId);
   if (!event) throw errors.notFound();
-  return toEventAdmin(event, await getSettings(tx, orgId));
+  return toEventAdmin(event, await getSettings(tx, orgId), await pendingCancellations(tx, event));
 }
 
 export async function listEvents(orgId: string, status: EventStatusFilter, page: number, pageSize: number) {
   const [rows, total] = await repo.listEvents(orgId, status, page, pageSize);
   const settings = await transaction((tx) => getSettings(tx, orgId));
-  return { items: rows.map((e) => toEventAdmin(e, settings)), page, pageSize, total };
+  const db = getDb();
+  const items = await Promise.all(rows.map(async (e) => toEventAdmin(e, settings, await pendingCancellations(db, e))));
+  return { items, page, pageSize, total };
 }
 type EventStatusFilter = 'DRAFT' | 'PUBLISHED' | 'CANCELLED' | undefined;
 
@@ -275,33 +284,29 @@ export async function publishEvent(orgId: string, actorId: string, eventId: stri
 }
 
 /**
- * Annulation d'un événement (OWNER) : commandes payées remboursées intégralement (frais compris), commandes
- * en attente annulées, liste d'attente close, acheteurs prévenus, audit. Ordre des verrous : events → orders
- * → ticket_types ; les réservations concurrentes (FOR SHARE sur l'événement) attendent puis voient CANCELLED.
+ * Annulation d'un événement (OWNER), contrat 1.14 :
+ * 1. ICI, une petite transaction : statut CANCELLED (plus aucune vente ni scan), liste d'attente fermée
+ *    (offres libérées), audit. Idempotente : un 2e appel renvoie le même état. Refusée si l'événement a commencé.
+ * 2. Les commandes (remboursements, annulations, billets, mails) sont traitées en arrière-plan par le worker
+ *    (`processEventCancellations`), une transaction par commande ; `cancellationPendingOrders` donne le reste.
  */
 export async function cancelEvent(orgId: string, actorId: string, eventId: string, reason: string) {
-  return transaction(async (tx) => {
+  return withTxRetry(() => transaction(async (tx) => {
     if (!(await repo.lockEvent(tx, orgId, eventId))) throw errors.notFound();
-    const { count } = await tx.event.updateMany({
-      where: { id: eventId, orgId, status: { not: 'CANCELLED' } },
-      data: { status: 'CANCELLED', cancelledAt: clock.now(), cancelReason: reason },
-    });
-    if (count !== 1) throw errors.state('INVALID_STATE', 'Cet événement est déjà annulé.');
-    const orders = await tx.order.findMany({
-      where: { eventId, status: { in: ['PENDING_PAYMENT', 'AWAITING_TRANSFER', 'PAID'] } },
-      select: { id: true, status: true },
-      orderBy: { id: 'asc' },
-    });
-    for (const o of orders) await cancelOrderForEvent(tx, o.id, reason);
+    const current = await tx.event.findUniqueOrThrow({ where: { id: eventId }, select: { status: true, startsAt: true } });
+    if (current.status === 'CANCELLED') return load(tx, orgId, eventId);
+    if (current.startsAt.getTime() <= clock.now().getTime()) throw errors.conflict('L’événement a déjà commencé : il ne peut plus être annulé.');
+    await tx.event.update({ where: { id: eventId }, data: { status: 'CANCELLED', cancelledAt: clock.now(), cancelReason: reason } });
+    // Liste d'attente : entrées verrouillées (avant les types), offres libérées, file close.
+    const typeIds = (await tx.ticketType.findMany({ where: { eventId }, select: { id: true }, orderBy: { id: 'asc' } })).map((t) => t.id);
+    await lockWaitlistEntries(tx, typeIds);
     const offered = await tx.waitlistEntry.findMany({ where: { eventId, status: 'OFFERED' }, orderBy: { ticketTypeId: 'asc' } });
     for (const entry of offered) await releaseOffer(tx, entry);
     await tx.waitlistEntry.updateMany({ where: { eventId, status: { in: ['WAITING', 'OFFERED'] } }, data: { status: 'EXPIRED' } });
-    await writeAudit(tx, {
-      orgId, actorId, action: 'event.cancel', target: `event:${eventId}`,
-      meta: { reason, paidOrders: orders.filter((o) => o.status === 'PAID').length, pendingOrders: orders.filter((o) => o.status !== 'PAID').length },
-    });
+    const pending = await tx.order.count({ where: { eventId, status: { in: ['PENDING_PAYMENT', 'AWAITING_TRANSFER', 'PAID'] } } });
+    await writeAudit(tx, { orgId, actorId, action: 'event.cancel', target: `event:${eventId}`, meta: { reason, ordersToProcess: pending, offersReleased: offered.length } });
     return load(tx, orgId, eventId);
-  });
+  }));
 }
 
 // ---------------------------------------------------------------------------
@@ -371,6 +376,7 @@ export async function updateTicketType(orgId: string, actorId: string, eventId: 
     };
     checkEarly(early, event.salesEndAt);
     if (body.capacity !== undefined) {
+      await lockWaitlistEntries(tx, [ticketTypeId]);
       // Réduction de capacité atomique : jamais sous les places vendues + bloquées, même en concurrence avec une réservation.
       const changed = await tx.$executeRaw`
         UPDATE "ticket_types" SET "capacity" = ${body.capacity}, "updatedAt" = now()
