@@ -58,6 +58,7 @@ describe('journalisation (B1.1 M4)', () => {
     await withLogLevel(async () => {
       const { lines, stream } = capture();
       const logger = buildLogger(stream);
+      await Promise.resolve();
       logger.info({
         req: { headers: { authorization: 'Bearer abc.def.ghi', cookie: 'nuits_rt=secret-cookie', 'x-api-key': 'k-secret' } },
         body: { password: 'pw-secret', nested: { token: 'tok-secret', deeper: { iban: 'FR76-secret' } } },

@@ -47,7 +47,7 @@ export function serializeError(err: unknown): Record<string, unknown> {
       target: meta['target'] ?? undefined,
     };
   }
-  if (err instanceof Error) return pino.stdSerializers.err(err) as unknown as Record<string, unknown>;
+  if (err instanceof Error) return pino.stdSerializers.err(err);
   return { type: typeof err };
 }
 
