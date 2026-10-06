@@ -30,6 +30,7 @@ export const ERROR_CODES = [
   'NOT_SOLD_OUT',
   'OFFER_EXPIRED',
   'WAITLIST_DISABLED',
+  'OFFLINE_CHECKIN_DISABLED',
   'CANCELLATION_CLOSED',
   'CONFLICT',
   'LIMIT_EXCEEDED',
@@ -292,6 +293,8 @@ export type EventAdmin = {
   salesStartAt: IsoDateTime;
   salesEndAt: IsoDateTime;
   overrides: EventOverrides;
+  /** Mode secours hors-ligne du contrôle d'accès (v1.13) : défaut false, modifiable par l'OWNER seul. */
+  offlineCheckinEnabled: boolean;
   effectiveRules: EventRulesPublic;
   ticketTypes: TicketTypeAdmin[];
   createdAt: IsoDateTime;
@@ -314,6 +317,8 @@ export type EventPatchBody = Partial<Omit<EventCreateBody, 'overrides'>> & {
   overrides?: Partial<EventOverrides>;
   /** Obligatoire en cas de report (dates modifiées alors qu'il existe des commandes) — OWNER seulement (v1.7). */
   rescheduleReason?: string;
+  /** OWNER seulement (v1.13). */
+  offlineCheckinEnabled?: boolean;
 };
 export type TicketTypeBody = {
   name: string;
@@ -395,6 +400,8 @@ export type CheckinEvent = {
   endsAt: IsoDateTime;
   timezone: IanaTimeZone;
   status: EventStatus;
+  /** Mode secours hors-ligne autorisé pour cet événement (v1.13). */
+  offlineCheckinEnabled: boolean;
 };
 export type PublicKeyJwk = { kty: 'OKP'; crv: 'Ed25519'; x: string };
 export type SnapshotTicket = {

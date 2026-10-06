@@ -7,6 +7,9 @@ interface ImportMetaEnv {
   readonly VITE_PSP_ORIGIN?: string;
 }
 
+/** Version de l'application (package.json + date de build), affichée dans le scanner. */
+declare const __APP_VERSION__: string;
+
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }

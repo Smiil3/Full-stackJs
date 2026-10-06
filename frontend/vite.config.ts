@@ -31,6 +31,9 @@ export default defineConfig(({ mode, command }) => {
     throw new Error('Build refusé : le mode « mock » est réservé au serveur de développement.');
   }
   return {
+  define: {
+    __APP_VERSION__: JSON.stringify(`${(JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')) as { version: string }).version}+${new Date().toISOString().slice(0, 10)}`),
+  },
   plugins: [
     react(),
     mode === 'mock' ? mswWorkerDevOnly() : null,

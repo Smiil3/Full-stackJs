@@ -268,7 +268,7 @@ describe('MSW — couverture du contrat', () => {
     const { items } = await apiRequest<{ items: Record<string, unknown>[] }>(apiPath`/orgs/${IDS.orgNuits}/checkin/events`);
     expect(items.map((e) => e.id)).toContain(IDS.eventConcert);
     expect(items.map((e) => e.id)).not.toContain(IDS.eventDraft);
-    expect(Object.keys(items[0] ?? {}).sort()).toEqual(['endsAt', 'id', 'isOnline', 'startsAt', 'status', 'timezone', 'title', 'venue']);
+    expect(Object.keys(items[0] ?? {}).sort()).toEqual(['endsAt', 'id', 'isOnline', 'offlineCheckinEnabled', 'startsAt', 'status', 'timezone', 'title', 'venue']);
     await expect(apiRequest('/events', { auth: false, query: { page: 1001 } })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
   });
 

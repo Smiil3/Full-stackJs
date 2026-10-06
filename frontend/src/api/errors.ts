@@ -57,6 +57,7 @@ const MESSAGES: Record<AnyErrorCode, string> = {
   ALREADY_IN_WAITLIST: 'Vous êtes déjà inscrit·e sur la liste d’attente pour ces places.',
   NOT_SOLD_OUT: 'Des places sont de nouveau disponibles : vous pouvez réserver directement.',
   OFFER_EXPIRED: 'Cette offre de la liste d’attente a expiré.',
+  OFFLINE_CHECKIN_DISABLED: 'Le mode secours hors-ligne n’est pas activé pour cet événement.',
   WAITLIST_DISABLED: 'La liste d’attente n’est pas proposée pour cet événement.',
   CANCELLATION_CLOSED: 'L’annulation n’est plus possible pour cette commande.',
   CONFLICT: 'Cette action entre en conflit avec l’état actuel. Rechargez la page.',

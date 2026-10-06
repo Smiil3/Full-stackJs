@@ -177,3 +177,4 @@ legend { font-weight: 800; padding: 0 var(--space-2); }
 .scan-result__actions { display: flex; flex-direction: column; gap: var(--space-3); width: 100%; max-width: 24rem; }
 .scan-result__btn { min-height: 64px; font-size: 1.25rem; background: #fff; color: #111; }
 .scan-result .btn--secondary.scan-result__btn { background: transparent; color: #fff; border-color: #fff; }
+.scan-result--pending { background: #3a3a46; }

@@ -305,6 +305,7 @@ export const orgHandlers = [
       salesStartAt: d.salesStartAt ?? now,
       salesEndAt: d.salesEndAt ?? now,
       overrides: { ...NO_OVERRIDES, ...(d.overrides as Partial<typeof NO_OVERRIDES> | undefined) },
+      offlineCheckinEnabled: false,
       createdAt: now,
       updatedAt: now,
     };
@@ -324,7 +325,8 @@ export const orgHandlers = [
     const orgId = param(params, 'orgId');
     const actor = requireOrgRole(request, orgId, 'MANAGER');
     const e = orgEvent(orgId, param(params, 'eventId'));
-    const v = await readBody(request, [...EVENT_FIELDS, 'rescheduleReason']);
+    const v = await readBody(request, [...EVENT_FIELDS, 'rescheduleReason', 'offlineCheckinEnabled']);
+    const offline = v.bool('offlineCheckinEnabled', { optional: true });
     const d = validateEventBody(v, true);
     const rescheduleReason = v.str('rescheduleReason', { optional: true, min: 1, max: 500 });
     const merged = { ...e, ...Object.fromEntries(Object.entries(d).filter(([k, val]) => val !== undefined && k !== 'overrides')) };
@@ -336,6 +338,13 @@ export const orgHandlers = [
     if (merged.salesEndAt > merged.endsAt) v.custom('salesEndAt', 'Doit être avant la fin de l’événement');
     v.done();
     if (e.status === 'CANCELLED') fail(409, 'CONFLICT', 'Événement annulé');
+    const role = mock.db.memberships.find((m) => m.orgId === orgId && m.userId === actor.id)?.role;
+    if (typeof offline === 'boolean' && role !== 'OWNER') fail(403, 'FORBIDDEN', 'Mode secours réservé au propriétaire');
+    if (typeof offline === 'boolean' && offline !== e.offlineCheckinEnabled) {
+      e.offlineCheckinEnabled = offline;
+      audit(orgId, actor, offline ? 'event.offlineCheckin.enable' : 'event.offlineCheckin.disable', `event:${e.id}`);
+    }
+    merged.offlineCheckinEnabled = e.offlineCheckinEnabled; // la copie fusionnée ne doit pas réécrire l'ancienne valeur
     if (isReschedule && mock.db.memberships.find((m) => m.orgId === orgId && m.userId === actor.id)?.role !== 'OWNER') fail(403, 'FORBIDDEN', 'Report réservé au propriétaire');
     if (isReschedule) {
       for (const o of mock.db.orders.filter((x) => x.eventId === e.id && x.status === 'PAID')) {
@@ -575,7 +584,7 @@ export const orgHandlers = [
     const items = mock.db.events
       .filter((e) => e.orgId === orgId && e.status === 'PUBLISHED' && Date.parse(e.endsAt) > limit)
       .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
-      .map((e) => ({ id: e.id, title: e.title, venue: e.venue, isOnline: e.isOnline, startsAt: e.startsAt, endsAt: e.endsAt, timezone: e.timezone, status: e.status }));
+      .map((e) => ({ id: e.id, title: e.title, venue: e.venue, isOnline: e.isOnline, startsAt: e.startsAt, endsAt: e.endsAt, timezone: e.timezone, status: e.status, offlineCheckinEnabled: e.offlineCheckinEnabled }));
     return json({ items });
   }),
 
@@ -584,6 +593,7 @@ export const orgHandlers = [
     requireOrgRole(request, orgId, 'SCANNER');
     const e = orgEvent(orgId, param(params, 'eventId'));
     if (!checkinOpen(e)) return notFound();
+    if (!e.offlineCheckinEnabled) return fail(409, 'OFFLINE_CHECKIN_DISABLED', 'Mode secours hors-ligne désactivé');
     return json({
       eventId: e.id,
       generatedAt: new Date().toISOString(),

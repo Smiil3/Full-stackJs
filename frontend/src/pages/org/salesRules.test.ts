@@ -64,7 +64,7 @@ describe('formulaire d’événement', () => {
   const event: EventAdmin = {
     id: 'e', orgId: 'o', title: 'Concert', description: null, venue: 'Salle', address: null, isOnline: false,
     startsAt: '2026-11-14T19:00:00.000Z', endsAt: '2026-11-14T23:00:00.000Z', timezone: 'Europe/Paris', status: 'PUBLISHED',
-    salesStartAt: '2026-10-01T08:00:00.000Z', salesEndAt: '2026-11-14T19:00:00.000Z', overrides: { ...NO_OVERRIDES },
+    salesStartAt: '2026-10-01T08:00:00.000Z', salesEndAt: '2026-11-14T19:00:00.000Z', overrides: { ...NO_OVERRIDES }, offlineCheckinEnabled: false,
     effectiveRules: { maxPerOrder: 6, maxPerUser: 6, transferEnabled: true, cardHoldMinutes: 15, transferHoldHours: 72, selfCancellationEnabled: true, cancellationDeadlineHours: 48, refundPercent: 100, serviceFeeFixedCents: 50, serviceFeeBasisPoints: 250, waitlistEnabled: true },
     ticketTypes: [{ id: 't', name: 'Fosse', description: null, capacity: 100, sold: 3, held: 0, remaining: 97, priceCents: 2500, earlyPriceCents: null, earlyUntil: null, sortOrder: 0 }],
     createdAt: '', updatedAt: '',

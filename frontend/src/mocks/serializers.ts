@@ -138,6 +138,7 @@ export function toEventAdmin(e: MockEvent): EventAdmin {
     salesStartAt: e.salesStartAt,
     salesEndAt: e.salesEndAt,
     overrides: { ...e.overrides },
+    offlineCheckinEnabled: e.offlineCheckinEnabled,
     effectiveRules: effectiveRules(db(), e),
     ticketTypes: typesOf(e.id).map(toTicketTypeAdmin),
     createdAt: e.createdAt,

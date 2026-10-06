@@ -1,4 +1,8 @@
+import { useState } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router';
+import { ownerHash, pendingCount, scannerStorageAvailable } from '../scanner/db';
+import { ScannerBackgroundSync } from '../scanner/ui/BackgroundSync';
+import { ConfirmDialog } from './ConfirmDialog';
 import { useAuth } from '../auth/AuthContext';
 import { roleAtLeast } from '../auth/roles';
 import { useOnline } from '../lib/hooks/useOnline';
@@ -15,9 +19,19 @@ export function Layout() {
   const canScan = (user?.memberships.length ?? 0) > 0 || status === 'offline';
   const navClass = ({ isActive }: { isActive: boolean }) => (isActive ? `${styles.link} ${styles.active}` : styles.link);
 
-  const onLogout = async () => {
+  const [pendingAtLogout, setPendingAtLogout] = useState<{ count: number; step: 1 | 2 } | null>(null);
+
+  const doLogout = async () => {
+    setPendingAtLogout(null);
     await logout();
     await navigate('/', { replace: true });
+  };
+
+  /** Passages hors-ligne non transmis : on ne se déconnecte pas sans avertissement (la file est conservée). */
+  const onLogout = async () => {
+    const count = user && scannerStorageAvailable() ? await ownerHash(user.id).then((h) => pendingCount(undefined, h)).catch(() => 0) : 0;
+    if (count > 0) setPendingAtLogout({ count, step: 1 });
+    else await doLogout();
   };
 
   return (
@@ -86,6 +100,30 @@ export function Layout() {
       <main id="contenu" className={styles.main} tabIndex={-1}>
         <Outlet />
       </main>
+      <ConfirmDialog
+        open={pendingAtLogout?.step === 1}
+        title="Passages non transmis"
+        confirmLabel="Déconnecter quand même"
+        cancelLabel="Rester connecté"
+        danger
+        onCancel={() => setPendingAtLogout(null)}
+        onConfirm={() => setPendingAtLogout((p) => (p ? { ...p, step: 2 } : p))}
+      >
+        <p>
+          <strong>{pendingAtLogout?.count} passage(s) non transmis</strong> : reconnectez-vous au réseau d’abord pour les synchroniser.
+        </p>
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={pendingAtLogout?.step === 2}
+        title="Confirmer la déconnexion ?"
+        confirmLabel="Me déconnecter"
+        danger
+        onCancel={() => setPendingAtLogout(null)}
+        onConfirm={() => void doLogout()}
+      >
+        <p>Les passages restent enregistrés sur cet appareil et seront transmis à votre prochaine connexion ici.</p>
+      </ConfirmDialog>
+      <ScannerBackgroundSync />
       <footer className={styles.footer}>Billetterie des Nuits de la Garonne</footer>
     </div>
   );

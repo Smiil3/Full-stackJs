@@ -55,6 +55,7 @@ export type MockEvent = {
   salesStartAt: string;
   salesEndAt: string;
   overrides: EventOverrides;
+  offlineCheckinEnabled: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -237,7 +238,8 @@ export function createSeed(now: number = Date.now()): MockDb {
     [IDS.orgPartner, { ...DEFAULT_SETTINGS, contactEmail: null, bank: { beneficiary: null, iban: null, bic: null } }],
   ]);
 
-  const ev = (e: Omit<MockEvent, 'createdAt' | 'updatedAt' | 'overrides'> & { overrides?: Partial<EventOverrides> }): MockEvent => ({
+  const ev = (e: Omit<MockEvent, 'createdAt' | 'updatedAt' | 'overrides' | 'offlineCheckinEnabled'> & { overrides?: Partial<EventOverrides>; offlineCheckinEnabled?: boolean }): MockEvent => ({
+    offlineCheckinEnabled: false,
     ...e,
     overrides: { ...NO_OVERRIDES, ...e.overrides },
     createdAt: created,
@@ -260,6 +262,7 @@ export function createSeed(now: number = Date.now()): MockDb {
       status: 'PUBLISHED',
       salesStartAt: iso(now - 10 * DAY),
       salesEndAt: iso(Math.max(concertStart, now + 20 * DAY)),
+      offlineCheckinEnabled: true, // démo du mode secours
     }),
     ev({
       id: IDS.eventSoldOut,

@@ -8,7 +8,8 @@ const SAME_CODE_DEBOUNCE_MS = 3000;
  * Lecture continue des QR par la caméra arrière. `paused` : les lectures sont ignorées (résultat affiché).
  * Le flux vidéo est arrêté au démontage (pas de caméra laissée allumée).
  */
-export function CameraScanner({ onCode, paused }: { onCode: (text: string) => void; paused: boolean }) {
+/** `onCode` renvoie false si la lecture a été ignorée (traitement en cours) : elle n'est alors pas mémorisée. */
+export function CameraScanner({ onCode, paused }: { onCode: (text: string) => boolean; paused: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const onCodeRef = useRef(onCode);
   const pausedRef = useRef(paused);
@@ -34,8 +35,7 @@ export function CameraScanner({ onCode, paused }: { onCode: (text: string) => vo
         const text = result.getText();
         const now = Date.now();
         if (last.current && last.current.text === text && now - last.current.at < SAME_CODE_DEBOUNCE_MS) return;
-        last.current = { text, at: now };
-        onCodeRef.current(text);
+        if (onCodeRef.current(text)) last.current = { text, at: now };
       })
       .then((c) => {
         if (stopped) c.stop();

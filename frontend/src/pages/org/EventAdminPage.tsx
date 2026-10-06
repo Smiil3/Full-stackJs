@@ -13,6 +13,7 @@ import { EVENT_STATUS_LABELS } from '../../lib/labels';
 import { lookup } from '../../lib/lookup';
 import { EventEditor } from './EventEditor';
 import { TicketTypesEditor } from './TicketTypesEditor';
+import { OfflineCheckinSetting } from './OfflineCheckinSetting';
 
 /** Titre recopié : tolère composition Unicode (NFC), espaces multiples et bords. */
 const normalizeTitle = (s: string) => s.normalize('NFC').replace(/\s+/g, ' ').trim();
@@ -92,6 +93,8 @@ export function EventAdminPage() {
       ) : null}
 
       <TicketTypesEditor orgId={orgId} event={event} readOnly={cancelled} />
+
+      {!cancelled ? <OfflineCheckinSetting orgId={orgId} event={event} canEdit={role === 'OWNER'} /> : null}
 
       {!cancelled ? (
         <section className="stack" aria-labelledby="titre-infos">

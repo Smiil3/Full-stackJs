@@ -6,7 +6,7 @@ export function ResultOverlay(props: { outcome: ScanOutcome; timezone: string; o
   const v = describeOutcome(props.outcome, props.timezone);
   const decision = props.outcome.kind === 'UNKNOWN_AUTHENTIC';
   return (
-    <div className={`scan-result scan-result--${v.tone}`} role="alertdialog" aria-modal="true" aria-labelledby="scan-result-title" aria-describedby="scan-result-detail">
+    <div className={`scan-result scan-result--${v.tone}`} role="alertdialog" aria-modal="true" aria-labelledby="scan-result-title" aria-describedby={v.detail ? 'scan-result-detail' : undefined}>
       <p id="scan-result-title" className="scan-result__title">
         {v.title}
       </p>
@@ -18,7 +18,8 @@ export function ResultOverlay(props: { outcome: ScanOutcome; timezone: string; o
       {props.outcome.offline ? <p className="scan-result__mode">Vérifié hors-ligne</p> : null}
       {decision ? (
         <div className="scan-result__actions">
-          <button type="button" className="btn btn--block scan-result__btn" disabled={props.busy} onClick={props.onAdmit}>
+          {/* eslint-disable-next-line jsx-a11y/no-autofocus -- décision immédiate attendue sur cet écran plein écran */}
+          <button type="button" className="btn btn--block scan-result__btn" autoFocus disabled={props.busy} onClick={props.onAdmit}>
             Laisser entrer
           </button>
           <button type="button" className="btn btn--block btn--secondary scan-result__btn" onClick={props.onClose}>
@@ -26,7 +27,8 @@ export function ResultOverlay(props: { outcome: ScanOutcome; timezone: string; o
           </button>
         </div>
       ) : (
-        <button type="button" className="btn btn--block scan-result__btn" onClick={props.onClose}>
+        // eslint-disable-next-line jsx-a11y/no-autofocus -- fermeture au clavier / lecteur d'écran immédiate
+        <button type="button" className="btn btn--block scan-result__btn" autoFocus onClick={props.onClose}>
           Scanner le suivant
         </button>
       )}

@@ -6,6 +6,7 @@ import { PageLoader } from '../components/PageLoader';
 import { useAuth } from './AuthContext';
 import { hasOrgRole } from './roles';
 import { loginPathWithNext, safeRedirectPath } from './safeRedirect';
+import { useScannerAccess } from '../scanner/ui/useScannerData';
 
 /**
  * Gardes de routes : CONFORT UX uniquement. La sécurité est assurée par l'API (404/403),
@@ -43,7 +44,12 @@ export function RequirePlatformAdmin({ children }: { children: ReactNode }) {
 export function RequireScannerAccess({ children }: { children: ReactNode }) {
   const { status, user } = useAuth();
   const { orgId } = useParams();
-  if (status === 'offline') return children;
+  const access = useScannerAccess();
+  if (status === 'offline') {
+    // Hors-ligne : accès accordé seulement si le dernier compte validé en ligne contrôle ce collectif.
+    if (access.isPending) return <PageLoader />;
+    return orgId && access.data?.orgIds.includes(orgId) ? children : <Forbidden />;
+  }
   if (!hasOrgRole(user, orgId, 'SCANNER')) return <Forbidden />;
   return children;
 }

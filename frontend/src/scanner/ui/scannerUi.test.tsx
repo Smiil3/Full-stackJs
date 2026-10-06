@@ -1,181 +1,222 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { apiRequest, login, logout } from '../../api/client';
 import type { Order } from '../../api/types';
 import { injectFault, mock } from '../../mocks/core';
 import { markPaid } from '../../mocks/domain';
 import { DEMO_PASSWORD, IDS } from '../../mocks/state';
 import { renderApp } from '../../test/renderApp';
-import { pendingCount } from '../db';
+import { __wipeScannerForTests, pendingCount } from '../db';
 
-const SCAN = `/scan/${IDS.orgNuits}/${IDS.eventConcert}`;
+/** Concert : mode secours AUTORISÉ (seed mock). Nuit Électro : contrôle en ligne uniquement. */
+const RESCUE = `/scan/${IDS.orgNuits}/${IDS.eventConcert}`;
+const ONLINE_ONLY = `/scan/${IDS.orgNuits}/${IDS.eventSoldOut}`;
+const SCAN_ROUTE = 'POST /orgs/:orgId/events/:eventId/checkin/scan';
 
-async function buy(qty = 1): Promise<string[]> {
+// Pages chargées à la demande : transformées une fois avant les tests.
+beforeAll(async () => {
+  await Promise.all([import('./ScannerHomePage'), import('./ScannerPage')]);
+}, 30_000);
+vi.setConfig({ testTimeout: 20_000 });
+afterEach(async () => {
+  await __wipeScannerForTests();
+});
+
+async function buy(eventId: string, ticketTypeId: string, qty = 1): Promise<string[]> {
   await login('acheteur@example.test', DEMO_PASSWORD);
-  const order = await apiRequest<Order>('/orders', { method: 'POST', body: { eventId: IDS.eventConcert, paymentMethod: 'CARD', items: [{ ticketTypeId: IDS.ttFosse, quantity: qty }] }, headers: { 'Idempotency-Key': crypto.randomUUID() } });
+  const tt = mock.db.ticketTypes.find((t) => t.id === ticketTypeId);
+  if (tt) tt.held = 0; // places disponibles pour le test
+  const order = await apiRequest<Order>('/orders', { method: 'POST', body: { eventId, paymentMethod: 'CARD', items: [{ ticketTypeId, quantity: qty }] }, headers: { 'Idempotency-Key': crypto.randomUUID() } });
   const stored = mock.db.orders.find((o) => o.id === order.id);
   if (stored) await markPaid(stored);
   await logout();
   return mock.db.tickets.filter((t) => t.orderId === order.id).map((t) => t.qrPayload);
 }
+const buyConcert = (qty = 1) => buy(IDS.eventConcert, IDS.ttFosse, qty);
 
 function setOnline(value: boolean) {
   Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => value });
   window.dispatchEvent(new Event(value ? 'online' : 'offline'));
 }
 
-async function prepareAndOpen(user: ReturnType<typeof userEvent.setup>) {
-  const app = await renderApp('/scan', { as: 'scanner@nuits.test' });
-  const card = (await screen.findByRole('heading', { name: /Garonne Électrique/ })).closest('li') as HTMLElement;
-  await user.click(within(card).getByRole('button', { name: 'Préparer l’entrée hors-ligne' }));
-  await user.click(await within(card).findByRole('link', { name: 'Contrôler les entrées' }));
-  await screen.findByLabelText('Saisie manuelle du code');
-  return app;
-}
-
 async function scanManually(user: ReturnType<typeof userEvent.setup>, code: string) {
   await user.type(screen.getByLabelText('Saisie manuelle du code'), code);
   await user.click(screen.getByRole('button', { name: 'Vérifier' }));
-  return screen.findByRole('alertdialog');
 }
 
-// Pages chargées à la demande : transformées une fois avant les tests (sinon le 1er test paie ce coût).
-beforeAll(async () => {
-  await Promise.all([import('./ScannerHomePage'), import('./ScannerPage')]);
-}, 30_000);
-vi.setConfig({ testTimeout: 20_000 });
+async function openRescue(user: ReturnType<typeof userEvent.setup>) {
+  await renderApp(RESCUE, { as: 'scanner@nuits.test' });
+  await user.click(await screen.findByRole('button', { name: 'Préparer l’entrée hors-ligne' }));
+  expect(await screen.findByText(/Mode secours hors-ligne/)).toBeInTheDocument();
+}
 
-describe('scanner : interface', () => {
-  it('préparation hors-ligne puis scan en ligne : vert « OK — Fosse — J.D. », puis rouge « DÉJÀ UTILISÉ à HH:MM »', async () => {
-    const user = userEvent.setup();
-    const [qr] = await buy(1);
-    await prepareAndOpen(user);
-    expect(screen.getByText(/Caméra indisponible|Impossible de démarrer la caméra/)).toBeInTheDocument(); // jsdom : saisie manuelle
-    let result = await scanManually(user, qr ?? '');
-    expect(result).toHaveClass('scan-result--ok');
-    expect(result).toHaveTextContent('OK');
-    expect(result).toHaveTextContent('Fosse — J.D.');
-    await user.click(within(result).getByRole('button', { name: 'Scanner le suivant' }));
-    result = await scanManually(user, qr ?? '');
-    expect(result).toHaveClass('scan-result--ko');
-    expect(result).toHaveTextContent(/DÉJÀ UTILISÉ à \d{2}:\d{2}/);
+describe('scanner — mode par défaut EN LIGNE', () => {
+  it('accueil : aucun téléchargement de liste pour un événement sans mode secours', async () => {
+    await renderApp('/scan', { as: 'scanner@nuits.test' });
+    const card = (await screen.findByRole('heading', { name: /Nuit Électro/ })).closest('li') as HTMLElement;
+    expect(within(card).getByText(/Contrôle en ligne/)).toBeInTheDocument();
+    expect(within(card).queryByRole('button', { name: /Préparer/ })).toBeNull();
+    expect(within(card).getByRole('link', { name: 'Contrôler les entrées' })).toBeInTheDocument();
   });
 
-  it('QR falsifié ⇒ rouge « INVALIDE » ; résultat fermé automatiquement', async () => {
-    // Pas de faux minuteurs ici : IndexedDB (simulé) en dépend.
+  it('OK (fermé automatiquement) puis DÉJÀ UTILISÉ qui RESTE affiché jusqu’à un appui (H4)', async () => {
     const user = userEvent.setup();
-    await buy(1);
-    await prepareAndOpen(user);
-    const result = await scanManually(user, 'NG1.faux');
-    expect(result).toHaveTextContent('INVALIDE');
+    const [qr] = await buy(IDS.eventSoldOut, IDS.ttSoldOut);
+    await renderApp(ONLINE_ONLY, { as: 'scanner@nuits.test' });
+    await screen.findByLabelText('Saisie manuelle du code');
+    await scanManually(user, qr ?? '');
+    const ok = await screen.findByRole('alertdialog');
+    expect(ok).toHaveClass('scan-result--ok');
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull(), { timeout: 4000 });
+    await scanManually(user, qr ?? '');
+    const ko = await screen.findByRole('alertdialog');
+    expect(ko).toHaveTextContent(/DÉJÀ UTILISÉ à \d{2}:\d{2}/);
+    await new Promise((r) => setTimeout(r, 3000));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('DÉJÀ UTILISÉ'); // toujours là
+    await user.click(within(ko).getByRole('button', { name: 'Scanner le suivant' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(await pendingCount()).toBe(0); // rien en file en mode en ligne
   });
 
-  it('HORS-LIGNE : vérification locale, compteur de synchro, synchro automatique au retour du réseau', async () => {
+  it('INVALIDE reste affiché (H4)', async () => {
     const user = userEvent.setup();
-    const [qr1, qr2] = await buy(2);
-    await prepareAndOpen(user);
+    await renderApp(ONLINE_ONLY, { as: 'scanner@nuits.test' });
+    await screen.findByLabelText('Saisie manuelle du code');
+    await scanManually(user, 'NG1.faux');
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('INVALIDE');
+    await new Promise((r) => setTimeout(r, 3000));
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('INVALIDE');
+  });
+
+  it('réseau coupé ⇒ « Vérification impossible — réessayez », personne n’entre ; « Réessayer » ⇒ OK', async () => {
+    const user = userEvent.setup();
+    const [qr] = await buy(IDS.eventSoldOut, IDS.ttSoldOut);
+    await renderApp(ONLINE_ONLY, { as: 'scanner@nuits.test' });
+    await screen.findByLabelText('Saisie manuelle du code');
+    injectFault({ route: SCAN_ROUTE, status: 0, code: 'INTERNAL_ERROR', network: true, times: 99 });
+    await scanManually(user, qr ?? '');
+    expect(await screen.findByText('Vérification en cours…')).toBeInTheDocument();
+    const fail = await screen.findByRole('alertdialog', {}, { timeout: 15_000 });
+    expect(fail).toHaveTextContent('Vérification impossible — réessayez');
+    expect(fail).toHaveTextContent('ne laissez pas entrer');
+    expect(mock.db.tickets.find((t) => t.qrPayload === qr)?.status).toBe('VALID');
+    const { clearFaults } = await import('../../mocks/core');
+    clearFaults();
+    await user.click(within(fail).getByRole('button', { name: 'Réessayer' }));
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('OK');
+  });
+
+  it('hors-ligne sans mode secours ⇒ message « pas de réseau, ne laissez entrer personne »', async () => {
+    await renderApp(ONLINE_ONLY, { as: 'scanner@nuits.test' });
+    await screen.findByLabelText('Saisie manuelle du code');
     setOnline(false);
-    expect(await screen.findByText('Hors-ligne', { selector: '.badge' })).toBeInTheDocument();
-    let result = await scanManually(user, qr1 ?? '');
-    expect(result).toHaveTextContent('OK');
-    expect(result).toHaveTextContent('Vérifié hors-ligne');
-    await user.click(within(result).getByRole('button', { name: 'Scanner le suivant' }));
-    result = await scanManually(user, qr1 ?? '');
-    expect(result).toHaveTextContent('DÉJÀ UTILISÉ');
-    await user.click(within(result).getByRole('button', { name: 'Scanner le suivant' }));
+    expect(await screen.findByText(/Pas de réseau : les billets ne peuvent pas être vérifiés/)).toBeInTheDocument();
+  });
+});
+
+describe('scanner — mode SECOURS hors-ligne', () => {
+  it('bandeau de risque permanent ; hors-ligne : OK local puis DÉJÀ UTILISÉ ; synchro au retour du réseau', async () => {
+    const user = userEvent.setup();
+    const [qr1, qr2] = await buyConcert(2);
+    await openRescue(user);
+    expect(screen.getByText(/risque de double entrée si plusieurs appareils/)).toBeInTheDocument();
+    setOnline(false);
+    await scanManually(user, qr1 ?? '');
+    let r = await screen.findByRole('alertdialog');
+    expect(r).toHaveTextContent('Vérifié hors-ligne');
+    expect((await screen.findByText(/Vérification locale/)).closest('p')).toHaveTextContent('pas de réseau');
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull(), { timeout: 4000 });
+    await scanManually(user, qr1 ?? '');
+    r = await screen.findByRole('alertdialog');
+    expect(r).toHaveTextContent('DÉJÀ UTILISÉ');
+    await user.click(within(r).getByRole('button', { name: 'Scanner le suivant' }));
     await scanManually(user, qr2 ?? '');
-    expect(await screen.findByText(/scans en attente de synchro/)).toHaveTextContent('2 scans en attente de synchro');
-    expect(mock.db.calls.get('POST /orgs/:orgId/events/:eventId/checkin/sync') ?? 0).toBe(0);
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull(), { timeout: 4000 });
+    expect(await screen.findByText(/scans en attente de synchro/)).toHaveTextContent('2 scans');
     setOnline(true);
-    await waitFor(() => expect(mock.db.calls.get('POST /orgs/:orgId/events/:eventId/checkin/sync') ?? 0).toBeGreaterThan(0));
-    await waitFor(async () => expect(await pendingCount(IDS.eventConcert)).toBe(0));
+    await waitFor(async () => expect(await pendingCount()).toBe(0), { timeout: 10_000 });
     expect(await screen.findByText(/Synchronisé : 2 entrée\(s\) confirmée\(s\)/)).toBeInTheDocument();
   });
 
-  it('conflit de synchro affiché (billet entré à une autre porte pendant la coupure)', async () => {
+  it('billet absent de la liste ⇒ orange, « Laisser entrer » (une seule fois même en double appui)', async () => {
     const user = userEvent.setup();
-    const [qr] = await buy(1);
-    await prepareAndOpen(user);
-    setOnline(false);
-    await scanManually(user, qr ?? '');
-    const t = mock.db.tickets.find((x) => x.qrPayload === qr);
-    if (t) Object.assign(t, { status: 'USED', usedAt: '2026-11-14T20:04:00.000Z' });
-    setOnline(true);
-    const heading = await screen.findByRole('heading', { name: 'Conflits (1)' });
-    const section = heading.closest('section') as HTMLElement;
-    expect(within(section).getByText('déjà utilisé')).toBeInTheDocument();
-    expect(within(section).getByText(/déjà entré à 21:04/)).toBeInTheDocument();
-  });
-
-  it('délai de 3 s ou panne ⇒ décision locale sans attendre le serveur', async () => {
-    const user = userEvent.setup();
-    const [qr] = await buy(1);
-    await prepareAndOpen(user);
-    injectFault({ route: 'POST /orgs/:orgId/events/:eventId/checkin/scan', status: 503, code: 'INTERNAL_ERROR' });
-    const result = await scanManually(user, qr ?? '');
-    expect(result).toHaveTextContent('OK');
-    expect(result).toHaveTextContent('Vérifié hors-ligne');
-  });
-
-  it('billet authentique absent de la liste (hors-ligne) ⇒ orange avec choix « Laisser entrer » / « Refuser »', async () => {
-    const user = userEvent.setup();
-    await buy(1);
-    await prepareAndOpen(user);
-    // Billet vendu APRÈS la préparation (authentique, signé par le serveur, absent de la liste locale).
+    await buyConcert(1);
+    await openRescue(user);
     const { signQr, randomPublicId } = await import('../../mocks/crypto');
     const late = await signQr(IDS.eventConcert, randomPublicId());
     setOnline(false);
-    const result = await scanManually(user, late);
-    expect(result).toHaveClass('scan-result--warn');
-    expect(result).toHaveTextContent('Billet authentique non présent dans la liste — vérifier en ligne si possible');
-    await user.click(within(result).getByRole('button', { name: 'Laisser entrer' }));
+    await scanManually(user, late);
+    const r = await screen.findByRole('alertdialog');
+    expect(r).toHaveClass('scan-result--warn');
+    expect(r).toHaveTextContent('Billet authentique non présent dans la liste — vérifier en ligne si possible');
+    const admit = within(r).getByRole('button', { name: 'Laisser entrer' });
+    await user.dblClick(admit);
     expect(await screen.findByRole('alertdialog')).toHaveTextContent('OK');
-    expect(await pendingCount(IDS.eventConcert)).toBe(1);
+    expect(await pendingCount()).toBe(1);
   });
 
-  it('autre événement ⇒ orange « AUTRE ÉVÉNEMENT »', async () => {
+  it('conflit affiché, à valider par « J’ai pris connaissance »', async () => {
     const user = userEvent.setup();
-    await buy(1);
-    await prepareAndOpen(user);
-    const { signQr } = await import('../../mocks/crypto');
-    const { bytesToBase64url } = await import('../../lib/base64url');
-    const other = await signQr(IDS.eventSoldOut, bytesToBase64url(new Uint8Array(16).fill(3)));
-    const result = await scanManually(user, other);
-    expect(result).toHaveClass('scan-result--warn');
-    expect(result).toHaveTextContent('AUTRE ÉVÉNEMENT');
+    const [qr] = await buyConcert(1);
+    await openRescue(user);
+    setOnline(false);
+    await scanManually(user, qr ?? '');
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull(), { timeout: 4000 });
+    const t = mock.db.tickets.find((x) => x.qrPayload === qr);
+    if (t) Object.assign(t, { status: 'USED', usedAt: '2026-11-14T20:04:00.000Z' });
+    setOnline(true);
+    const section = (await screen.findByRole('heading', { name: 'Conflits (1)' }, { timeout: 10_000 })).closest('section') as HTMLElement;
+    expect(within(section).getByText(/déjà entré à 21:04/)).toBeInTheDocument();
+    await user.click(within(section).getByRole('button', { name: 'J’ai pris connaissance' }));
+    await waitFor(() => expect(within(section).queryByRole('button', { name: 'J’ai pris connaissance' })).toBeNull());
   });
 
-  it('v1.12 : âge de la liste affiché, avertissement si ancienne, mise à jour en un clic', async () => {
+  it('H1 : déconnexion avec passages non transmis ⇒ blocage, double confirmation, file CONSERVÉE', async () => {
     const user = userEvent.setup();
-    await buy(1);
-    await prepareAndOpen(user);
-    expect(screen.getByText(/Liste téléchargée il y a/)).toBeInTheDocument();
-    expect(screen.queryByText(/Liste ancienne/)).toBeNull();
-    const { scannerDb } = await import('../db');
-    const db = await scannerDb();
-    const meta = await db.get('snapshots', IDS.eventConcert);
-    if (meta) await db.put('snapshots', { ...meta, savedAt: new Date(Date.now() - 3 * 3_600_000).toISOString() });
-    // nouvelle visite de la page
-    await renderApp(SCAN);
-    expect((await screen.findAllByText(/Liste ancienne : mettez-la à jour/)).length).toBeGreaterThan(0);
-    const before = mock.db.calls.get('GET /orgs/:orgId/events/:eventId/checkin/snapshot') ?? 0;
-    await user.click(screen.getAllByRole('button', { name: 'Mettre à jour la liste' }).at(-1) as HTMLElement);
-    await waitFor(() => expect(mock.db.calls.get('GET /orgs/:orgId/events/:eventId/checkin/snapshot') ?? 0).toBe(before + 1));
+    const [qr] = await buyConcert(1);
+    await openRescue(user);
+    setOnline(false);
+    await scanManually(user, qr ?? '');
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull(), { timeout: 4000 });
+    await user.click(screen.getByRole('button', { name: 'Se déconnecter' }));
+    const d1 = await screen.findByRole('dialog', { name: 'Passages non transmis' });
+    expect(d1).toHaveTextContent('1 passage(s) non transmis');
+    await user.click(within(d1).getByRole('button', { name: 'Déconnecter quand même' }));
+    const d2 = await screen.findByRole('dialog', { name: 'Confirmer la déconnexion ?' });
+    await user.click(within(d2).getByRole('button', { name: 'Me déconnecter' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Se déconnecter' })).toBeNull());
+    expect(await pendingCount()).toBe(1); // jamais effacée
   });
 
-  it('v1.12 : préparation d’un événement hors fenêtre ⇒ message clair', async () => {
-    const user = userEvent.setup();
-    injectFault({ route: 'GET /orgs/:orgId/events/:eventId/checkin/snapshot', status: 404, code: 'NOT_FOUND' });
-    await renderApp('/scan', { as: 'scanner@nuits.test' });
-    const card = (await screen.findByRole('heading', { name: /Garonne Électrique/ })).closest('li') as HTMLElement;
-    await user.click(within(card).getByRole('button', { name: 'Préparer l’entrée hors-ligne' }));
-    expect(await screen.findByText(/Événement non disponible au contrôle/)).toBeInTheDocument();
+  it('H3 : démarrage hors-ligne sans accès connu à ce collectif ⇒ refus', async () => {
+    injectFault({ route: 'POST /auth/refresh', status: 0, code: 'INTERNAL_ERROR', network: true });
+    await renderApp(RESCUE);
+    expect(await screen.findByRole('heading', { name: 'Accès non autorisé' })).toBeInTheDocument();
   });
 
   it('un acheteur sans rôle ne peut pas ouvrir le contrôle d’un collectif', async () => {
-    await renderApp(SCAN, { as: 'acheteur@example.test' });
+    await renderApp(RESCUE, { as: 'acheteur@example.test' });
     expect(await screen.findByRole('heading', { name: 'Accès non autorisé' })).toBeInTheDocument();
+  });
+});
+
+describe('back-office — réglage du mode secours (v1.13)', () => {
+  it('OWNER : activation avec avertissement et confirmation ; MANAGER : lecture seule', async () => {
+    const user = userEvent.setup();
+    const first = await renderApp(`/org/${IDS.orgNuits}/events/${IDS.eventSoldOut}`, { as: 'owner@nuits.test' });
+    const box = await screen.findByRole('checkbox', { name: 'Mode secours hors-ligne du contrôle d’accès' });
+    expect(box).not.toBeChecked();
+    await user.click(box);
+    const dialog = screen.getByRole('dialog', { name: 'Activer le mode secours hors-ligne ?' });
+    expect(dialog).toHaveTextContent('un même billet pourra entrer deux fois');
+    await user.click(within(dialog).getByRole('button', { name: 'Activer le mode secours' }));
+    await waitFor(() => expect(mock.db.events.find((e) => e.id === IDS.eventSoldOut)?.offlineCheckinEnabled).toBe(true));
+    expect(mock.db.audit.map((a) => a.action)).toContain('event.offlineCheckin.enable');
+    first.unmount();
+    await logout();
+    await renderApp(`/org/${IDS.orgNuits}/events/${IDS.eventSoldOut}`, { as: 'manager@nuits.test' });
+    expect(await screen.findByText(/Mode secours hors-ligne :/)).toHaveTextContent('activé');
+    expect(screen.queryByRole('checkbox', { name: /Mode secours/ })).toBeNull();
   });
 });

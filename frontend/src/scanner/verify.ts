@@ -40,7 +40,10 @@ async function buildVerifier(jwk: PublicKeyJwk): Promise<Verifier> {
   if (!verifyOptions.forceFallback && typeof crypto !== 'undefined' && 'subtle' in crypto) {
     try {
       const key = await crypto.subtle.importKey('jwk', { kty: 'OKP', crv: 'Ed25519', x: jwk.x }, { name: 'Ed25519' }, false, ['verify']);
-      return (message, signature) => crypto.subtle.verify({ name: 'Ed25519' }, key, signature as BufferSource, message as BufferSource);
+      const software: Verifier = (message, signature) => ed.verifyAsync(signature, message, raw).catch(() => false);
+      // Une EXCEPTION de WebCrypto (algorithme mal pris en charge) n'est pas une signature fausse :
+      // on vérifie alors par la bibliothèque logicielle. Seul un `false` est un refus.
+      return (message, signature) => crypto.subtle.verify({ name: 'Ed25519' }, key, signature as BufferSource, message as BufferSource).catch(() => software(message, signature));
     } catch {
       // Navigateur sans Ed25519 dans WebCrypto : repli logiciel ci-dessous.
     }

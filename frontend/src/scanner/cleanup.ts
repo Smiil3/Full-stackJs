@@ -1,8 +1,11 @@
 import { registerSessionCleanup } from '../auth/sessionCleanup';
-import { purgeAll, scannerStorageAvailable } from './db';
+import { purgePersonal, scannerStorageAvailable } from './db';
 
-/** Fin de session : listes, file et conflits du scanner effacés (l'identifiant d'appareil reste). */
+/**
+ * Fin de session : listes, conflits et accès connus effacés. La FILE de passages non transmis est
+ * conservée (décision PO, revue F4.1) : elle sera transmise à la reconnexion du même compte.
+ */
 registerSessionCleanup(async () => {
   if (!scannerStorageAvailable()) return;
-  await purgeAll();
+  await purgePersonal();
 });

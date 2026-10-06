@@ -215,8 +215,8 @@ export function useMarkRefundDone(orgId: string) {
 }
 
 // ---------------- Contrôle d'accès (utilisé par le scanner, F4) ----------------
-export const useCheckinEvents = (orgId: string) =>
-  useQuery({ queryKey: ['org', orgId, 'checkin-events'], queryFn: ({ signal }) => apiRequest<{ items: CheckinEvent[] }>(`${org(orgId)}/checkin/events`, { signal }) });
+export const useCheckinEvents = (orgId: string, enabled = true) =>
+  useQuery({ queryKey: ['org', orgId, 'checkin-events'], queryFn: ({ signal }) => apiRequest<{ items: CheckinEvent[] }>(`${org(orgId)}/checkin/events`, { signal }), enabled });
 
 export const fetchSnapshot = (orgId: string, eventId: string, signal?: AbortSignal) =>
   apiRequest<CheckinSnapshot>(`${ev(orgId, eventId)}/checkin/snapshot`, { signal, timeoutMs: 60_000 });
