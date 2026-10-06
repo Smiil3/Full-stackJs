@@ -1,7 +1,7 @@
 # Contrat d'API — Billetterie « Les Nuits de la Garonne »
 
 > **Source de vérité commune front / back.** Toute modification passe par le PO (session `fullstack-js`) : demander via une ligne `NEED: changement de contrat …`. Ne jamais diverger silencieusement.
-> Version : 1.15 — 2026-10-06 (voir §11 Historique)
+> Version : 1.16 — 2026-10-06 (voir §11 Historique)
 
 ## 1. Conventions
 
@@ -106,6 +106,7 @@ type Order = { id; eventId; eventTitle; eventStartsAt; eventTimezone; status: Or
   items: { ticketTypeId; name; quantity; unitPriceCents }[]; subtotalCents; serviceFeeCents; totalCents; currency: 'EUR';
   expiresAt: string|null; paidAt: string|null; cancellableUntil: string|null; refundPercent: number; refundAmountCents: number|null;
   refundPreviewCents: number|null /* montant qui serait remboursé si l'acheteur annulait maintenant ; null si annulation impossible */;
+  paymentInProgress: boolean /* true si une session de paiement est ouverte (ni payée, ni échouée, ni échue) : le front affiche « Reprendre le paiement » (checkout renvoie la MÊME session) et masque l'annulation */;
   createdAt; transferInstructions: null | { beneficiary; iban; bic; reference; amountCents; deadline } }
 ```
 `transferInstructions` n'est rempli que pour le propriétaire de la commande et si `status = AWAITING_TRANSFER`.
@@ -290,6 +291,7 @@ Un remboursement de commande payée par virement est toujours `MANUAL_REQUIRED` 
 - En-têtes de sécurité via helmet ; CORS : origine `FRONT_URL` uniquement, `credentials: true`.
 
 ## 11. Historique
+- **1.16** (2026-10-06) : `Order.paymentInProgress`.
 - **1.15** (2026-10-06) : PSP — échéance des sessions, consultation de session (rapprochement), réessais de webhook, débit limité sur signatures invalides seulement ; paiement tardif soumis à toutes les règles ; droits du report étendus aux commandes non payées ; fenêtre de contrôle `startsAt − 12 h` → `endsAt + 24 h`.
 - **1.14** (2026-10-06) : annulation d'événement asynchrone par lots (`cancellationPendingOrders`), refusée après le début ; règles d'équité de la liste d'attente ; plafond revérifié à l'acceptation ; mail de remboursement de virement « à venir ».
 - **1.13** (2026-10-06) : contrôle d'accès en ligne par défaut ; validation hors-ligne = mode secours `offlineCheckinEnabled` (défaut false, OWNER seulement, audité) ; snapshot ⇒ 409 `OFFLINE_CHECKIN_DISABLED` si désactivé.
