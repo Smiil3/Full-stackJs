@@ -3,8 +3,8 @@
  * par scanId. Une seule synchro à la fois (onglet ET appareil : Web Lock). Seuls les scans du compte
  * connecté (empreinte) et du collectif sont envoyés. ACCEPTED ⇒ retiré ; autre résultat ⇒ conflit.
  */
-import { apiPath, apiRequest } from '../api/client';
-import { isApiError } from '../api/errors';
+import { apiPath, apiRequest, sessionGeneration } from '../api/client';
+import { ApiError, isApiError } from '../api/errors';
 import type { SyncResponse } from '../api/types';
 import { currentGeneration, deviceId, listQueue, scannerDb, withLock, type SyncConflict } from './db';
 
@@ -48,8 +48,11 @@ async function doSync(orgId: string, eventId: string, owner: string): Promise<Sy
   let accepted = 0;
   let conflicts = 0;
   const device = await deviceId();
+  // Lots liés à la session qui a lancé la synchro : jamais envoyés sous un autre compte.
+  const session = sessionGeneration();
   const mine = async () => (await listQueue(eventId)).filter((s) => s.orgId === orgId && s.ownerHash === owner);
   for (;;) {
+    if (sessionGeneration() !== session) throw new ApiError({ status: 0, code: 'SESSION_CHANGED', message: 'session changed' });
     const batch = splitBatch(await mine());
     if (batch.length === 0) break;
     let res: SyncResponse;

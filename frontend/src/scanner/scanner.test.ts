@@ -402,6 +402,24 @@ describe('file de synchronisation (revue F4.1)', () => {
     expect(await pendingCount()).toBe(1);
   });
 
+  it('F6-H2 : changement de compte pendant la synchro ⇒ aucun lot de X envoyé sous Y, file conservée', async () => {
+    const db = await scannerDb();
+    for (let i = 0; i < 501; i++) {
+      await db.put('queue', { scanId: crypto.randomUUID(), eventId: IDS.eventConcert, orgId: ORG, qrPayload: `NG1.${IDS.eventConcert}.p${String(i)}.sig`, scannedAt: new Date().toISOString(), ownerHash: OWNER, eventEndsAt: EVENT.endsAt });
+    }
+    const auths: (string | null)[] = [];
+    server.use(
+      http.post('*/api/v1/orgs/:orgId/events/:eventId/checkin/sync', ({ request }) => {
+        auths.push(request.headers.get('Authorization'));
+        void login('acheteur@example.test', DEMO_PASSWORD); // un autre compte se connecte pendant l'envoi du 1er lot
+        return HttpResponse.json({ results: [] });
+      }),
+    );
+    await expect(syncEvent(ORG, IDS.eventConcert, OWNER)).rejects.toMatchObject({ code: 'SESSION_CHANGED' });
+    expect(auths).toHaveLength(1); // 2e lot jamais envoyé
+    expect(await pendingCount()).toBe(501);
+  });
+
   it('identifiant d’appareil stable', async () => {
     const id = await deviceId();
     expect(await deviceId()).toBe(id);

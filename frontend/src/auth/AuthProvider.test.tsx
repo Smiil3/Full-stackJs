@@ -1,9 +1,13 @@
-import { QueryClientProvider } from '@tanstack/react-query';
+import { MutationObserver, QueryClientProvider } from '@tanstack/react-query';
+import { delay, http, HttpResponse } from 'msw';
 import { act, cleanup as cleanupRender, render, screen, waitFor } from '@testing-library/react';
 import { useEffect } from 'react';
 import { describe, expect, it } from 'vitest';
+import { apiRequest } from '../api/client';
+import { captureSession, sameSession } from '../api/hooks/orders';
 import { createQueryClient } from '../api/queryClient';
 import { mock } from '../mocks/core';
+import { server } from '../mocks/server';
 import { DEMO_PASSWORD } from '../mocks/state';
 import { useAuth } from './AuthContext';
 import { AuthProvider } from './AuthProvider';
@@ -131,7 +135,21 @@ describe('AuthProvider', () => {
     await screen.findByText('anonymous:-');
     await act(() => auth().login('owner@nuits.test', DEMO_PASSWORD));
     qc.setQueryData(['orgs', 'secret'], { x: 1 });
-    qc.getMutationCache().build(qc, { mutationFn: () => new Promise(() => undefined) });
+    // F6-H2 : mutation RÉELLEMENT en vol (réponse du serveur après le changement de compte).
+    server.use(
+      http.post('*/api/v1/orders', async () => {
+        await delay(80);
+        return HttpResponse.json({ id: 'commande-de-A' }, { status: 201 });
+      }),
+    );
+    const inFlight = new MutationObserver(qc, {
+      mutationFn: () => apiRequest<{ id: string }>('/orders', { method: 'POST', body: {}, headers: { 'Idempotency-Key': crypto.randomUUID() } }),
+      onMutate: captureSession,
+      onSuccess: (order, _v, ctx) => {
+        if (sameSession(ctx)) qc.setQueryData(['order', 'A', order.id], order);
+      },
+    });
+    const mutated = inFlight.mutate().catch((e: unknown) => e);
     let seenStaleData = false;
     const off = qc.getQueryCache().subscribe(() => undefined);
     // Revue F1.1 (B4) : au moment où le NOUVEL utilisateur est publié, le cache est déjà vide.
@@ -150,5 +168,7 @@ describe('AuthProvider', () => {
     expect(qc.getMutationCache().getAll()).toHaveLength(0);
     expect(seenStaleData).toBe(false);
     expect(screen.getByText('authenticated:acheteur@example.test')).toBeInTheDocument();
+    expect(await mutated).toMatchObject({ code: 'SESSION_CHANGED' }); // réponse de A jetée
+    expect(qc.getQueryCache().findAll({ queryKey: ['order'] })).toHaveLength(0); // rien d'écrit pour B
   });
 });

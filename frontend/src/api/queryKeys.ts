@@ -4,10 +4,11 @@ import type { AdminOrdersQuery, EventsQuery } from './types';
 export const qk = {
   events: (q: EventsQuery) => ['events', q] as const,
   event: (id: string) => ['event', id] as const,
-  orders: (page: number) => ['orders', page] as const,
-  order: (id: string) => ['order', id] as const,
+  // Données personnelles : clé liée au compte (une réponse d'un autre compte ne peut pas s'y glisser).
+  orders: (userId: string, page: number) => ['orders', userId, page] as const,
+  order: (userId: string, id: string) => ['order', userId, id] as const,
   tickets: () => ['tickets'] as const,
-  waitlist: () => ['waitlist'] as const,
+  waitlist: (userId: string) => ['waitlist', userId] as const,
   org: (orgId: string) => ['org', orgId] as const,
   orgSettings: (orgId: string) => ['org', orgId, 'settings'] as const,
   orgMembers: (orgId: string) => ['org', orgId, 'members'] as const,

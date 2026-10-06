@@ -203,6 +203,44 @@ describe('cycle de session (revue F1.1 — H2, M1, M2, M3, M5)', () => {
     expect(events).not.toContain('expired');
   });
 
+  it('F6-H2 : changement de compte pendant une requête ⇒ réponse jetée (SESSION_CHANGED)', async () => {
+    await login(BUYER, DEMO_PASSWORD);
+    let reached = () => undefined as void;
+    const atServer = new Promise<void>((r) => (reached = r));
+    server.use(
+      http.get('*/api/v1/me/tickets', async () => {
+        reached();
+        await delay(50);
+        return HttpResponse.json({ items: [{ id: 'billet-de-A' }] });
+      }),
+    );
+    const pending = apiRequest('/me/tickets');
+    await atServer;
+    await login('owner@nuits.test', DEMO_PASSWORD);
+    await expect(pending).rejects.toMatchObject({ code: 'SESSION_CHANGED' });
+  });
+
+  it('F6-H2 : 401 reçu après un changement de compte ⇒ PAS de rejeu sous le jeton du nouveau compte', async () => {
+    await login(BUYER, DEMO_PASSWORD);
+    const auths: (string | null)[] = [];
+    let reached = () => undefined as void;
+    const atServer = new Promise<void>((r) => (reached = r));
+    server.use(
+      http.post('*/api/v1/orders', async ({ request }) => {
+        auths.push(request.headers.get('Authorization'));
+        reached();
+        await delay(50);
+        return HttpResponse.json({ error: { code: 'UNAUTHENTICATED', message: 'x' } }, { status: 401 });
+      }),
+    );
+    const pending = apiRequest('/orders', { method: 'POST', body: { eventId: 'e', paymentMethod: 'CARD', items: [] }, headers: { 'Idempotency-Key': crypto.randomUUID() } });
+    await atServer; // la requête de A est partie
+    await login('owner@nuits.test', DEMO_PASSWORD);
+    await expect(pending).rejects.toMatchObject({ code: 'SESSION_CHANGED' });
+    expect(auths).toHaveLength(1); // aucun rejeu
+    expect(calls('POST /auth/refresh')).toBe(0);
+  });
+
   it('M5 : 403 CSRF_CHECK_FAILED sur refresh ⇒ pas de déconnexion', async () => {
     await login(BUYER, DEMO_PASSWORD);
     const events: AuthEvent['type'][] = [];

@@ -356,31 +356,53 @@ export async function apiRequest<T>(path: string, opts: RequestOptions = {}): Pr
     }
   }
   const useAuth = opts.auth !== false;
+  // Requête authentifiée LIÉE à la session courante (génération capturée AVANT toute attente) : si un
+  // login / logout survient pendant l'échange, pas de rejeu sous le nouveau compte et réponse jetée.
+  const startedAt = generation;
+  const sameSession = () => {
+    if (useAuth && generation !== startedAt) throw sessionChanged();
+  };
   // Un refresh est en cours : on l'attend plutôt que d'envoyer un token sur le point d'être remplacé.
   if (useAuth) await settleRefresh();
+  sameSession();
   const token = useAuth ? getAccessToken() : null;
   try {
-    return await rawRequest<T>(path, opts, token);
+    const res = await rawRequest<T>(path, opts, token);
+    sameSession();
+    return res;
   } catch (e) {
+    sameSession();
     if (!useAuth || !isApiError(e) || e.status !== 401 || e.code !== 'UNAUTHENTICATED') throw e;
     // Le token a peut-être déjà été renouvelé par une requête concurrente : on ne refait pas de refresh.
     const current = getAccessToken();
     if (!current || current === token) {
       await refreshSession();
     }
+    sameSession();
     try {
-      return await rawRequest<T>(path, opts, getAccessToken()); // rejeu UNIQUE
+      const res = await rawRequest<T>(path, opts, getAccessToken()); // rejeu UNIQUE, même session
+      sameSession();
+      return res;
     } catch (retryError) {
+      sameSession();
       if (isApiError(retryError) && retryError.status === 401 && retryError.code === 'UNAUTHENTICATED') dropSession('expired');
       throw retryError;
     }
   }
 }
 
+/** Génération de session courante (incrémentée à chaque login / logout / fin de session). */
+export function sessionGeneration(): number {
+  return generation;
+}
+
 /** Login : n'utilise pas de Bearer, enregistre la session. Tout refresh en vol est invalidé. */
 export async function login(email: string, password: string): Promise<AuthSession> {
   generation++;
   const startedAt = generation;
+  // Plus aucune requête ne part avec le jeton de l'ancien compte pendant la connexion du nouveau.
+  clearTimeout(proactiveTimer);
+  clearAccessToken();
   await settleRefresh(); // la réponse d'un refresh en vol ne doit pas écraser le cookie de ce login
   const raw = await withAuthLock(() => rawRequest<unknown>('/auth/login', { method: 'POST', body: { email, password } }, null));
   const session = parseAuthSession(raw);

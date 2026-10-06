@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../auth/AuthContext';
 import { registerSessionCleanup } from '../../auth/sessionCleanup';
-import { apiPath, apiRequest } from '../client';
+import { apiPath, apiRequest, sessionGeneration } from '../client';
 import { qk } from '../queryKeys';
 import type { CheckoutResponse, CreateOrderBody, Order, Page } from '../types';
 
@@ -15,6 +15,13 @@ const attemptKeys = new Map<string, string>();
 registerSessionCleanup(() => {
   attemptKeys.clear();
 });
+
+/**
+ * Mutation liée à la session qui l'a lancée : si un login / logout survient pendant l'échange,
+ * le résultat n'est pas écrit dans le cache du nouveau compte.
+ */
+export const captureSession = () => ({ gen: sessionGeneration() });
+export const sameSession = (ctx: { gen: number } | undefined) => ctx !== undefined && ctx.gen === sessionGeneration();
 
 export function idempotencyKeyFor(userId: string, fingerprint: string): string {
   const slot = `${userId}|${fingerprint}`;
@@ -45,9 +52,11 @@ export function useCreateOrder() {
   return useMutation({
     mutationFn: (body: CreateOrderBody) =>
       apiRequest<Order>('/orders', { method: 'POST', body, headers: { 'Idempotency-Key': idempotencyKeyFor(userId, orderFingerprint(body)) } }),
-    onSuccess: (order, body) => {
+    onMutate: captureSession,
+    onSuccess: (order, body, ctx) => {
+      if (!sameSession(ctx)) return;
       forgetIdempotencyKey(userId, orderFingerprint(body));
-      qc.setQueryData(qk.order(order.id), order);
+      qc.setQueryData(qk.order(userId, order.id), order);
       void qc.invalidateQueries({ queryKey: ['orders'] });
       void qc.invalidateQueries({ queryKey: qk.event(order.eventId) });
       if (order.status === 'PAID') void qc.invalidateQueries({ queryKey: qk.tickets() });
@@ -56,15 +65,17 @@ export function useCreateOrder() {
 }
 
 export function useOrders(page: number) {
+  const { user } = useAuth();
   return useQuery({
-    queryKey: qk.orders(page),
+    queryKey: qk.orders(user?.id ?? 'anonyme', page),
     queryFn: ({ signal }) => apiRequest<Page<Order>>('/orders', { query: { page, pageSize: 20 }, signal }),
   });
 }
 
 export function useOrder(orderId: string | undefined, opts: { pollUntilPaid?: boolean } = {}) {
+  const { user } = useAuth();
   return useQuery({
-    queryKey: qk.order(orderId ?? ''),
+    queryKey: qk.order(user?.id ?? 'anonyme', orderId ?? ''),
     queryFn: ({ signal }) => apiRequest<Order>(apiPath`/orders/${orderId ?? ''}`, { signal }),
     enabled: Boolean(orderId),
     refetchInterval: (q) => (opts.pollUntilPaid && q.state.data?.status === 'PENDING_PAYMENT' ? 2000 : false),
@@ -88,10 +99,14 @@ export function useCheckout() {
 
 export function useCancelOrder() {
   const qc = useQueryClient();
+  const { user } = useAuth();
+  const userId = user?.id ?? 'anonyme';
   return useMutation({
     mutationFn: (orderId: string) => apiRequest<Order>(apiPath`/orders/${orderId}/cancel`, { method: 'POST' }),
-    onSuccess: (order) => {
-      qc.setQueryData(qk.order(order.id), order);
+    onMutate: captureSession,
+    onSuccess: (order, _orderId, ctx) => {
+      if (!sameSession(ctx)) return;
+      qc.setQueryData(qk.order(userId, order.id), order);
       void qc.invalidateQueries({ queryKey: ['orders'] });
       void qc.invalidateQueries({ queryKey: qk.tickets() });
       void qc.invalidateQueries({ queryKey: qk.event(order.eventId) });
