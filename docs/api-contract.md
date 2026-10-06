@@ -1,7 +1,7 @@
 # Contrat d'API — Billetterie « Les Nuits de la Garonne »
 
 > **Source de vérité commune front / back.** Toute modification passe par le PO (session `fullstack-js`) : demander via une ligne `NEED: changement de contrat …`. Ne jamais diverger silencieusement.
-> Version : 1.2 — 2026-10-06 (voir §11 Historique)
+> Version : 1.3 — 2026-10-06 (voir §11 Historique)
 
 ## 1. Conventions
 
@@ -38,6 +38,8 @@
 | 409 | `ALREADY_IN_WAITLIST` / `NOT_SOLD_OUT` / `OFFER_EXPIRED` | Liste d'attente |
 | 409 | `CANCELLATION_CLOSED` | Délai d'annulation dépassé / billet déjà scanné / annulation désactivée |
 | 409 | `CONFLICT` | Conflit générique (slug déjà pris, capacité < vendus, suppression impossible…) |
+| 413 | `PAYLOAD_TOO_LARGE` | Corps de requête trop volumineux |
+| 415 | `UNSUPPORTED_MEDIA_TYPE` | Content-Type non supporté (JSON attendu) |
 | 422 | `LIMIT_EXCEEDED` | Plafond par commande ou par personne dépassé (`details.max`, `details.alreadyOwned`) |
 | 422 | `PAYMENT_METHOD_UNAVAILABLE` | Virement désactivé ou coordonnées bancaires absentes |
 | 422 | `AMOUNT_MISMATCH` | Montant de virement reçu ≠ montant dû |
@@ -247,5 +249,6 @@ type EventStats = { eventId; generatedAt; currency: 'EUR';
 - En-têtes de sécurité via helmet ; CORS : origine `FRONT_URL` uniquement, `credentials: true`.
 
 ## 11. Historique
+- **1.3** (2026-10-06) : codes `PAYLOAD_TOO_LARGE` (413) et `UNSUPPORTED_MEDIA_TYPE` (415) ; JSON malformé ⇒ 400 `VALIDATION_ERROR`.
 - **1.2** (2026-10-06) : `OrderAdmin.transferInstructions` avec IBAN masqué ; `INVALID_CREDENTIALS` couvre compte verrouillé et mauvais mot de passe actuel ; commande à 0 € ⇒ `PAID` directement à la création (pas de checkout) ; annulation d'événement ⇒ remboursement 100 % frais compris.
 - **1.1** (2026-10-06) : format QR `NG1.<eventId>.<publicId>.<sig>` et octets signés précisés ; `scanId` ajouté au scan et à la sync (idempotence) ; `serviceFeePercent` remplacé par `serviceFeeBasisPoints` (entier) + formule ; types `string|null` explicités ; cas « billet signé absent du snapshot ».
