@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: nuits
+      POSTGRES_PASSWORD: nuits_dev_password
+      POSTGRES_DB: nuits
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nuits"]
+      interval: 5s
+      retries: 10
+
+  postgres-test:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: nuits
+      POSTGRES_PASSWORD: nuits_test_password
+      POSTGRES_DB: nuits_test
+    ports:
+      - "127.0.0.1:5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+
+  mailpit:
+    image: axllent/mailpit:latest
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+
+volumes:
+  pgdata:
