@@ -15,7 +15,8 @@
     "test:watch": "vitest",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc -b --noEmit",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "e2e:mock": "playwright test -c playwright.mock.config.ts"
   },
   "dependencies": {
     "@noble/ed25519": "3.2.0",
@@ -43,6 +44,7 @@
     "eslint-plugin-jsx-a11y": "6.10.2",
     "eslint-plugin-react-hooks": "7.1.1",
     "eslint-plugin-react-refresh": "0.5.7",
+    "fake-indexeddb": "6.2.5",
     "globals": "17.13.0",
     "jsdom": "30.1.2",
     "msw": "2.15.0",
