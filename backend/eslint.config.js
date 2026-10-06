@@ -35,8 +35,9 @@ export default defineConfig(
     },
   },
   {
-    // Seul le middleware de validation lit la requête brute.
-    files: ['src/middlewares/validate.ts'],
+    // Seuls le middleware de validation et le contrôle d'adhésion (qui valide lui-même orgId au format UUID
+    // strict avant toute requête) lisent la requête brute.
+    files: ['src/middlewares/validate.ts', 'src/middlewares/requireOrgRole.ts'],
     rules: {
       'no-restricted-syntax': [
         'error',
