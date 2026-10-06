@@ -158,6 +158,36 @@ describe('page événement et commande', () => {
     expect(keys[1]).toBe(keys[0]);
   });
 
+  it('v1.9 : une clé = une commande pour toujours — commande rejouée EXPIRED ⇒ la tentative suivante a une NOUVELLE clé', async () => {
+    const user = userEvent.setup();
+    const keys = orderKeys();
+    const { idempotencyKeyFor, orderFingerprint } = await import('../../api/hooks/orders');
+    const { apiRequest, login } = await import('../../api/client');
+    const { DEMO_PASSWORD } = await import('../../mocks/state');
+    // Simule une 1re tentative dont la réponse s'est perdue : la commande existe côté serveur avec la clé courante…
+    const session = await login(BUYER, DEMO_PASSWORD);
+    const body = { eventId: IDS.eventConcert, paymentMethod: 'CARD' as const, items: [{ ticketTypeId: IDS.ttFosse, quantity: 1 }] };
+    const key = idempotencyKeyFor(session.user.id, orderFingerprint(body));
+    await apiRequest('/orders', { method: 'POST', body, headers: { 'Idempotency-Key': key } });
+    // … puis expire avant que l'acheteur ne réessaie.
+    const stored = mock.db.orders[0];
+    if (stored) stored.expiresAt = new Date(Date.now() - 1000).toISOString();
+
+    const { router } = await renderApp(EVENT_URL);
+    await chooseFosse(user, '1');
+    await user.click(screen.getByRole('button', { name: 'Réserver 1 place' }));
+    expect(await screen.findByText(/Le délai de réservation est dépassé/)).toBeInTheDocument(); // même clé ⇒ commande EXPIRED renvoyée
+    await router.navigate(EVENT_URL);
+    await chooseFosse(user, '1');
+    await user.click(await screen.findByRole('button', { name: 'Réserver 1 place' }));
+    await screen.findByRole('button', { name: /Payer/ });
+    server.events.removeAllListeners();
+    expect(keys[0]).toBe(key);
+    expect(keys.at(-1)).not.toBe(key);
+    expect(mock.db.orders).toHaveLength(2);
+    expect(new Set(mock.db.orders.map((o) => o.idempotencyKey)).size).toBe(2);
+  });
+
   it('LIMIT_EXCEEDED : plafond et places déjà détenues expliqués', async () => {
     const user = userEvent.setup();
     await renderApp(EVENT_URL, { as: BUYER });
