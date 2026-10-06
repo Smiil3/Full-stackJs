@@ -1,0 +1,22 @@
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+import { App } from './App';
+import './styles/global.css';
+
+async function bootstrap() {
+  // `import.meta.env.MODE` est remplacé à la compilation : en build de production, cette branche
+  // et tout le code de mock sont éliminés du bundle.
+  if (import.meta.env.MODE === 'mock') {
+    const { startMockWorker } = await import('./mocks/browser');
+    await startMockWorker();
+  }
+  const root = document.getElementById('root');
+  if (!root) throw new Error('#root introuvable');
+  createRoot(root).render(
+    <StrictMode>
+      <App />
+    </StrictMode>,
+  );
+}
+
+void bootstrap();
