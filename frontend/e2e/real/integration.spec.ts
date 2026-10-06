@@ -83,6 +83,49 @@ test('acheteur : inscription, vérification email (Mailpit), réservation par ca
 test.describe('comptes du seed', () => {
   test.skip(!PASSWORD, 'SEED_PASSWORD requis');
 
+test('paiement carte réel : PSP simulé ⇒ retour ⇒ attente du webhook ⇒ billets', async ({ page }) => {
+  const errors = collectErrors(page);
+  await login(page, 'acheteur@nuits-garonne.test');
+  await page.getByRole('main').getByRole('link', { name: 'Jazz au Hangar' }).click();
+  await page.getByLabel('Nombre de places « Parterre »').selectOption('1');
+  await page.getByRole('button', { name: /Réserver 1 place/ }).click();
+  await page.getByRole('button', { name: /Payer .* par carte/ }).click();
+  await expect(page).toHaveURL(/^http:\/\/localhost:4001\//);
+  await page.getByRole('button', { name: /^Payer$/ }).click();
+  await expect(page).toHaveURL(/\/orders\/[0-9a-f-]{36}\?payment=success/);
+  await expect(page.getByText(/Paiement confirmé/)).toBeVisible({ timeout: 30_000 });
+  expect(errors).toEqual([]);
+});
+
+test('virement réel : réservation acheteur puis validation par le gestionnaire', async ({ browser }) => {
+  const buyer = await browser.newPage();
+  await login(buyer, 'acheteur@nuits-garonne.test');
+  await buyer.getByRole('main').getByRole('link', { name: 'Jazz au Hangar' }).click();
+  await buyer.getByLabel('Nombre de places « Parterre »').selectOption('1');
+  await buyer.getByRole('radio', { name: /Virement bancaire/ }).check();
+  await buyer.getByRole('button', { name: /Réserver 1 place/ }).click();
+  const reference = (await buyer.locator('.reference').textContent())?.trim() ?? '';
+  expect(reference).not.toBe('');
+  const amountText = (await buyer.getByText(/^\d+,\d{2}\s€$/).last().textContent()) ?? '';
+  const amount = amountText.replace(/[^\d,]/g, '');
+  const orderUrl = buyer.url();
+
+  const manager = await browser.newPage();
+  await login(manager, 'manager@nuits.test', '/org');
+  await manager.getByRole('main').getByRole('link', { name: 'Jazz au Hangar' }).click();
+  await manager.getByRole('link', { name: 'Commandes et virements' }).click();
+  const card = manager.locator('li', { hasText: reference });
+  await card.getByLabel('Montant reçu sur le compte (€)').fill(amount);
+  await card.getByRole('button', { name: 'Valider le virement' }).click();
+  await manager.getByRole('dialog').getByRole('button', { name: 'Valider le virement' }).click();
+  // Une fois payée, la commande n'affiche plus d'instructions de virement (donc plus la référence).
+  await expect(manager.locator('li', { hasText: reference })).toHaveCount(0);
+  await expect(manager.getByRole('alert')).toHaveCount(0);
+
+  await buyer.goto(orderUrl);
+  await expect(buyer.getByText(/Paiement confirmé/)).toBeVisible();
+});
+
 test('propriétaire : back-office (événements, réglages, membres, journal)', async ({ page }) => {
   const errors = collectErrors(page);
   await login(page, 'owner@nuits.test', '/org');
