@@ -7,27 +7,37 @@ server {
 
     # ssl_certificate     /etc/ssl/certs/billetterie.pem;
     # ssl_certificate_key /etc/ssl/private/billetterie.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_session_tickets off;
 
     root /var/www/nuits-frontend/dist;
     index index.html;
     server_tokens off;
+    # Corps de requête limités (l'API refuse au-delà de 160 ko : synchro du scanner).
+    client_max_body_size 200k;
 
     # nginx n'hérite pas des add_header d'un bloc parent dans un bloc location qui en définit :
     # le snippet est donc inclus au niveau serveur ET dans chaque location qui ajoute un en-tête.
     include /etc/nginx/snippets/nuits-security-headers.conf;
 
-
     # API servie sur la même origine (cookies SameSite=Strict, CSP connect-src 'self').
     location /api/ {
         proxy_pass http://127.0.0.1:4000;
         proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # ÉCRASE l'en-tête envoyé par le client (sinon une adresse forgée contournerait la limitation de débit).
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 30s;
+        proxy_read_timeout 60s;
     }
 
-    # Le service worker et le manifeste ne doivent jamais être mis en cache longtemps.
+    # Service worker, page et manifeste : jamais mis en cache longtemps (mises à jour de l'application).
     location = /sw.js { add_header Cache-Control "no-cache" always; include /etc/nginx/snippets/nuits-security-headers.conf; try_files $uri =404; }
     location = /index.html { add_header Cache-Control "no-cache" always; include /etc/nginx/snippets/nuits-security-headers.conf; }
+    location = /manifest.webmanifest { add_header Cache-Control "no-cache" always; include /etc/nginx/snippets/nuits-security-headers.conf; default_type application/manifest+json; try_files $uri =404; }
 
     location /assets/ { add_header Cache-Control "public, max-age=31536000, immutable" always; include /etc/nginx/snippets/nuits-security-headers.conf; }
 

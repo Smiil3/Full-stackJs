@@ -37,6 +37,11 @@ describe('en-têtes de sécurité (revue F1.1 — M7)', () => {
     const locationsWithHeaders = nginx.split('\n').filter((l) => l.trim().startsWith('location') && l.includes('add_header'));
     expect(locationsWithHeaders.length).toBeGreaterThan(0);
     for (const l of locationsWithHeaders) expect(l).toContain('include /etc/nginx/snippets/nuits-security-headers.conf');
+    // Revue finale : l'adresse client n'est jamais reprise de l'en-tête envoyé par le client.
+    expect(nginx).toContain('proxy_set_header X-Forwarded-For $remote_addr;');
+    expect(nginx).not.toContain('$proxy_add_x_forwarded_for');
+    expect(nginx).toContain('ssl_protocols TLSv1.2 TLSv1.3;');
+    expect(nginx).toMatch(/client_max_body_size 200k;/);
   });
 });
 

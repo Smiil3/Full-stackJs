@@ -53,8 +53,10 @@ export function CameraScanner({ onCode, paused }: { onCode: (text: string) => bo
       stopped = true;
       controls?.stop();
     };
-    // Démarrage unique : `error` initial seulement (les erreurs ultérieures ne relancent pas la caméra).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Effet volontairement exécuté UNE seule fois (au montage) : relancer la caméra à chaque changement
+    // de `error` couperait puis rouvrirait le flux vidéo (et redemanderait l'autorisation). Seule la
+    // valeur initiale de `error` (API caméra absente) compte ; les callbacks passent par des refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- montage unique assumé, voir ci-dessus
   }, []);
 
   return (
