@@ -59,7 +59,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [wipe]);
 
   const login = useCallback(async (email: string, password: string) => (await apiLogin(email, password)).user, []);
-  const logout = useCallback(() => apiLogout(), []);
+  /** La déconnexion n'est terminée qu'une fois les données hors-ligne effacées (billets = justificatifs). */
+  const logout = useCallback(async () => {
+    await apiLogout();
+    await runSessionCleanups();
+  }, []);
   const reloadUser = useCallback(async () => {
     const me = parseUser(await apiRequest<unknown>('/auth/me'));
     userIdRef.current = me.id;

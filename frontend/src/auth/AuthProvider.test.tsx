@@ -79,7 +79,7 @@ describe('AuthProvider', () => {
     await waitFor(() => {
       expect(qc.getQueryCache().getAll()).toHaveLength(0);
     });
-    expect(cleaned).toBe(1);
+    expect(cleaned).toBeGreaterThanOrEqual(1); // nettoyages idempotents (événement + attente explicite du logout)
     expect(screen.getByText('anonymous:-')).toBeInTheDocument();
   });
 

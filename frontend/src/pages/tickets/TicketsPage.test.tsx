@@ -1,7 +1,7 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
-import { apiRequest, login, logout } from '../../api/client';
+import { __resetClientForTests, apiRequest, login, logout } from '../../api/client';
 import type { Order } from '../../api/types';
 import { injectFault, mock } from '../../mocks/core';
 import { markPaid, offerToWaitlist } from '../../mocks/domain';
@@ -60,6 +60,31 @@ describe('mes billets', () => {
 
     await logout();
     await waitFor(async () => expect(await loadTickets(null)).toBeNull());
+  });
+
+  it('M1 : la déconnexion n’est terminée qu’une fois les billets hors-ligne effacés', async () => {
+    await buy(1);
+    await renderApp('/me/tickets');
+    await screen.findAllByRole('img', { name: /QR code/ });
+    expect(await loadTickets(null)).not.toBeNull();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Se déconnecter' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Se déconnecter' })).toBeNull());
+    expect(await loadTickets(null)).toBeNull();
+  });
+
+  it('M2 : résultat hors-ligne remplacé par les données en ligne dès que la session revient', async () => {
+    await buy(1);
+    const first = await renderApp('/me/tickets');
+    await screen.findAllByRole('img', { name: /QR code/ });
+    first.unmount();
+    __resetClientForTests();
+    injectFault({ route: 'POST /auth/refresh', status: 0, code: 'INTERNAL_ERROR', network: true });
+    await renderApp('/me/tickets'); // démarrage hors-ligne
+    expect(await screen.findByText(/Hors-ligne : billets enregistrés/)).toBeInTheDocument();
+    await login(BUYER, DEMO_PASSWORD); // réseau revenu, session restaurée
+    await waitFor(() => expect(screen.queryByText(/Hors-ligne : billets enregistrés/)).toBeNull());
+    expect(await screen.findAllByRole('img', { name: /QR code/ })).toHaveLength(1);
+    expect(screen.queryByText(/Hors-ligne/)).toBeNull();
   });
 
   it('liste d’attente : offre reçue ⇒ bandeau + acceptation ⇒ commande', async () => {

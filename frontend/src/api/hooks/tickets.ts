@@ -14,7 +14,8 @@ export type TicketsResult = { tickets: Ticket[]; offline: boolean; savedAt: stri
 export function useMyTickets() {
   const { user, status } = useAuth();
   return useQuery({
-    queryKey: qk.tickets(),
+    // Clé liée au compte ET au statut : le résultat hors-ligne n'est pas réutilisé après le retour en ligne.
+    queryKey: [...qk.tickets(), user?.id ?? 'inconnu', status],
     enabled: status === 'authenticated' || status === 'offline',
     networkMode: 'always',
     retry: false,
