@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { getEnv } from '../config/env.js';
 import { aad, decryptString, encryptString } from './crypto.js';
 import { getDb, type Tx } from './db.js';
+import { clock } from './clock.js';
+import { getLogger } from './logger.js';
 import { renderTemplate, type MailTemplate, type TemplatePayloads } from './mail/templates.js';
 import QRCode from 'qrcode';
 import { qrPayloadFor } from './ticketSigning.js';
@@ -28,6 +30,8 @@ export function decryptOutboxPayload(row: { id: string; payload: unknown }): Rec
 }
 
 export interface MailMessage {
+  /** Identifiant de message stable (dédoublonnage en cas de renvoi). */
+  messageId?: string;
   from: string;
   to: string;
   subject: string;
@@ -70,43 +74,67 @@ interface OutboxRow {
   attempts: number;
 }
 
+/** Bail : durée pendant laquelle un mail pris par un worker n'est repris par aucun autre. */
+const LEASE_MS = 5 * 60_000;
+
+/** Message-ID stable par ligne d'outbox : un renvoi après incident est dédoublonnable côté SMTP / client mail. */
+export function messageIdFor(outboxId: string): string {
+  return `<outbox-${outboxId}@nuits-garonne.billetterie>`;
+}
+
 /**
- * Envoie un lot de mails en attente. `FOR UPDATE SKIP LOCKED` : plusieurs workers ne prennent jamais
- * le même mail. À chaque état terminal (SENT / FAILED), le payload est purgé.
+ * Envoie un lot de mails en attente (même schéma que les remboursements) :
+ * 1. transaction COURTE : sélection `FOR UPDATE SKIP LOCKED`, tentative comptée et bail posé ;
+ * 2. envoi SMTP HORS transaction (un SMTP lent ne fait plus échouer / rejouer le lot) ;
+ * 3. mise à jour ligne par ligne, gardée par le statut PENDING ; payload purgé à l'état terminal.
+ * Garantie « au moins une fois » : un crash entre l'envoi et la mise à jour peut provoquer un renvoi après
+ * expiration du bail, avec le même Message-ID.
  */
 export async function processOutboxBatch(transport: MailTransport): Promise<{ sent: number; failed: number }> {
   const db = getDb();
-  let sent = 0;
-  let failed = 0;
-  await db.$transaction(async (tx) => {
+  const now = clock.now();
+  const leased = await db.$transaction(async (tx) => {
     const rows = await tx.$queryRaw<OutboxRow[]>`
       SELECT "id", "to", "template", "payload", "attempts" FROM "email_outbox"
-      -- Tolérance de 2 s : l'échéance est posée par l'application, comparée à l'horloge de la base.
-      WHERE "status" = 'PENDING' AND "nextAttemptAt" <= now() + interval '2 seconds'
+      WHERE "status" = 'PENDING' AND "nextAttemptAt" <= ${now}
       ORDER BY "nextAttemptAt", "id"
       LIMIT ${BATCH_SIZE}
       FOR UPDATE SKIP LOCKED`;
-    for (const row of rows) {
+    if (rows.length > 0) {
+      await tx.$executeRaw`
+        UPDATE "email_outbox" SET "attempts" = "attempts" + 1, "nextAttemptAt" = ${new Date(now.getTime() + LEASE_MS)}
+        WHERE "id" = ANY(${rows.map((r) => r.id)}::uuid[])`;
+    }
+    return rows.map((r) => ({ ...r, attempts: r.attempts + 1 }));
+  });
+  let sent = 0;
+  let failed = 0;
+  for (const row of leased) {
+    try {
       try {
         const data = decryptOutboxPayload(row);
         const mail = renderTemplate(row.template as MailTemplate, data as never);
         const attachments = await attachmentsFor(row.template, data);
-        await transport.sendMail({ from: getEnv().mailFrom, to: row.to, ...mail, ...(attachments ? { attachments } : {}) });
-        await tx.emailOutbox.update({ where: { id: row.id }, data: { status: 'SENT', sentAt: new Date(), payload: {}, attempts: row.attempts + 1, lastError: null } });
+        await transport.sendMail({
+          from: getEnv().mailFrom, to: row.to, ...mail, messageId: messageIdFor(row.id), ...(attachments ? { attachments } : {}),
+        });
+        await db.emailOutbox.updateMany({ where: { id: row.id, status: 'PENDING' }, data: { status: 'SENT', sentAt: clock.now(), payload: {}, lastError: null } });
         sent += 1;
       } catch (err) {
-        const attempts = row.attempts + 1;
-        const terminal = attempts >= OUTBOX_MAX_ATTEMPTS;
+        const terminal = row.attempts >= OUTBOX_MAX_ATTEMPTS;
         const reason = err instanceof Error ? err.name : 'Error';
-        await tx.emailOutbox.update({
-          where: { id: row.id },
+        await db.emailOutbox.updateMany({
+          where: { id: row.id, status: 'PENDING' },
           data: terminal
-            ? { status: 'FAILED', attempts, payload: {}, lastError: reason }
-            : { attempts, nextAttemptAt: new Date(Date.now() + backoffMs(attempts)), lastError: reason },
+            ? { status: 'FAILED', payload: {}, lastError: reason }
+            : { nextAttemptAt: new Date(clock.now().getTime() + backoffMs(row.attempts)), lastError: reason },
         });
         if (terminal) failed += 1;
       }
+    } catch (err) {
+      // Erreur de base : le bail expirera et le mail sera repris ; le lot continue.
+      getLogger().error({ err, outboxId: row.id }, 'échec de mise à jour d’un mail de l’outbox');
     }
-  }, { timeout: 60_000 });
+  }
   return { sent, failed };
 }

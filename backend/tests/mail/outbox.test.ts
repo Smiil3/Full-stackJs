@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { getDb } from '../../src/lib/db.js';
-import { decryptOutboxPayload, OUTBOX_MAX_ATTEMPTS, processOutboxBatch, type MailMessage } from '../../src/lib/outbox.js';
+import { decryptOutboxPayload, messageIdFor, OUTBOX_MAX_ATTEMPTS, processOutboxBatch, type MailMessage } from '../../src/lib/outbox.js';
 import { api, PASSWORD, tokenFromMail } from '../helpers.js';
 
 function fakeTransport(fail = false) {
@@ -60,5 +60,34 @@ describe('outbox mail (B2.1 M7)', () => {
     row = await getDb().emailOutbox.findFirstOrThrow();
     expect(row.status).toBe('FAILED');
     expect(row.payload).toEqual({});
+  });
+});
+
+describe('outbox : envoi hors transaction (B9 H3)', () => {
+  it('SMTP lent et deux workers en parallèle : chaque mail envoyé une seule fois, Message-ID stable', async () => {
+    for (let i = 0; i < 5; i += 1) {
+      await api().post('/api/v1/auth/register').send({ email: `lent${i}@test.fr`, password: PASSWORD, displayName: 'L' }).expect(202);
+    }
+    const sent: MailMessage[] = [];
+    const slow = { sendMail: async (m: MailMessage) => { await new Promise((r) => setTimeout(r, 150)); sent.push(m); } };
+    const [a, b] = await Promise.all([processOutboxBatch(slow), processOutboxBatch(slow)]);
+    expect(a.sent + b.sent).toBe(5);
+    expect(sent).toHaveLength(5);
+    expect(new Set(sent.map((m) => m.to)).size).toBe(5);
+    const rows = await getDb().emailOutbox.findMany();
+    for (const m of sent) expect(rows.map((r) => messageIdFor(r.id))).toContain(m.messageId);
+  });
+
+  it('timeout SMTP : pas de renvoi pendant le bail ; renvoi ultérieur avec le MÊME Message-ID', async () => {
+    await api().post('/api/v1/auth/register').send({ email: 'timeout@test.fr', password: PASSWORD, displayName: 'T' }).expect(202);
+    const ids: string[] = [];
+    const failing = { sendMail: (m: MailMessage) => { ids.push(m.messageId ?? ''); return Promise.reject(Object.assign(new Error('timeout'), { name: 'TimeoutError' })); } };
+    await processOutboxBatch(failing);
+    await processOutboxBatch(failing); // backoff : rien n'est repris immédiatement
+    expect(ids).toHaveLength(1);
+    await getDb().emailOutbox.updateMany({ data: { nextAttemptAt: new Date(Date.now() - 1000) } });
+    const ok: MailMessage[] = [];
+    await processOutboxBatch({ sendMail: (m: MailMessage) => { ok.push(m); return Promise.resolve(); } });
+    expect(ok[0]!.messageId).toBe(ids[0]);
   });
 });
