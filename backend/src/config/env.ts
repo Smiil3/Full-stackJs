@@ -27,6 +27,19 @@ export interface Env {
 
 const httpUrl = Joi.string().uri({ scheme: ['http', 'https'] });
 
+/** Secret aléatoire : base64url strict décodant en au moins 32 octets (256 bits). */
+const secret256 = Joi.string()
+  .pattern(/^[A-Za-z0-9_-]+$/)
+  .custom((value: string, helpers) => (Buffer.from(value, 'base64url').length >= 32 ? value : helpers.error('secret.short')))
+  .messages({
+    'string.pattern.base': '{{#label}} doit être encodé en base64url',
+    'secret.short': '{{#label}} doit décoder en au moins 32 octets (générer avec : node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64url\'))")',
+  });
+
+/** Variables portant un secret : jamais de valeur d'exemple, toutes distinctes entre elles. */
+const SECRET_KEYS = ['JWT_ACCESS_SECRET', 'PSP_API_KEY', 'PSP_WEBHOOK_SECRET', 'DATA_ENCRYPTION_KEY'] as const;
+const PLACEHOLDER_KEYS = [...SECRET_KEYS, 'DATABASE_URL', 'SMTP_PASSWORD'] as const;
+
 const schema = Joi.object({
   NODE_ENV: Joi.string().valid('development', 'test', 'production').required(),
   PORT: Joi.number().integer().min(1).max(65535).default(4000),
@@ -35,8 +48,7 @@ const schema = Joi.object({
   FRONT_URL: httpUrl.required(),
   API_PUBLIC_URL: httpUrl.required(),
   TRUST_PROXY_HOPS: Joi.number().integer().min(0).max(5).default(0),
-  // 256 bits minimum : 43 caractères base64url.
-  JWT_ACCESS_SECRET: Joi.string().min(43).required(),
+  JWT_ACCESS_SECRET: secret256.required(),
   JWT_ISSUER: Joi.string().min(1).max(100).required(),
   JWT_AUDIENCE: Joi.string().min(1).max(100).required(),
   REFRESH_COOKIE_SECURE: Joi.boolean().truthy('true').falsy('false').required()
@@ -54,13 +66,32 @@ const schema = Joi.object({
   MAIL_FROM: Joi.string().min(3).max(200).required(),
   PSP_BASE_URL: httpUrl.required(),
   PSP_PORT: Joi.number().integer().min(1).max(65535).default(4001),
-  PSP_API_KEY: Joi.string().min(32).required(),
-  PSP_WEBHOOK_SECRET: Joi.string().min(32).required(),
+  PSP_API_KEY: secret256.required(),
+  PSP_WEBHOOK_SECRET: secret256.required(),
   PSP_WEBHOOK_URL: httpUrl.required(),
   WORKER_INTERVAL_MS: Joi.number().integer().min(500).max(600_000).default(5000),
 })
   // Les autres variables du système (PATH, HOME…) sont ignorées et non recopiées.
-  .unknown(true);
+  .unknown(true)
+  .custom((value: Record<string, unknown>, helpers) => {
+    for (const key of PLACEHOLDER_KEYS) {
+      const v = value[key];
+      if (typeof v === 'string' && /CHANGE_ME/i.test(v)) return helpers.error('env.placeholder', { key });
+    }
+    const seen = new Map<string, string>();
+    for (const key of SECRET_KEYS) {
+      const v = value[key];
+      if (typeof v !== 'string') continue;
+      const other = seen.get(v);
+      if (other) return helpers.error('env.duplicate', { key, other });
+      seen.set(v, key);
+    }
+    return value;
+  })
+  .messages({
+    'env.placeholder': '{{#key}} contient une valeur d’exemple (CHANGE_ME) : générer un vrai secret',
+    'env.duplicate': '{{#key}} et {{#other}} doivent être des secrets distincts',
+  });
 
 interface RawEnv {
   NODE_ENV: Env['nodeEnv'];

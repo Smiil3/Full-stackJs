@@ -143,3 +143,24 @@ describe('validate / endpoint', () => {
     expect(res.body.error.code).toBe('INTERNAL_ERROR');
   });
 });
+
+describe('configuration — secrets (B1.1 H1)', () => {
+  const base = () => ({ ...process.env });
+  it('refuse toute valeur d’exemple CHANGE_ME, quel que soit NODE_ENV', () => {
+    for (const nodeEnv of ['development', 'test']) {
+      expect(() => parseEnv({ ...base(), NODE_ENV: nodeEnv, JWT_ACCESS_SECRET: 'CHANGE_ME_AT_LEAST_43_RANDOM_CHARACTERS_XXXXXXXXXXXX' })).toThrow(/CHANGE_ME|base64url/);
+      expect(() => parseEnv({ ...base(), NODE_ENV: nodeEnv, PSP_API_KEY: 'change_me_' + 'A'.repeat(50) })).toThrow(/CHANGE_ME/);
+      expect(() => parseEnv({ ...base(), NODE_ENV: nodeEnv, DATABASE_URL: 'postgresql://nuits:CHANGE_ME@127.0.0.1:5432/nuits' })).toThrow(/CHANGE_ME/);
+    }
+  });
+  it('exige des secrets distincts (clé API PSP ≠ secret webhook, etc.)', () => {
+    const env = base();
+    expect(() => parseEnv({ ...env, PSP_WEBHOOK_SECRET: env['PSP_API_KEY'] })).toThrow(/distincts/);
+    expect(() => parseEnv({ ...env, JWT_ACCESS_SECRET: env['PSP_WEBHOOK_SECRET'] })).toThrow(/distincts/);
+  });
+  it('exige du base64url décodant en au moins 32 octets', () => {
+    expect(() => parseEnv({ ...base(), PSP_API_KEY: 'A'.repeat(42) })).toThrow(/32 octets/); // 31 octets
+    expect(() => parseEnv({ ...base(), PSP_API_KEY: '+/'.repeat(30) })).toThrow(/base64url/);
+    expect(() => parseEnv({ ...base(), PSP_API_KEY: 'A'.repeat(43) })).not.toThrow();
+  });
+});
