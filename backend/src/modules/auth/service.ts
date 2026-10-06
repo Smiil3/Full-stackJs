@@ -10,7 +10,12 @@ import { addMinutes } from '../../lib/time.js';
 import { normalizeEmail } from '../../lib/email.js';
 import * as repo from './repo.js';
 
-export const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+export const REFRESH_TTL_MS = 30 * DAY_MS;
+/** Durée de vie absolue d'une famille de refresh : reconnexion obligatoire au-delà. */
+export const REFRESH_FAMILY_MAX_MS = 90 * DAY_MS;
+/** Délai de grâce de rotation (réponse de refresh perdue sur réseau mobile). */
+export const REFRESH_GRACE_MS = 10_000;
 const EMAIL_TOKEN_TTL_MINUTES = 30;
 const ARGON2_OPTIONS = { type: argon2.argon2id } as const;
 
@@ -82,10 +87,25 @@ async function loadUser(userId: string): Promise<{ view: UserView; tokenVersion:
   return { view, tokenVersion: user.tokenVersion };
 }
 
-async function createRefreshToken(tx: Tx, userId: string, familyId: string): Promise<{ id: string; raw: string }> {
+interface FamilyInfo {
+  familyId: string;
+  familyCreatedAt: Date;
+  tokenVersion: number;
+}
+
+/** Émet un refresh token : expiration glissante de 30 jours, plafonnée par la fin de vie de la famille. */
+async function createRefreshToken(tx: Tx, userId: string, family: FamilyInfo): Promise<{ id: string; raw: string }> {
   const raw = randomToken(32);
+  const familyEnd = family.familyCreatedAt.getTime() + REFRESH_FAMILY_MAX_MS;
   const row = await tx.refreshToken.create({
-    data: { userId, familyId, tokenHash: sha256Hex(raw), expiresAt: new Date(Date.now() + REFRESH_TTL_MS) },
+    data: {
+      userId,
+      familyId: family.familyId,
+      familyCreatedAt: family.familyCreatedAt,
+      tokenVersion: family.tokenVersion,
+      tokenHash: sha256Hex(raw),
+      expiresAt: new Date(Math.min(Date.now() + REFRESH_TTL_MS, familyEnd)),
+    },
     select: { id: true },
   });
   return { id: row.id, raw };
@@ -187,30 +207,62 @@ export async function login(rawEmail: string, password: string): Promise<Session
   if (user.failedLoginCount > 0 || user.lockedUntil) await repo.recordLoginSuccess(user.id);
   // Email non vérifié : révélé UNIQUEMENT à qui connaît le mot de passe, et aucune session n'est créée.
   if (!user.emailVerifiedAt) throw errors.emailNotVerified();
-  const refresh = await transaction((tx) => createRefreshToken(tx, user.id, randomUUID()));
+  const refresh = await transaction(async (tx) => {
+    // Version lue sous verrou : un reset de mot de passe concurrent ne peut pas laisser une session valide.
+    const locked = await repo.lockUser(tx, user.id);
+    if (!locked) throw errors.invalidCredentials();
+    return createRefreshToken(tx, user.id, { familyId: randomUUID(), familyCreatedAt: new Date(), tokenVersion: locked.tokenVersion });
+  });
   return buildSession(user.id, refresh.raw);
 }
 
+type RefreshOutcome = { ok: true; userId: string; raw: string } | { ok: false };
+
 /**
- * Rotation du refresh token. Un jeton déjà utilisé (remplacé) ou révoqué qui revient = vol probable :
- * toute la famille est révoquée et l'utilisateur doit se reconnecter.
+ * Rotation du refresh token, sous verrous (utilisateur puis jeton) :
+ * - jeton révoqué, expiré, famille de plus de 90 jours ou version ≠ User.tokenVersion ⇒ 401 ;
+ * - jeton déjà remplacé : délai de grâce de 10 s si le successeur n'a JAMAIS servi (réponse perdue) —
+ *   le successeur est révoqué et une nouvelle paire est émise dans la même famille ; sinon c'est une
+ *   réutilisation (vol probable) ⇒ toute la famille est révoquée.
  */
 export async function refresh(rawToken: string | undefined): Promise<SessionResult> {
   if (!rawToken || !/^[A-Za-z0-9_-]{43}$/.test(rawToken)) throw errors.invalidRefreshToken();
-  const outcome = await transaction(async (tx) => {
-    const row = await repo.lockRefreshToken(tx, sha256Hex(rawToken));
-    if (!row) return { ok: false as const };
-    if (row.revokedAt !== null || row.replacedById !== null) {
+  const tokenHash = sha256Hex(rawToken);
+  const outcome = await transaction(async (tx): Promise<RefreshOutcome> => {
+    const ownerId = await repo.refreshOwner(tx, tokenHash);
+    if (!ownerId) return { ok: false };
+    const user = await repo.lockUser(tx, ownerId);
+    const row = await repo.lockRefreshToken(tx, tokenHash);
+    if (!user || !row) return { ok: false };
+    // Révoqué : déconnexion, changement de mot de passe, réutilisation, ou successeur supplanté pendant la grâce.
+    if (row.revokedAt !== null) return { ok: false };
+    const now = Date.now();
+    if (
+      row.expiresAt.getTime() <= now
+      || row.familyCreatedAt.getTime() + REFRESH_FAMILY_MAX_MS <= now
+      || row.tokenVersion !== user.tokenVersion
+    ) {
       await repo.revokeFamily(tx, row.familyId);
-      return { ok: false as const };
+      return { ok: false };
     }
-    if (row.expiresAt.getTime() <= Date.now()) {
-      await repo.revokeFamily(tx, row.familyId);
-      return { ok: false as const };
+    const family: FamilyInfo = { familyId: row.familyId, familyCreatedAt: row.familyCreatedAt, tokenVersion: row.tokenVersion };
+    if (row.replacedById !== null) {
+      const successor = await repo.lockRefreshTokenById(tx, row.replacedById);
+      const withinGrace = row.rotatedAt !== null && now - row.rotatedAt.getTime() <= REFRESH_GRACE_MS;
+      const successorUnused = successor !== null && successor.revokedAt === null && successor.replacedById === null;
+      if (!withinGrace || !successorUnused) {
+        await repo.revokeFamily(tx, row.familyId);
+        return { ok: false };
+      }
+      await tx.refreshToken.update({ where: { id: successor.id }, data: { revokedAt: new Date() } });
+      const next = await createRefreshToken(tx, row.userId, family);
+      // rotatedAt inchangé : la grâce reste bornée à 10 s après la première rotation.
+      await tx.refreshToken.update({ where: { id: row.id }, data: { replacedById: next.id } });
+      return { ok: true, userId: row.userId, raw: next.raw };
     }
-    const next = await createRefreshToken(tx, row.userId, row.familyId);
-    await tx.refreshToken.update({ where: { id: row.id }, data: { revokedAt: new Date(), replacedById: next.id } });
-    return { ok: true as const, userId: row.userId, raw: next.raw };
+    const next = await createRefreshToken(tx, row.userId, family);
+    await tx.refreshToken.update({ where: { id: row.id }, data: { replacedById: next.id, rotatedAt: new Date() } });
+    return { ok: true, userId: row.userId, raw: next.raw };
   });
   if (!outcome.ok) throw errors.invalidRefreshToken();
   return buildSession(outcome.userId, outcome.raw);

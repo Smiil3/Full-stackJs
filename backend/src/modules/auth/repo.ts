@@ -72,13 +72,40 @@ export interface RefreshRow {
   expiresAt: Date;
   revokedAt: Date | null;
   replacedById: string | null;
+  rotatedAt: Date | null;
+  familyCreatedAt: Date;
+  tokenVersion: number;
 }
 
-/** Verrouille la ligne du refresh token (rotation sérialisée en cas de requêtes concurrentes). */
+/** Propriétaire d'un refresh token (lecture sans verrou, pour verrouiller ensuite dans l'ordre user → jetons). */
+export async function refreshOwner(tx: Tx, tokenHash: string): Promise<string | null> {
+  const row = await tx.refreshToken.findUnique({ where: { tokenHash }, select: { userId: true } });
+  return row?.userId ?? null;
+}
+
+/**
+ * Verrouille la ligne utilisateur. Ordre de verrouillage commun à tout le module (utilisateur, puis
+ * jetons) : la rotation et un changement de mot de passe concurrents se sérialisent sans interblocage.
+ */
+export async function lockUser(tx: Tx, userId: string): Promise<{ tokenVersion: number } | null> {
+  const rows = await tx.$queryRaw<{ tokenVersion: number }[]>`
+    SELECT "tokenVersion" FROM "users" WHERE "id" = ${userId}::uuid FOR UPDATE`;
+  return rows[0] ?? null;
+}
+
+/** Verrouille un refresh token par son hash. */
 export async function lockRefreshToken(tx: Tx, tokenHash: string): Promise<RefreshRow | null> {
   const rows = await tx.$queryRaw<RefreshRow[]>`
-    SELECT "id", "userId", "familyId", "expiresAt", "revokedAt", "replacedById"
+    SELECT "id", "userId", "familyId", "expiresAt", "revokedAt", "replacedById", "rotatedAt", "familyCreatedAt", "tokenVersion"
     FROM "refresh_tokens" WHERE "tokenHash" = ${tokenHash} FOR UPDATE`;
+  return rows[0] ?? null;
+}
+
+/** Verrouille un refresh token par son identifiant (successeur dans la chaîne de rotation). */
+export async function lockRefreshTokenById(tx: Tx, id: string): Promise<RefreshRow | null> {
+  const rows = await tx.$queryRaw<RefreshRow[]>`
+    SELECT "id", "userId", "familyId", "expiresAt", "revokedAt", "replacedById", "rotatedAt", "familyCreatedAt", "tokenVersion"
+    FROM "refresh_tokens" WHERE "id" = ${id}::uuid FOR UPDATE`;
   return rows[0] ?? null;
 }
 

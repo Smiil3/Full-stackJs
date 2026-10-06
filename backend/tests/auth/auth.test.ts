@@ -150,32 +150,93 @@ describe('refresh token rotatif', () => {
     await api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', c2).expect(200);
   });
 
-  it('réutilisation d’un ancien refresh token ⇒ toute la famille révoquée', async () => {
+  it('réutilisation d’un ancien refresh token dont le successeur a servi ⇒ toute la famille révoquée', async () => {
     const u = await loggedInUser();
     const r1 = await api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', u.cookie).expect(200);
-    const c2 = refreshCookieOf(r1);
-    // L'attaquant rejoue le jeton volé (déjà utilisé).
+    const r2 = await api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', refreshCookieOf(r1)).expect(200);
+    // L'attaquant rejoue le jeton volé (son successeur a déjà été utilisé) : pas de grâce.
     const replay = await api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', u.cookie);
     expect(replay.status).toBe(401);
     expect(replay.body.error.code).toBe('INVALID_REFRESH_TOKEN');
     // Le jeton légitime le plus récent est lui aussi révoqué.
-    const legit = await api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', c2);
-    expect(legit.status).toBe(401);
+    await api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', refreshCookieOf(r2)).expect(401);
     expect(await getDb().refreshToken.count({ where: { userId: u.id, revokedAt: null } })).toBe(0);
   });
 
-  it('deux refresh concurrents avec le même jeton : un seul succès', async () => {
+  it('rejeu après le délai de grâce de 10 s ⇒ famille révoquée (B2.1 M1)', async () => {
     const u = await loggedInUser();
-    const results = await Promise.all(
-      Array.from({ length: 5 }, () => api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', u.cookie)),
-    );
-    // Rotation atomique : un seul gagnant ; les perdants sont traités comme une réutilisation
-    // (règle stricte, sans période de grâce) ⇒ la famille entière est révoquée.
-    expect(results.filter((r) => r.status === 200)).toHaveLength(1);
-    expect(results.filter((r) => r.status === 401).every((r) => r.body.error.code === 'INVALID_REFRESH_TOKEN')).toBe(true);
-    const winner = results.find((r) => r.status === 200)!;
-    await api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', refreshCookieOf(winner)).expect(401);
+    const r1 = await api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', u.cookie).expect(200);
+    await getDb().refreshToken.updateMany({ where: { userId: u.id, rotatedAt: { not: null } }, data: { rotatedAt: new Date(Date.now() - 10_001) } });
+    await api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', u.cookie).expect(401);
+    await api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', refreshCookieOf(r1)).expect(401);
+  });
+
+  it('réponse de refresh perdue : rejeu dans les 10 s ⇒ nouvelle session, l’ancien successeur est supplanté (B2.1 M1)', async () => {
+    const u = await loggedInUser();
+    const lost = await api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', u.cookie).expect(200);
+    const retry = await api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', u.cookie).expect(200);
+    // Le successeur perdu ne sert plus, sans pour autant tuer la famille…
+    await api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', refreshCookieOf(lost)).expect(401);
+    // … et la chaîne obtenue au rejeu continue de fonctionner.
+    await api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', refreshCookieOf(retry)).expect(200);
+  });
+
+  it('deux refresh concurrents avec le même jeton : les deux obtiennent une session, une seule chaîne survit (B2.1 M1)', async () => {
+    const u = await loggedInUser();
+    const [a, b] = await Promise.all([
+      api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', u.cookie),
+      api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', u.cookie),
+    ]);
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    await api().get(`${A}/me`).set('Authorization', `Bearer ${a.body.accessToken as string}`).expect(200);
+    await api().get(`${A}/me`).set('Authorization', `Bearer ${b.body.accessToken as string}`).expect(200);
+    // Un seul des deux cookies reste utilisable, et l'autre ne révoque pas la famille.
+    const statuses: number[] = [];
+    for (const r of [a, b]) statuses.push((await api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', refreshCookieOf(r))).status);
+    expect(statuses.sort()).toEqual([200, 401]);
+    expect(await getDb().refreshToken.count({ where: { userId: u.id, revokedAt: null, replacedById: null } })).toBe(1);
+  });
+
+  it('famille de plus de 90 jours ⇒ reconnexion obligatoire (B2.1 M3)', async () => {
+    const u = await loggedInUser();
+    await getDb().refreshToken.updateMany({ where: { userId: u.id }, data: { familyCreatedAt: new Date(Date.now() - 90 * 24 * 3600 * 1000 - 1000) } });
+    await api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', u.cookie).expect(401);
     expect(await getDb().refreshToken.count({ where: { userId: u.id, revokedAt: null } })).toBe(0);
+  });
+
+  it('l’expiration glissante ne dépasse jamais la fin de vie de la famille (B2.1 M3)', async () => {
+    const u = await loggedInUser();
+    const familyStart = new Date(Date.now() - 80 * 24 * 3600 * 1000);
+    await getDb().refreshToken.updateMany({ where: { userId: u.id }, data: { familyCreatedAt: familyStart } });
+    await api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', u.cookie).expect(200);
+    const live = await getDb().refreshToken.findFirstOrThrow({ where: { userId: u.id, revokedAt: null, replacedById: null } });
+    expect(live.expiresAt.getTime()).toBeLessThanOrEqual(familyStart.getTime() + 90 * 24 * 3600 * 1000);
+    expect(live.familyCreatedAt.getTime()).toBe(familyStart.getTime());
+  });
+
+  it('reset de mot de passe et refresh concurrents : aucune session ne survit (B2.1 M2)', async () => {
+    const u = await loggedInUser({ email: 'race@test.fr' });
+    await api().post(`${A}/forgot-password`).send({ email: u.email }).expect(202);
+    const token = await tokenFromMail(u.email, 'resetPassword');
+    const [refreshRes] = await Promise.all([
+      api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', u.cookie),
+      api().post(`${A}/reset-password`).send({ token, password: 'nouveau-mot-de-passe-42' }).expect(204),
+    ]);
+    if (refreshRes.status === 200) {
+      // Le refresh est passé avant le reset : sa session est quand même invalidée.
+      await api().get(`${A}/me`).set('Authorization', `Bearer ${refreshRes.body.accessToken as string}`).expect(401);
+      await api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', refreshCookieOf(refreshRes)).expect(401);
+    }
+    expect(await getDb().refreshToken.count({ where: { userId: u.id, revokedAt: null } })).toBe(0);
+  });
+
+  it('cookie effacé seulement sur 401, pas sur un refus CSRF', async () => {
+    const u = await loggedInUser();
+    const csrf = await api().post(`${A}/refresh`).set('Origin', csrfHeaders.Origin).set('Cookie', u.cookie).expect(403);
+    expect(csrf.headers['set-cookie']).toBeUndefined();
+    const unauth = await api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', 'nuits_rt=' + 'z'.repeat(43)).expect(401);
+    expect(String(unauth.headers['set-cookie'])).toMatch(/nuits_rt=;/);
   });
 
   it('jeton expiré, inconnu ou absent ⇒ 401', async () => {

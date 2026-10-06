@@ -1,0 +1,5 @@
+-- AlterTable
+ALTER TABLE "refresh_tokens" ADD COLUMN     "familyCreatedAt" TIMESTAMPTZ(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ADD COLUMN     "rotatedAt" TIMESTAMPTZ(3),
+ADD COLUMN     "tokenVersion" INTEGER NOT NULL DEFAULT 0;
+

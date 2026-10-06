@@ -1,5 +1,6 @@
 import type { CookieOptions, Request, Response } from 'express';
 import { getEnv } from '../../config/env.js';
+import { AppError } from '../../lib/errors.js';
 import { getAuth } from '../../middlewares/auth.js';
 import type { ValidatedInput } from '../../middlewares/validate.js';
 import * as service from './service.js';
@@ -59,7 +60,9 @@ export async function refresh(_input: In<Empty>, req: Request, res: Response) {
     setRefreshCookie(res, result.refreshToken);
     return result.session;
   } catch (err) {
-    clearRefreshCookie(res);
+    // Cookie effacé UNIQUEMENT sur un refus explicite (401) : une erreur transitoire (5xx, réseau)
+    // ne doit pas déconnecter l'utilisateur.
+    if (err instanceof AppError && err.status === 401) clearRefreshCookie(res);
     throw err;
   }
 }

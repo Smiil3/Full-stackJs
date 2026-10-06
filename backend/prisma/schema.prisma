@@ -136,6 +136,12 @@ model RefreshToken {
   expiresAt    DateTime  @db.Timestamptz(3)
   revokedAt    DateTime? @db.Timestamptz(3)
   replacedById String?   @unique @db.Uuid
+  /// Instant de la rotation (remplacement par replacedById) : borne le délai de grâce de 10 s.
+  rotatedAt    DateTime? @db.Timestamptz(3)
+  /// Début de la famille (première connexion) : durée de vie absolue de 90 jours.
+  familyCreatedAt DateTime @default(now()) @db.Timestamptz(3)
+  /// User.tokenVersion au moment de l'émission : un changement de mot de passe rend la famille inutilisable.
+  tokenVersion Int      @default(0)
   createdAt    DateTime  @default(now()) @db.Timestamptz(3)
 
   user       User          @relation(fields: [userId], references: [id], onDelete: Cascade)
