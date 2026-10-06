@@ -1,5 +1,6 @@
 import { act, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { delay, http } from 'msw';
 import { describe, expect, it, vi } from 'vitest';
 import { apiRequest, login, logout } from '../../api/client';
 import type { Order } from '../../api/types';
@@ -331,5 +332,61 @@ describe('membres, journal, admin plateforme', () => {
   it('admin : page refusée à un non-admin', async () => {
     await renderApp('/admin', { as: OWNER });
     expect(await screen.findByRole('heading', { name: 'Accès non autorisé' })).toBeInTheDocument();
+  });
+});
+
+describe('changement de collectif dans la même session (revue F3.1)', () => {
+  const ORG_B = `/org/${IDS.orgPartner}`; // owner@nuits.test est MANAGER de Rive Droite
+
+  it('H1 : le formulaire bancaire saisi pour A disparaît en passant à B (aucun envoi, champs vides)', async () => {
+    const user = userEvent.setup();
+    const patches: string[] = [];
+    server.events.on('request:start', ({ request }) => {
+      if (request.method === 'PATCH') patches.push(request.url);
+    });
+    const { router } = await renderApp(`${ORG}/settings`, { as: OWNER });
+    await user.click(await screen.findByRole('button', { name: 'Modifier les coordonnées bancaires' }));
+    await user.type(screen.getByLabelText('IBAN complet'), 'FR76 3000 6000 0112 3456 7890 189');
+    await user.type(screen.getByLabelText('Votre mot de passe (confirmation)'), DEMO_PASSWORD);
+    await act(() => router.navigate(`${ORG_B}/settings`));
+    await screen.findByText(/Lecture seule/); // MANAGER sur B
+    expect(screen.queryByLabelText('IBAN complet')).toBeNull();
+    expect(screen.queryByDisplayValue(/FR76/)).toBeNull();
+    expect(screen.queryByDisplayValue(DEMO_PASSWORD)).toBeNull();
+    server.events.removeAllListeners();
+    expect(patches).toEqual([]);
+  });
+
+  it('H1 : remontage complet (filtres, page) au changement de collectif', async () => {
+    const user = userEvent.setup();
+    const { router } = await renderApp(ORG, { as: OWNER });
+    await user.click(await screen.findByRole('button', { name: 'Brouillons' }));
+    expect(screen.getByRole('button', { name: 'Brouillons' })).toHaveAttribute('aria-pressed', 'true');
+    await act(() => router.navigate(ORG_B));
+    expect(await screen.findByRole('button', { name: 'Tous' })).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  it('H2 : pendant le chargement de B, jamais les événements de A sous l’en-tête de B', async () => {
+    server.use(
+      http.get(`*/api/v1/orgs/${IDS.orgPartner}/events`, async () => {
+        await delay(300);
+        return undefined;
+      }),
+    );
+    const { router } = await renderApp(ORG, { as: OWNER });
+    expect(await screen.findByRole('link', { name: /Garonne Électrique/ })).toBeInTheDocument();
+    await act(() => router.navigate(ORG_B));
+    expect(screen.getByText(/Collectif :/)).toHaveTextContent('Collectif Rive Droite');
+    expect(screen.queryByRole('link', { name: /Garonne Électrique/ })).toBeNull();
+    expect(await screen.findByRole('link', { name: 'Rive Droite Jazz Club' })).toBeInTheDocument();
+  });
+
+  it('H2 : keepIfSameScope ne garde les données que pour le même collectif et le même événement', async () => {
+    const { keepIfSameScope } = await import('../../api/hooks/org');
+    const prev = { items: [1] };
+    expect(keepIfSameScope('A')(prev, { queryKey: ['org', 'A', 'events'] })).toBe(prev);
+    expect(keepIfSameScope('B')(prev, { queryKey: ['org', 'A', 'events'] })).toBeUndefined();
+    expect(keepIfSameScope('A', 'e2')(prev, { queryKey: ['org', 'A', 'event', 'e1', 'orders'] })).toBeUndefined();
+    expect(keepIfSameScope('A', 'e1')(prev, { queryKey: ['org', 'A', 'event', 'e1', 'orders'] })).toBe(prev);
   });
 });

@@ -1,3 +1,4 @@
+import { Fragment } from 'react';
 import { NavLink, Outlet, useParams } from 'react-router';
 import { apiPath } from '../../api/client';
 import { useAuth } from '../../auth/AuthContext';
@@ -36,7 +37,11 @@ export function OrgLayout() {
           </NavLink>
         ) : null}
       </nav>
-      <Outlet />
+      {/* Remontage complet à chaque changement de collectif : aucun état de formulaire (IBAN, mot de
+          passe, filtres, pagination) ne peut passer d'un collectif à l'autre. */}
+      <Fragment key={orgId}>
+        <Outlet />
+      </Fragment>
     </div>
   );
 }

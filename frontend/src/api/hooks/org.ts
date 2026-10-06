@@ -25,6 +25,19 @@ import type {
 } from '../types';
 
 const org = (orgId: string) => apiPath`/orgs/${orgId}`;
+
+/**
+ * Données « précédentes » affichées pendant un rechargement (pagination, filtres) — UNIQUEMENT si elles
+ * concernent le même collectif (et le même événement) : jamais les données de A sous l'en-tête de B.
+ */
+export function keepIfSameScope(orgId: string, eventId?: string) {
+  return <T>(previous: T | undefined, previousQuery: { queryKey: readonly unknown[] } | undefined): T | undefined => {
+    const key = previousQuery?.queryKey;
+    if (key?.[0] !== 'org' || key[1] !== orgId) return undefined;
+    if (eventId !== undefined && key[3] !== eventId) return undefined;
+    return previous;
+  };
+}
 const ev = (orgId: string, eventId: string) => apiPath`/orgs/${orgId}/events/${eventId}`;
 
 // ---------------- Collectif ----------------
@@ -66,7 +79,7 @@ export const useAuditLog = (orgId: string, page: number) =>
   useQuery({
     queryKey: qk.orgAudit(orgId, page),
     queryFn: ({ signal }) => apiRequest<Page<AuditLogEntry>>(`${org(orgId)}/audit-log`, { query: { page, pageSize: 25 }, signal }),
-    placeholderData: keepPreviousData,
+    placeholderData: keepIfSameScope(orgId),
   });
 
 // ---------------- Événements ----------------
@@ -74,7 +87,7 @@ export const useOrgEvents = (orgId: string, status: EventStatus | undefined, pag
   useQuery({
     queryKey: qk.orgEvents(orgId, status, page),
     queryFn: ({ signal }) => apiRequest<Page<EventAdmin>>(`${org(orgId)}/events`, { query: { status, page, pageSize: 20 }, signal }),
-    placeholderData: keepPreviousData,
+    placeholderData: keepIfSameScope(orgId),
   });
 
 export const useOrgEvent = (orgId: string, eventId: string) =>
@@ -117,7 +130,7 @@ export const useEventOrders = (orgId: string, eventId: string, q: AdminOrdersQue
   useQuery({
     queryKey: qk.orgEventOrders(orgId, eventId, q),
     queryFn: ({ signal }) => apiRequest<Page<OrderAdmin>>(`${ev(orgId, eventId)}/orders`, { query: { ...q, pageSize: 20 }, signal }),
-    placeholderData: keepPreviousData,
+    placeholderData: keepIfSameScope(orgId, eventId),
   });
 
 export function useConfirmTransfer(orgId: string, eventId: string) {
