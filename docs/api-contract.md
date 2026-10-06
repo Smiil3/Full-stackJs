@@ -1,7 +1,7 @@
 # Contrat d'API — Billetterie « Les Nuits de la Garonne »
 
 > **Source de vérité commune front / back.** Toute modification passe par le PO (session `fullstack-js`) : demander via une ligne `NEED: changement de contrat …`. Ne jamais diverger silencieusement.
-> Version : 1.13 — 2026-10-06 (voir §11 Historique)
+> Version : 1.14 — 2026-10-06 (voir §11 Historique)
 
 ## 1. Conventions
 
@@ -155,6 +155,8 @@ type WaitlistEntry = { id; eventId; eventTitle; ticketTypeId; ticketTypeName; qu
 | `DELETE /waitlist/:entryId` | Bearer | — | 204 (statut `LEFT` ; si `OFFERED`, les places passent au suivant) |
 | `POST /waitlist/:entryId/accept` | Bearer | — | 201 `Order` (CARD, `PENDING_PAYMENT`, places déjà réservées) · 409 `OFFER_EXPIRED` |
 
+**Règles de la liste d'attente** : file FIFO (`createdAt`, `id`) par type de place. La tête de file est servie en priorité : les places libérées s'accumulent pour elle (bloquées, ni vendues au public ni offertes aux suivants) pendant au plus `waitlistOfferMinutes` ; passé ce délai sans assez de places, elle est sautée (elle garde son rang) et la suivante est servie. Le plafond par personne est revérifié à l'acceptation (`LIMIT_EXCEEDED`). Distribution et acceptation possibles seulement tant que les ventes sont ouvertes (`now < min(salesEndAt, startsAt)`) ; inscription possible seulement ventes ouvertes. L'échéance d'une offre fait foi (une offre échue mais pas encore balayée ⇒ `OFFER_EXPIRED`).
+
 ## 7. Back-office collectif (préfixe `/orgs/:orgId`, Bearer)
 
 Contrôle à chaque requête : adhésion lue en base. Non-membre ⇒ **404**. Membre avec rôle insuffisant ⇒ 403.
@@ -189,7 +191,7 @@ type TicketTypeAdmin = { id; name; description: string|null; capacity; sold; hel
   earlyUntil: string|null; sortOrder: number }
 type EventAdmin = { id; orgId; title; description: string|null; venue: string|null; address: string|null; isOnline; startsAt; endsAt; timezone;
   status: 'DRAFT'|'PUBLISHED'|'CANCELLED'; salesStartAt; salesEndAt; overrides: EventOverrides; offlineCheckinEnabled: boolean;
-  effectiveRules: EventRulesPublic; ticketTypes: TicketTypeAdmin[]; createdAt; updatedAt }
+  effectiveRules: EventRulesPublic; ticketTypes: TicketTypeAdmin[]; cancellationPendingOrders: number; createdAt; updatedAt }
 ```
 | Méthode & chemin | Rôle | Body | Réponse |
 |---|---|---|---|
@@ -198,7 +200,7 @@ type EventAdmin = { id; orgId; title; description: string|null; venue: string|nu
 | `GET /orgs/:orgId/events/:eventId` | MANAGER+ | — | 200 `EventAdmin` |
 | `PATCH /orgs/:orgId/events/:eventId` | MANAGER+ | champs ci-dessus, tous optionnels ; `overrides` partiel ; `rescheduleReason` (1–500) requis si report | 200 `EventAdmin` · 409 si `CANCELLED` · 403 si report par un MANAGER · 400 si `rescheduleReason` manquant |
 | `POST /orgs/:orgId/events/:eventId/publish` | MANAGER+ | — | 200 `EventAdmin` · 409 si aucun type de place |
-| `POST /orgs/:orgId/events/:eventId/cancel` | OWNER | `{ reason (1–500) }` | 200 `EventAdmin` — rembourse toutes les commandes payées, annule les autres, prévient par mail |
+| `POST /orgs/:orgId/events/:eventId/cancel` | OWNER | `{ reason (1–500) }` | 200 `EventAdmin` (statut `CANCELLED` immédiatement : plus aucune vente ni scan) — le traitement des commandes (remboursements, annulations, mails, billets) se fait **en arrière-plan par lots** ; `EventAdmin.cancellationPendingOrders` indique le reste à traiter · idempotent (2e appel ⇒ 200 même état) · 409 `CONFLICT` si l'événement a déjà commencé (`startsAt` passé) |
 | `POST /orgs/:orgId/events/:eventId/ticket-types` | MANAGER+ | `{ name (1–80), description?, capacity (1–100000), priceCents (0–1000000), earlyPriceCents?, earlyUntil?, sortOrder? }` (early : les 2 ou aucun, `earlyPriceCents < priceCents`) | 201 `TicketTypeAdmin` |
 | `PATCH /orgs/:orgId/events/:eventId/ticket-types/:ticketTypeId` | MANAGER+ | mêmes champs optionnels | 200 · 409 `CONFLICT` si `capacity < sold + held` |
 | `DELETE /orgs/:orgId/events/:eventId/ticket-types/:ticketTypeId` | MANAGER+ | — | 204 · 409 si déjà des commandes |
@@ -237,7 +239,7 @@ type RefundAdmin = { id; orderId; eventId; eventTitle; buyerEmail; amountCents; 
 | `GET /orgs/:orgId/refunds` | MANAGER+ | `page, pageSize, status?, eventId?` | 200 page `RefundAdmin` (tri `createdAt` desc) |
 | `POST /orgs/:orgId/refunds/:refundId/mark-done` | MANAGER+ | `{ note (1–500) }` (ex. « virement retour effectué le … ») | 200 `RefundAdmin` (`MANUAL_REQUIRED`/`FAILED` ⇒ `SUCCEEDED`, AuditLog) · 409 `INVALID_STATE` |
 
-Un remboursement de commande payée par virement est toujours `MANUAL_REQUIRED`. Un remboursement carte en échec définitif passe `MANUAL_REQUIRED` (jamais un `FAILED` silencieux). `EventStats.totals` ajoute `refundsToProcess: number` (MANUAL_REQUIRED + FAILED).
+Un remboursement de commande payée par virement est toujours `MANUAL_REQUIRED` (le mail à l'acheteur annonce un remboursement **à venir** par le collectif, pas un remboursement effectué). Un remboursement carte en échec définitif passe `MANUAL_REQUIRED` (jamais un `FAILED` silencieux). `EventStats.totals` ajoute `refundsToProcess: number` (MANUAL_REQUIRED + FAILED).
 
 ### 7.4 Contrôle d'accès (scan)
 | `GET /orgs/:orgId/checkin/events` | SCANNER+ | — | 200 `{ items: { id; title; venue; isOnline; startsAt; endsAt; timezone; status; offlineCheckinEnabled }[] }` — événements PUBLISHED dont la fin date de moins de 24 h, sans aucun chiffre de vente |
@@ -280,6 +282,7 @@ Un remboursement de commande payée par virement est toujours `MANUAL_REQUIRED`.
 - En-têtes de sécurité via helmet ; CORS : origine `FRONT_URL` uniquement, `credentials: true`.
 
 ## 11. Historique
+- **1.14** (2026-10-06) : annulation d'événement asynchrone par lots (`cancellationPendingOrders`), refusée après le début ; règles d'équité de la liste d'attente ; plafond revérifié à l'acceptation ; mail de remboursement de virement « à venir ».
 - **1.13** (2026-10-06) : contrôle d'accès en ligne par défaut ; validation hors-ligne = mode secours `offlineCheckinEnabled` (défaut false, OWNER seulement, audité) ; snapshot ⇒ 409 `OFFLINE_CHECKIN_DISABLED` si désactivé.
 - **1.12** (2026-10-06) : sync ≤ 160 ko après authentification ; check-in limité aux événements PUBLISHED terminés depuis < 24 h (CANCELLED ⇒ résultat `CANCELLED`) ; tout billet d'une commande annulée/remboursée/expirée est `CANCELLED`.
 - **1.11** (2026-10-06) : `data.refundId` sur `refund.succeeded` ; limites de taille de corps explicitées (sync 256 ko).
