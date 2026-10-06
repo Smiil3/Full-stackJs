@@ -128,10 +128,11 @@ describe('intégrité des paiements et remboursements (B1.1 B5)', () => {
     expect(sum._sum.amountCents).toBe(3000);
   });
 
-  it('paiement dans une autre devise refusé', async () => {
+  it('devise : code ISO 4217 obligatoire (un paiement USD reçu par erreur doit pouvoir être enregistré puis remboursé)', async () => {
     const db = getDb();
     const { order } = await paidOrder();
-    await expect(db.payment.create({ data: { orderId: order.id, providerPaymentId: 'pay_usd', amountCents: 1, currency: 'USD', status: 'SUCCEEDED' } })).rejects.toThrow();
+    await expect(db.payment.create({ data: { orderId: order.id, providerPaymentId: 'pay_eur', amountCents: 1, currency: 'eur', status: 'SUCCEEDED' } })).rejects.toThrow();
+    await expect(db.payment.create({ data: { orderId: order.id, providerPaymentId: 'pay_usd', amountCents: 1, currency: 'USD', status: 'SUCCEEDED' } })).resolves.toBeTruthy();
   });
 
   it('clés étrangères : replacedById et usedByUserId pointent sur des lignes existantes', async () => {

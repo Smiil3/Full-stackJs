@@ -83,8 +83,9 @@ describe('expiration robuste (B4.1 H1 / M5)', () => {
       const u = await createUser();
       const res = await order(await bearerFor(u.id), { eventId, paymentMethod: 'CARD', items: [{ ticketTypeId: ticketTypeIds[0]!, quantity: 2 }] }).expect(201);
       const orderId = res.body.id as string;
-      await getDb().order.update({ where: { id: orderId }, data: { expiresAt: new Date(Date.now() - 60_000) } });
-      const [, hook] = await Promise.all([expireOrders(), postWebhook(paymentEvent(orderId, res.body.totalCents as number))]);
+      // Session ouverte (simulée) avant l'échéance.
+      await getDb().order.update({ where: { id: orderId }, data: { pspSessionId: `cs_test${round}`, pspSessionUrl: 'http://127.0.0.1/x', expiresAt: new Date(Date.now() - 60_000) } });
+      const [, hook] = await Promise.all([expireOrders(), postWebhook(paymentEvent(orderId, res.body.totalCents as number, { sessionId: `cs_test${round}` }))]);
       expect(hook.status).toBe(200);
       const final = await getDb().order.findUniqueOrThrow({ where: { id: orderId } });
       const tt = await getDb().ticketType.findUniqueOrThrow({ where: { id: ticketTypeIds[0]! } });

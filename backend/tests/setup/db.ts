@@ -17,8 +17,21 @@ export async function resetDatabase(): Promise<void> {
     RESTART IDENTITY CASCADE`;
 }
 
+/**
+ * Nettoyage avec nouvel essai : TRUNCATE prend des verrous exclusifs sur toutes les tables ; une transaction
+ * résiduelle du test précédent (webhook émis par le PSP simulé après sa réponse) peut provoquer un
+ * interblocage ponctuel (40P01). Propre à l'outillage de test, jamais au code applicatif.
+ */
 beforeEach(async () => {
-  await resetDatabase();
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await resetDatabase();
+      return;
+    } catch (err) {
+      if (attempt >= 3 || !String(err).includes('40P01')) throw err;
+      await new Promise((r) => setTimeout(r, 100 * attempt));
+    }
+  }
 });
 
 afterAll(async () => {

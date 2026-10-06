@@ -2,7 +2,7 @@ import type { Prisma } from '../../generated/prisma/client.js';
 import { writeAudit } from '../../lib/audit.js';
 import { clock } from '../../lib/clock.js';
 import { getDb, transaction, type Tx } from '../../lib/db.js';
-import { errors } from '../../lib/errors.js';
+import { AppError, errors } from '../../lib/errors.js';
 import { orderInclude, scannedCounts } from '../orders/repo.js';
 import { toOrderView } from '../orders/service.js';
 import { loadOrderForUpdate, settleHeldOrder } from '../payments/settle.js';
@@ -24,7 +24,8 @@ export async function listEventOrders(orgId: string, eventId: string, query: Eve
     eventId,
     event: { orgId },
     ...(query.status ? { status: query.status } : {}),
-    ...(query.q ? { user: { email: { contains: query.q.toLowerCase() } } } : {}),
+    // Jokers LIKE (% et _) échappés : la recherche porte sur le texte saisi, pas sur un motif.
+    ...(query.q ? { user: { email: { contains: query.q.toLowerCase().replace(/[\\%_]/g, (c) => `\\${c}`) } } } : {}),
   };
   const [rows, total] = await Promise.all([
     db.order.findMany({ where, include: adminInclude, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
@@ -51,7 +52,10 @@ export async function confirmTransfer(orgId: string, actorId: string, orderId: s
     await loadAdminOrder(tx, orgId, orderId);
     const order = await loadOrderForUpdate(tx, orderId);
     if (!order || order.event.orgId !== orgId) throw errors.notFound();
-    if (order.status === 'EXPIRED') throw errors.state('ORDER_EXPIRED', 'La réservation a expiré : les places ont été libérées.');
+    if (order.event.status !== 'PUBLISHED') throw errors.state('SALES_CLOSED', 'L’événement n’est plus en vente.');
+    // L'échéance fait foi, pas le passage du worker d'expiration.
+    const expired = order.status === 'EXPIRED' || (order.status === 'AWAITING_TRANSFER' && order.expiresAt !== null && order.expiresAt <= clock.now());
+    if (expired) throw errors.state('ORDER_EXPIRED', 'La réservation a expiré : les places ont été libérées.');
     if (order.status !== 'AWAITING_TRANSFER') throw errors.state('INVALID_STATE', 'Cette commande n’attend pas de virement.');
     if (receivedAmountCents !== order.totalCents) {
       throw errors.unprocessable('AMOUNT_MISMATCH', 'Le montant reçu ne correspond pas au montant dû.', { expectedCents: order.totalCents, receivedCents: receivedAmountCents });
@@ -59,7 +63,9 @@ export async function confirmTransfer(orgId: string, actorId: string, orderId: s
     await tx.payment.create({
       data: { orderId: order.id, providerPaymentId: `transfer:${order.id}`, amountCents: receivedAmountCents, currency: 'EUR', status: 'SUCCEEDED' },
     });
-    await settleHeldOrder(tx, order, 'AWAITING_TRANSFER');
+    if (!(await settleHeldOrder(tx, order, 'AWAITING_TRANSFER'))) {
+      throw new AppError(409, 'CONFLICT', 'Stock incohérent pour cette commande : contactez le support.');
+    }
     await writeAudit(tx, {
       orgId, actorId, action: 'order.confirm_transfer', target: `order:${order.id}`,
       meta: { amountCents: receivedAmountCents, reference: order.transferReference },

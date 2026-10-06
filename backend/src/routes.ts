@@ -11,6 +11,7 @@ import { eventCheckinRouter, orgCheckinRouter } from './modules/checkin/routes.j
 import { webhooksRouter } from './modules/payments/routes.js';
 import { orgOrdersRouter } from './modules/orgOrders/routes.js';
 import { meRouter } from './modules/tickets/routes.js';
+import { orgRefundsRouter } from './modules/refunds/routes.js';
 
 /** Routeur principal `/api/v1` : chaque module y monte ses routes. */
 export function buildApiRouter(limiters: Limiters): Router {
@@ -21,6 +22,7 @@ export function buildApiRouter(limiters: Limiters): Router {
   router.use('/me', meRouter());
   router.use('/admin', adminRouter());
   router.use('/orgs/:orgId', requireAuth);
+  router.use('/orgs/:orgId/refunds', orgRefundsRouter());
   router.use('/orgs/:orgId', orgOrdersRouter());
   router.use('/orgs/:orgId/events/:eventId/checkin', eventCheckinRouter(limiters));
   router.use('/orgs/:orgId/events', orgEventsRouter());

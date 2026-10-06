@@ -87,3 +87,16 @@ Décisions non bloquantes prises pendant l'implémentation (option la plus sûre
 - **2026-10-06 — Limite de corps de 256 ko réservée à la route de synchronisation** (500 scans ≈ 130 ko) ; toutes les autres routes restent à 10 ko.
 - **2026-10-06 — Snapshot et réponses de scan : initiales du porteur uniquement (« J.P.D. »), jamais de nom complet ni d'email.**
 - **2026-10-06 — Mail de confirmation : un QR PNG par billet VALIDE, généré à l'envoi (jamais stocké dans l'outbox).**
+
+## B5 / B5.1 — Paiements
+
+- **2026-10-06 — Un paiement authentifié n'est jamais perdu (contrat 1.10 §9).** — Après signature valide, 200 dans tous les cas métier. Toute somme encaissée sans billets (commande inconnue, montant / devise / session incohérents, commande non CARD, stock bloqué incohérent, paiement tardif sans places, doublon) est enregistrée (`Payment`), remboursée automatiquement (`Refund`), journalisée en `error` et tracée dans l'AuditLog.
+- **2026-10-06 — Commande inconnue : `Payment.orderId` et `Refund.orderId` nullables** (plutôt qu'une table d'anomalies) : le remboursement suit le même circuit (worker, PSP) ; ces remboursements n'apparaissent dans aucun back-office de collectif (aucun collectif identifiable), seulement dans les logs et l'AuditLog plateforme (orgId null).
+- **2026-10-06 — Devise des paiements : format ISO libre (`^[A-Z]{3}$`) au lieu de EUR strict** — un paiement dans une autre devise doit pouvoir être enregistré pour être remboursé ; seule une commande en EUR peut être réglée.
+- **2026-10-06 — Session : pour une commande CARD en attente, `data.sessionId` doit égaler la session ouverte ; sinon remboursement UNEXPECTED_PAYMENT.** — Après `payment.failed`, la session est oubliée et `checkoutAttempt` incrémenté : la clé d'idempotence PSP du checkout est `orderId:tentative`, la tentative suivante ouvre une nouvelle session.
+- **2026-10-06 — `payment.failed` puis `payment.succeeded` du même paymentId : le Payment FAILED passe SUCCEEDED et l'événement est traité normalement ; seul un Payment déjà SUCCEEDED est ignoré.**
+- **2026-10-06 — Enveloppe signée inexploitable (JSON valide sans identifiant…) : 200 + log error** — impossible de dédoublonner ou de traiter ; un 4xx ferait réessayer le PSP indéfiniment.
+- **2026-10-06 — `refund.succeeded` apparié par `data.refundId` (identifiant PSP), jamais par montant** ; un succès tardif régularise aussi MANUAL_REQUIRED / FAILED. Le mock PSP ajoute `refundId` aux données du webhook (champ additionnel toléré par le contrat 1.10).
+- **2026-10-06 — Remboursements : tentative comptée et bail posé AVANT l'appel PSP ; refus définitif du PSP (4xx hors 408/409/425/429) ou essais épuisés ⇒ MANUAL_REQUIRED (jamais FAILED silencieux) ; plafond vérifié sous `FOR UPDATE` du paiement avant insertion (montant plafonné au reste remboursable, le déclencheur SQL reste le filet ultime).**
+- **2026-10-06 — Validation de virement : l'échéance fait foi (expiresAt dépassé ⇒ ORDER_EXPIRED même si le worker n'est pas passé) ; événement non publié ⇒ SALES_CLOSED.**
+- **2026-10-06 — Recherche par email : jokers LIKE (`%`, `_`, `\`) échappés.**

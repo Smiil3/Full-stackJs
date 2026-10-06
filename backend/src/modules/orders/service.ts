@@ -294,11 +294,12 @@ export async function checkout(userId: string, orderId: string): Promise<{ redir
     currency: 'EUR',
     successUrl: `${env.frontUrl}/orders/${order.id}?payment=success`,
     cancelUrl: `${env.frontUrl}/orders/${order.id}?payment=failed`,
-    idempotencyKey: order.id,
+    // Une clé par tentative : après un refus, la session est oubliée et la tentative suivante en ouvre une nouvelle.
+    idempotencyKey: `${order.id}:${order.checkoutAttempt}`,
   });
   return transaction(async (tx) => {
     const { count } = await tx.order.updateMany({
-      where: { id: order.id, userId, status: 'PENDING_PAYMENT', pspSessionUrl: null },
+      where: { id: order.id, userId, status: 'PENDING_PAYMENT', pspSessionUrl: null, checkoutAttempt: order.checkoutAttempt },
       data: { pspSessionId: session.id, pspSessionUrl: session.url },
     });
     if (count === 1) return { redirectUrl: session.url };

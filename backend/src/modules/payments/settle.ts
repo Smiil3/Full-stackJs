@@ -4,6 +4,7 @@ import { writeAudit } from '../../lib/audit.js';
 import { clock } from '../../lib/clock.js';
 import type { Tx } from '../../lib/db.js';
 import { AppError } from '../../lib/errors.js';
+import { getLogger } from '../../lib/logger.js';
 import { formatEuros } from '../../lib/mail/templates.js';
 import { enqueueEmail } from '../../lib/outbox.js';
 import { formatWithZone } from '../../lib/time.js';
@@ -42,11 +43,21 @@ async function confirm(tx: Tx, order: SettlementOrder): Promise<void> {
   });
 }
 
-/** Paiement reçu pour une commande en attente : places bloquées → vendues, billets, mail. */
-export async function settleHeldOrder(tx: Tx, order: SettlementOrder, from: OrderStatus): Promise<void> {
+/**
+ * Paiement reçu pour une commande en attente : places bloquées → vendues, billets, mail.
+ * Les types sont verrouillés et le stock bloqué vérifié AVANT toute écriture : en cas d'incohérence,
+ * rien n'est modifié et false est renvoyé (l'appelant rembourse et alerte au lieu d'échouer en boucle).
+ */
+export async function settleHeldOrder(tx: Tx, order: SettlementOrder, from: OrderStatus): Promise<boolean> {
+  for (const item of order.items) {
+    const rows = await tx.$queryRaw<{ held: number }[]>`
+      SELECT "held" FROM "ticket_types" WHERE "id" = ${item.ticketTypeId}::uuid AND "eventId" = ${order.eventId}::uuid FOR UPDATE`;
+    if ((rows[0]?.held ?? -1) < item.quantity) return false;
+  }
   await transition(tx, order.id, [from], { status: 'PAID', paidAt: clock.now(), expiresAt: null });
   for (const item of order.items) await heldToSold(tx, order.eventId, item.ticketTypeId, item.quantity);
   await confirm(tx, order);
+  return true;
 }
 
 /**
@@ -54,7 +65,8 @@ export async function settleHeldOrder(tx: Tx, order: SettlementOrder, from: Orde
  * disponibles (mêmes règles qu'une réservation : capacité et priorité de la liste d'attente), sinon false.
  */
 export async function tryResettleExpiredOrder(tx: Tx, order: SettlementOrder): Promise<boolean> {
-  if (order.event.status !== 'PUBLISHED' || clock.now() >= order.event.startsAt) return false;
+  // Seule une commande carte peut être « rattrapée » par un paiement carte tardif.
+  if (order.paymentMethod !== 'CARD' || order.event.status !== 'PUBLISHED' || clock.now() >= order.event.startsAt) return false;
   // Types verrouillés dans l'ordre des id (même ordre que la réservation).
   for (const item of order.items) {
     const rows = await tx.$queryRaw<{ ok: boolean }[]>`
@@ -76,46 +88,69 @@ export async function tryResettleExpiredOrder(tx: Tx, order: SettlementOrder): P
 
 export type RefundReason = 'LATE_PAYMENT' | 'DUPLICATE_PAYMENT' | 'SELF_CANCELLATION' | 'EVENT_CANCELLED' | 'UNEXPECTED_PAYMENT';
 
+
 /**
  * Enregistre un remboursement dans la transaction métier ; il sera exécuté auprès du PSP par le worker
  * (jamais d'appel réseau ici). Paiement par virement ⇒ remboursement manuel par le collectif.
+ * Le paiement est verrouillé et le cumul vérifié AVANT insertion (le déclencheur SQL reste le filet ultime) :
+ * le montant est plafonné au reste remboursable, jamais d'exception qui ferait perdre l'événement.
  */
 export async function recordRefund(
-  tx: Tx, input: { orderId: string; paymentId: string; providerPaymentId: string; amountCents: number; reason: RefundReason },
-): Promise<void> {
-  if (input.amountCents <= 0) return;
+  tx: Tx, input: { orderId: string | null; paymentId: string; providerPaymentId: string; amountCents: number; reason: RefundReason },
+): Promise<number> {
+  const rows = await tx.$queryRaw<{ amountCents: number; refunded: number }[]>`
+    SELECT p."amountCents",
+           COALESCE((SELECT SUM(r."amountCents") FROM "refunds" r WHERE r."paymentId" = p."id" AND r."status" <> 'FAILED'), 0)::int AS refunded
+    FROM "payments" p WHERE p."id" = ${input.paymentId}::uuid FOR UPDATE`;
+  const payment = rows[0];
+  if (!payment) throw new Error('Paiement introuvable pour le remboursement');
+  const amount = Math.min(input.amountCents, payment.amountCents - payment.refunded);
+  if (amount < input.amountCents) {
+    getLogger().error({ paymentId: input.paymentId, requested: input.amountCents, remaining: amount }, 'remboursement plafonné au reste remboursable');
+  }
+  if (amount <= 0) return 0;
   const manual = input.providerPaymentId.startsWith('transfer:');
   await tx.refund.create({
     data: {
       orderId: input.orderId,
       paymentId: input.paymentId,
-      amountCents: input.amountCents,
+      amountCents: amount,
       reason: input.reason,
       status: manual ? 'MANUAL_REQUIRED' : 'PENDING',
     },
   });
+  return amount;
 }
 
-/** Paiement en trop (commande déjà payée, expirée sans place, annulée…) : remboursement intégral de CE paiement. */
+interface ReceivedPayment {
+  id: string;
+  providerPaymentId: string;
+  amountCents: number;
+}
+
+/**
+ * Somme encaissée qui ne donnera pas de billets : remboursement intégral automatique + log error + audit
+ * (+ mail si l'acheteur est connu). `order` peut être null (commande inconnue).
+ */
 export async function refundUnexpectedPayment(
-  tx: Tx, order: SettlementOrder, payment: { id: string; providerPaymentId: string; amountCents: number }, reason: RefundReason,
+  tx: Tx, order: SettlementOrder | null, payment: ReceivedPayment, reason: RefundReason, detail: string,
 ): Promise<void> {
-  await recordRefund(tx, { orderId: order.id, paymentId: payment.id, providerPaymentId: payment.providerPaymentId, amountCents: payment.amountCents, reason });
-  if (reason === 'LATE_PAYMENT' && order.status === 'EXPIRED') {
-    await transition(tx, order.id, ['EXPIRED'], { status: 'REFUNDED', refundAmountCents: payment.amountCents, cancelledAt: clock.now() });
-    for (const item of order.items) {
-      await tx.orderItem.update({ where: { id: item.id }, data: { refundedCents: item.unitPriceCents * item.quantity } });
+  const amount = await recordRefund(tx, { orderId: order?.id ?? null, paymentId: payment.id, providerPaymentId: payment.providerPaymentId, amountCents: payment.amountCents, reason });
+  getLogger().error({ orderId: order?.id ?? null, paymentId: payment.id, reason, detail }, 'paiement encaissé sans billets : remboursement automatique');
+  if (order) {
+    if (reason === 'LATE_PAYMENT' && order.status === 'EXPIRED') {
+      await transition(tx, order.id, ['EXPIRED'], { status: 'REFUNDED', refundAmountCents: amount, cancelledAt: clock.now() });
+      for (const item of order.items) {
+        await tx.orderItem.update({ where: { id: item.id }, data: { refundedCents: item.unitPriceCents * item.quantity } });
+      }
     }
-    await enqueueEmail(tx, order.user.email, 'latePaymentRefunded', {
-      displayName: order.user.displayName, eventTitle: order.event.title, amount: formatEuros(payment.amountCents),
-    });
-  } else {
-    await enqueueEmail(tx, order.user.email, 'duplicatePaymentRefunded', {
-      displayName: order.user.displayName, eventTitle: order.event.title, amount: formatEuros(payment.amountCents),
+    const template = reason === 'LATE_PAYMENT' ? 'latePaymentRefunded' : reason === 'DUPLICATE_PAYMENT' ? 'duplicatePaymentRefunded' : 'unexpectedPaymentRefunded';
+    await enqueueEmail(tx, order.user.email, template, {
+      displayName: order.user.displayName, eventTitle: order.event.title, amount: formatEuros(amount),
     });
   }
   await writeAudit(tx, {
-    orgId: order.event.orgId, actorId: null, action: 'payment.auto_refund', target: `order:${order.id}`,
-    meta: { reason, paymentId: payment.id, amountCents: payment.amountCents, orderStatus: order.status },
+    orgId: order?.event.orgId ?? null, actorId: null, action: 'payment.auto_refund', target: order ? `order:${order.id}` : `payment:${payment.id}`,
+    meta: { reason, detail, paymentId: payment.id, amountCents: amount, orderStatus: order?.status ?? null },
   });
 }

@@ -28,7 +28,8 @@ function loadEnvOrExit() {
 const env = loadEnvOrExit();
 const logger = getLogger().child({ component: 'worker' });
 const transport = createSmtpTransport();
-let stopping = false;
+// SIGTERM / SIGINT interrompent immédiatement l'attente entre deux passages (arrêt propre et rapide).
+const stop = new AbortController();
 
 async function tick(): Promise<void> {
   const jobs: [string, () => Promise<unknown>][] = [
@@ -50,18 +51,18 @@ async function tick(): Promise<void> {
 
 async function main(): Promise<void> {
   logger.info({ intervalMs: env.workerIntervalMs }, 'worker démarré');
-  while (!stopping) {
+  while (!stop.signal.aborted) {
     await tick();
-    await sleep(env.workerIntervalMs);
+    await sleep(env.workerIntervalMs, undefined, { signal: stop.signal }).catch(() => undefined);
   }
   await disconnectDb();
   logger.info('worker arrêté');
 }
 
 process.on('SIGTERM', () => {
-  stopping = true;
+  stop.abort();
 });
 process.on('SIGINT', () => {
-  stopping = true;
+  stop.abort();
 });
 await main();

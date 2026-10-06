@@ -327,6 +327,8 @@ model Order {
 
   /// Échecs consécutifs du worker d'expiration (au-delà du seuil : commande écartée et signalée, le lot continue).
   expireFailures  Int     @default(0)
+  /// Numéro de tentative de paiement carte : clé d'idempotence PSP = orderId:tentative (nouvelle session après un refus).
+  checkoutAttempt Int     @default(0)
   pspSessionId    String? @db.VarChar(100)
   /// URL de paiement de la session PSP en cours (checkout idempotent : même URL renvoyée).
   pspSessionUrl   String? @db.VarChar(500)
@@ -370,14 +372,15 @@ model OrderItem {
 
 model Payment {
   id                String        @id @default(uuid()) @db.Uuid
-  orderId           String        @db.Uuid
+  /// null : paiement authentifié reçu pour une commande inconnue (enregistré puis remboursé, jamais perdu).
+  orderId           String?       @db.Uuid
   providerPaymentId String        @unique @db.VarChar(100)
   amountCents       Int
   currency          String        @db.Char(3)
   status            PaymentStatus
   createdAt         DateTime      @default(now()) @db.Timestamptz(3)
 
-  order   Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  order   Order?   @relation(fields: [orderId], references: [id], onDelete: Restrict)
   refunds Refund[]
 
   @@index([orderId])
@@ -387,7 +390,7 @@ model Payment {
 /// Remboursement demandé dans la transaction métier, exécuté auprès du PSP par le worker.
 model Refund {
   id               String       @id @default(uuid()) @db.Uuid
-  orderId          String       @db.Uuid
+  orderId          String?      @db.Uuid
   paymentId        String       @db.Uuid
   amountCents      Int
   status           RefundStatus @default(PENDING)
@@ -396,10 +399,12 @@ model Refund {
   attempts         Int          @default(0)
   nextAttemptAt    DateTime     @default(now()) @db.Timestamptz(3)
   lastError        String?      @db.VarChar(500)
+  /// Note de l'organisateur lors d'un remboursement manuel (« virement retour effectué le … »).
+  note             String?      @db.VarChar(500)
   createdAt        DateTime     @default(now()) @db.Timestamptz(3)
   updatedAt        DateTime     @updatedAt @db.Timestamptz(3)
 
-  order   Order   @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  order   Order?  @relation(fields: [orderId], references: [id], onDelete: Restrict)
   payment Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
 
   @@index([status, nextAttemptAt])

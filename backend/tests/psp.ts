@@ -23,6 +23,9 @@ export interface PspHarness {
 export async function startPsp(): Promise<PspHarness> {
   const app = createApp({ rateLimitMultiplier: 1000 });
   const deliveries: { status: number; body: unknown }[] = [];
+  // Livraisons de webhooks en cours (le mock en émet après avoir répondu) : attendues avant la fermeture,
+  // sinon elles débordent sur le nettoyage de la base du test suivant.
+  const inflight = new Set<Promise<void>>();
   const server = createServer();
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -35,9 +38,14 @@ export async function startPsp(): Promise<PspHarness> {
     allowedRedirectOrigins: [FRONT],
     nodeEnv: 'test',
     delayedWebhookMs: 50,
-    deliver: async (raw, signature) => {
-      const res = await supertest(app).post('/api/v1/webhooks/psp').set('Content-Type', 'application/json').set('Psp-Signature', signature).send(raw);
-      deliveries.push({ status: res.status, body: res.body });
+    deliver: (raw, signature) => {
+      const p = (async () => {
+        const res = await supertest(app).post('/api/v1/webhooks/psp').set('Content-Type', 'application/json').set('Psp-Signature', signature).send(raw);
+        deliveries.push({ status: res.status, body: res.body });
+      })();
+      inflight.add(p);
+      void p.finally(() => inflight.delete(p));
+      return p;
     },
   });
   server.on('request', psp.app);
@@ -55,11 +63,26 @@ export function postWebhook(event: WebhookEvent | string, opts: { secret?: strin
     .post('/api/v1/webhooks/psp').set('Content-Type', 'application/json').set('Psp-Signature', signature).send(raw);
 }
 
-export function paymentEvent(orderId: string, amountCents: number, over: Partial<WebhookEvent> & { paymentId?: string; currency?: string } = {}): WebhookEvent {
+export function paymentEvent(
+  orderId: string, amountCents: number,
+  over: Partial<WebhookEvent> & { paymentId?: string; currency?: string; sessionId?: string | null } = {},
+): WebhookEvent {
+  const data: WebhookEvent['data'] = { paymentId: over.paymentId ?? `pay_${randomBytes(9).toString('base64url')}`, orderId, amountCents, currency: over.currency ?? 'EUR' };
+  if (over.sessionId) data.sessionId = over.sessionId;
   return {
     id: over.id ?? `evt_${randomBytes(9).toString('base64url')}`,
     type: over.type ?? 'payment.succeeded',
     created: Math.floor(Date.now() / 1000),
-    data: { paymentId: over.paymentId ?? `pay_${randomBytes(9).toString('base64url')}`, orderId, amountCents, currency: over.currency ?? 'EUR' },
+    data,
   };
+}
+
+/** Ouvre une session de paiement (checkout réel via le mock) et renvoie son identifiant. */
+export async function openSession(orderId: string, auth: { Authorization: string }): Promise<string> {
+  const res = await supertest(createApp({ rateLimitMultiplier: 1000 })).post(`/api/v1/orders/${orderId}/checkout`).set(auth);
+  if (res.status !== 200) throw new Error(`checkout KO ${res.status}`);
+  const { getDb } = await import('../src/lib/db.js');
+  const order = await getDb().order.findUniqueOrThrow({ where: { id: orderId } });
+  if (!order.pspSessionId) throw new Error('session absente');
+  return order.pspSessionId;
 }

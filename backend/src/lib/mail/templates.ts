@@ -14,6 +14,7 @@ export interface TemplatePayloads {
   orderRefunded: { displayName: string; eventTitle: string; amount: string; reason: string };
   latePaymentRefunded: { displayName: string; eventTitle: string; amount: string };
   duplicatePaymentRefunded: { displayName: string; eventTitle: string; amount: string };
+  unexpectedPaymentRefunded: { displayName: string; eventTitle: string; amount: string };
   waitlistOffer: { displayName: string; eventTitle: string; ticketTypeName: string; quantity: number; deadline: string; link: string };
   eventCancelled: { displayName: string; eventTitle: string; reason: string; amount: string | null };
   eventRescheduled: { displayName: string; eventTitle: string; oldDate: string; newDate: string; reason: string };
@@ -110,6 +111,12 @@ export function renderTemplate<T extends MailTemplate>(template: T, data: Templa
         subject: `Paiement en double remboursé — ${s('eventTitle')}`,
         html: layout('Paiement remboursé', [`Bonjour ${e(s('displayName'))},`, `Nous avons reçu un paiement supplémentaire pour votre commande <strong>${e(s('eventTitle'))}</strong>, qui était déjà réglée ou ne pouvait plus l’être. Il vous est intégralement remboursé : <strong>${e(s('amount'))}</strong>. Votre commande n’est pas modifiée.`]),
         text: `Bonjour ${s('displayName')},\nPaiement supplémentaire reçu pour ${s('eventTitle')} : remboursement intégral de ${s('amount')}. Votre commande n'est pas modifiée.`,
+      };
+    case 'unexpectedPaymentRefunded':
+      return {
+        subject: `Paiement remboursé — ${s('eventTitle')}`,
+        html: layout('Paiement remboursé', [`Bonjour ${e(s('displayName'))},`, `Nous avons reçu un paiement pour votre commande <strong>${e(s('eventTitle'))}</strong> que nous n’avons pas pu rattacher à votre réservation (montant, moyen de paiement ou session inattendus). Il vous est intégralement remboursé : <strong>${e(s('amount'))}</strong>. Votre commande n’est pas modifiée.`]),
+        text: `Bonjour ${s('displayName')},\nUn paiement inattendu pour ${s('eventTitle')} vous est intégralement remboursé : ${s('amount')}. Votre commande n'est pas modifiée.`,
       };
     case 'waitlistOffer':
       return {
