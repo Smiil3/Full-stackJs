@@ -348,14 +348,43 @@ describe('back-office : ventes, commandes, export', () => {
 });
 
 describe('membres, journal, admin plateforme', () => {
-  it('membres : ajout d’un compte inconnu ⇒ message ; dernier propriétaire protégé', async () => {
+  it('membres : ajout d’un compte inconnu ⇒ message ; dernier propriétaire protégé (après confirmation)', async () => {
     const user = userEvent.setup();
     await renderApp(`${ORG}/members`, { as: OWNER });
     await user.type(await screen.findByLabelText('Adresse email du compte'), 'inconnu@example.test');
     await user.click(screen.getByRole('button', { name: 'Ajouter' }));
     expect(await screen.findByText(/Aucun compte confirmé n’utilise cette adresse/)).toBeInTheDocument();
     await user.selectOptions(screen.getAllByLabelText('Rôle')[0] as HTMLElement, 'MANAGER');
+    const dialog = screen.getByRole('dialog', { name: 'Modifier ce rôle ?' });
+    expect(dialog).toHaveTextContent('il s’agit de VOTRE compte');
+    await user.click(within(dialog).getByRole('button', { name: 'Confirmer' }));
     expect(await screen.findByText('Le collectif doit garder au moins un propriétaire.')).toBeInTheDocument();
+  });
+
+  it('M1 : rétrogradation d’un autre membre ⇒ confirmation ; rien n’est envoyé avant', async () => {
+    const user = userEvent.setup();
+    await renderApp(`${ORG}/members`, { as: OWNER });
+    const managerCard = (await screen.findByText('manager@nuits.test')).closest('li') as HTMLElement;
+    await user.selectOptions(within(managerCard).getByLabelText('Rôle'), 'SCANNER');
+    expect(mock.db.calls.get('PATCH /orgs/:orgId/members/:userId') ?? 0).toBe(0);
+    const dialog = screen.getByRole('dialog', { name: 'Modifier ce rôle ?' });
+    expect(dialog).toHaveTextContent('passera de « Gestionnaire » à « Contrôle d’accès »');
+    await user.click(within(dialog).getByRole('button', { name: 'Confirmer' }));
+    await waitFor(() => expect(mock.db.memberships.find((x) => x.userId === IDS.userManager && x.orgId === IDS.orgNuits)?.role).toBe('SCANNER'));
+  });
+
+  it('M1 : se retirer soi-même ⇒ avertissement renforcé, puis adhésions rechargées et retour au sélecteur', async () => {
+    const user = userEvent.setup();
+    mock.db.memberships.push({ userId: IDS.userManager, orgId: IDS.orgNuits, role: 'OWNER', createdAt: new Date().toISOString() });
+    mock.db.memberships = mock.db.memberships.filter((x) => !(x.userId === IDS.userManager && x.role === 'MANAGER' && x.orgId === IDS.orgNuits));
+    const { router } = await renderApp(`${ORG}/members`, { as: OWNER });
+    const selfCard = (await screen.findByText('owner@nuits.test')).closest('li') as HTMLElement;
+    await user.click(within(selfCard).getByRole('button', { name: 'Retirer' }));
+    const dialog = screen.getByRole('dialog', { name: 'Retirer ce membre ?' });
+    expect(dialog).toHaveTextContent('il s’agit de VOTRE compte');
+    await user.click(within(dialog).getByRole('button', { name: 'Retirer' }));
+    await waitFor(() => expect(router.state.location.pathname).not.toBe(`${ORG}/members`));
+    expect(mock.db.calls.get('GET /auth/me') ?? 0).toBeGreaterThan(0);
   });
 
   it('journal (OWNER) : actions système affichées « Système », détails en texte', async () => {

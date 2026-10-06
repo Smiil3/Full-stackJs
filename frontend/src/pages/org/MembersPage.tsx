@@ -1,10 +1,10 @@
 import { useState, type SubmitEvent } from 'react';
-import { useParams } from 'react-router';
+import { useNavigate, useParams } from 'react-router';
 import { errorMessage, isApiError } from '../../api/errors';
 import { useMemberMutations, useMembers } from '../../api/hooks/org';
 import type { Member, OrgRole } from '../../api/types';
 import { useAuth } from '../../auth/AuthContext';
-import { membershipFor, ROLE_LABELS } from '../../auth/roles';
+import { membershipFor, ROLE_LABELS, roleAtLeast } from '../../auth/roles';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { ErrorAlert } from '../../components/ErrorAlert';
 import { Field } from '../../components/Field';
@@ -21,8 +21,38 @@ function memberError(error: unknown, context: 'add' | 'change'): string {
 
 export function MembersPage() {
   const { orgId = '' } = useParams();
-  const { user } = useAuth();
+  const { user, reloadUser } = useAuth();
+  const navigate = useNavigate();
   const owner = membershipFor(user, orgId)?.role === 'OWNER';
+  const [pendingRole, setPendingRole] = useState<{ member: Member; role: OrgRole } | null>(null);
+  const isSelf = (mb: Member) => mb.userId === user?.id;
+
+  /** Action sur son propre compte : adhésions rechargées, retour au sélecteur de collectif. */
+  const afterSelfChange = async () => {
+    await reloadUser().catch(() => undefined);
+    await navigate('/org', { replace: true });
+  };
+
+  const requestRole = (mb: Member, role: OrgRole) => {
+    if (role === mb.role) return;
+    // Rétrogradation ou modification de son propre rôle : confirmation explicite.
+    if (!roleAtLeast(role, mb.role) || isSelf(mb)) setPendingRole({ member: mb, role });
+    else m.setRole.mutate({ userId: mb.userId, role });
+  };
+
+  const applyRole = () => {
+    if (!pendingRole) return;
+    const { member, role } = pendingRole;
+    m.setRole.mutate(
+      { userId: member.userId, role },
+      {
+        onSuccess: () => {
+          if (isSelf(member)) void afterSelfChange();
+        },
+        onSettled: () => setPendingRole(null),
+      },
+    );
+  };
   const { data, error, isPending } = useMembers(orgId);
   const m = useMemberMutations(orgId);
   const [email, setEmail] = useState('');
@@ -51,7 +81,7 @@ export function MembersPage() {
               <div className="row">
                 <div className="field m-0">
                   <label htmlFor={`role-${mb.userId}`}>Rôle</label>
-                  <select id={`role-${mb.userId}`} value={mb.role} disabled={m.setRole.isPending} onChange={(e) => m.setRole.mutate({ userId: mb.userId, role: e.target.value as OrgRole })}>
+                  <select id={`role-${mb.userId}`} value={mb.role} disabled={m.setRole.isPending} onChange={(e) => requestRole(mb, e.target.value as OrgRole)}>
                     {ROLES.map((r) => (
                       <option key={r} value={r}>
                         {ROLE_LABELS[r]}
@@ -111,10 +141,43 @@ export function MembersPage() {
         busy={m.remove.isPending}
         onCancel={() => setRemoving(null)}
         onConfirm={() => {
-          if (removing) m.remove.mutate(removing.userId, { onSettled: () => setRemoving(null) });
+          if (!removing) return;
+          const self = isSelf(removing);
+          m.remove.mutate(removing.userId, {
+            onSuccess: () => {
+              if (self) void afterSelfChange();
+            },
+            onSettled: () => setRemoving(null),
+          });
         }}
       >
-        <p>{removing?.displayName} n’aura plus accès au collectif.</p>
+        {removing && isSelf(removing) ? (
+          <p className="alert alert--warning">
+            <strong>Attention : il s’agit de VOTRE compte.</strong> Vous perdrez immédiatement l’accès à ce collectif.
+          </p>
+        ) : (
+          <p>{removing?.displayName} n’aura plus accès au collectif.</p>
+        )}
+      </ConfirmDialog>
+      <ConfirmDialog
+        open={pendingRole !== null}
+        title="Modifier ce rôle ?"
+        confirmLabel="Confirmer"
+        danger
+        busy={m.setRole.isPending}
+        onCancel={() => setPendingRole(null)}
+        onConfirm={applyRole}
+      >
+        {pendingRole && isSelf(pendingRole.member) ? (
+          <p className="alert alert--warning">
+            <strong>Attention : il s’agit de VOTRE compte.</strong> Vous passerez de « {lookup(ROLE_LABELS, pendingRole.member.role)} » à « {lookup(ROLE_LABELS, pendingRole.role)} » et
+            pourrez perdre l’accès à certaines pages.
+          </p>
+        ) : pendingRole ? (
+          <p>
+            {pendingRole.member.displayName} passera de « {lookup(ROLE_LABELS, pendingRole.member.role)} » à « {lookup(ROLE_LABELS, pendingRole.role)} ».
+          </p>
+        ) : null}
       </ConfirmDialog>
       {m.remove.error ? (
         <p className="alert alert--error" role="alert">
