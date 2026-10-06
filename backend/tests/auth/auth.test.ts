@@ -699,3 +699,35 @@ describe('politique de mot de passe (B2.1 B2)', () => {
     expect(res.body.error.details.fields[0].path).toBe('newPassword');
   });
 });
+
+describe('compléments CSRF et cookie (B2.1)', () => {
+  it('Origin « null » (iframe sandbox, fichier local) ⇒ 403', async () => {
+    const u = await loggedInUser();
+    const res = await api().post(`${A}/refresh`).set({ Origin: 'null', 'X-Requested-With': 'nuits-web' }).set('Cookie', u.cookie);
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('CSRF_CHECK_FAILED');
+  });
+
+  it('attributs du cookie selon la configuration : Secure obligatoire en production', async () => {
+    const { resetEnvCache } = await import('../../src/config/env.js');
+    const user = await createUser();
+    const saved = { ...process.env };
+    try {
+      Object.assign(process.env, { NODE_ENV: 'production', REFRESH_COOKIE_SECURE: 'true', AUTH_RESPONSE_FLOOR_MS: '400' });
+      resetEnvCache();
+      const res = await supertest(createApp({ rateLimitMultiplier: 1000 })).post(`${A}/login`).send({ email: user.email, password: PASSWORD }).expect(200);
+      const cookie = (res.headers['set-cookie'] as unknown as string[]).find((c) => c.startsWith('nuits_rt='))!;
+      expect(cookie).toMatch(/; Secure/);
+      expect(cookie).toMatch(/SameSite=Strict/);
+      expect(cookie).toMatch(/HttpOnly/);
+    } finally {
+      process.env = saved;
+      resetEnvCache();
+    }
+    // En développement HTTP (configuration explicite), pas d'attribut Secure.
+    const dev = await api().post(`${A}/login`).send({ email: user.email, password: PASSWORD }).expect(200);
+    const devCookie = (dev.headers['set-cookie'] as unknown as string[]).find((c) => c.startsWith('nuits_rt='))!;
+    expect(devCookie).not.toMatch(/; Secure/);
+    expect(devCookie).toMatch(/SameSite=Strict/);
+  });
+});
