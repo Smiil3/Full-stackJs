@@ -8,6 +8,21 @@ import type { SyncResponse } from '../api/types';
 import { deviceId, listQueue, scannerDb, type SyncConflict } from './db';
 
 const BATCH = 500;
+/** Taille max d'un lot (contrat v1.12 : 160 ko côté serveur), avec marge. */
+export const MAX_BATCH_BYTES = 150_000;
+
+/** Découpe en lots de ≤ 500 scans ET ≤ MAX_BATCH_BYTES une fois sérialisés. */
+export function splitBatch<T>(scans: T[], maxBytes = MAX_BATCH_BYTES): T[] {
+  const out: T[] = [];
+  let size = 64; // enveloppe JSON { deviceId, scans: [] }
+  for (const s of scans) {
+    const len = new TextEncoder().encode(JSON.stringify(s)).length + 1;
+    if (out.length >= BATCH || (out.length > 0 && size + len > maxBytes)) break;
+    out.push(s);
+    size += len;
+  }
+  return out;
+}
 const inFlight = new Map<string, Promise<SyncReport>>();
 
 export type SyncReport = { accepted: number; conflicts: number; remaining: number };
@@ -25,7 +40,7 @@ async function doSync(orgId: string, eventId: string): Promise<SyncReport> {
   let conflicts = 0;
   const device = await deviceId();
   for (;;) {
-    const batch = (await listQueue(eventId)).filter((s) => s.orgId === orgId).slice(0, BATCH);
+    const batch = splitBatch((await listQueue(eventId)).filter((s) => s.orgId === orgId));
     if (batch.length === 0) break;
     const res = await apiRequest<SyncResponse>(apiPath`/orgs/${orgId}/events/${eventId}/checkin/sync`, {
       method: 'POST',

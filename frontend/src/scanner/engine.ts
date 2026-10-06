@@ -24,6 +24,13 @@ export type ScanOutcome =
 
 export type PendingAdmission = { orgId: string; eventId: string; qrPayload: string; scanId: string; publicId: string };
 
+/** Contrat v1.12 : événement non contrôlable (non publié, ou terminé depuis plus de 24 h). */
+export class EventNotAvailableError extends Error {
+  constructor() {
+    super('Événement non disponible au contrôle');
+  }
+}
+
 export class NoSnapshotError extends Error {
   constructor() {
     super('Aucune liste hors-ligne pour cet événement');
@@ -49,6 +56,7 @@ export async function scanTicket(args: { orgId: string; eventId: string; qrPaylo
       await reflectOnlineResult(args.eventId, res);
       return fromServer(res);
     } catch (e) {
+      if (isApiError(e) && e.code === 'NOT_FOUND') throw new EventNotAvailableError();
       if (!shouldFallBack(e)) throw e;
     }
   }

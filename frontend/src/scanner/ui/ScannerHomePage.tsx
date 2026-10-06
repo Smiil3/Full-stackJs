@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
 import { apiPath } from '../../api/client';
-import { errorMessage } from '../../api/errors';
 import { useCheckinEvents } from '../../api/hooks/org';
 import type { CheckinEvent } from '../../api/types';
 import { useAuth } from '../../auth/AuthContext';
@@ -12,6 +11,7 @@ import { formatDateTime, userTimeZone } from '../../lib/time';
 import { pendingCount, type SnapshotMeta } from '../db';
 import { useLocalSnapshots } from './useScannerData';
 import { prepareEvent } from '../snapshot';
+import { scannerErrorMessage } from './scannerError';
 
 function OrgEvents({ orgId, snapshots, onPrepared }: { orgId: string; snapshots: SnapshotMeta[]; onPrepared: () => void }) {
   const { data, error, isPending } = useCheckinEvents(orgId);
@@ -74,7 +74,7 @@ function OrgEvents({ orgId, snapshots, onPrepared }: { orgId: string; snapshots:
       ) : null}
       {prepError ? (
         <li className="alert alert--error" role="alert">
-          {errorMessage(prepError)}
+          {scannerErrorMessage(prepError)}
         </li>
       ) : null}
     </ul>

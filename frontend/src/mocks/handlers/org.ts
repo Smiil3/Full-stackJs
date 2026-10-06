@@ -150,6 +150,11 @@ function csvCell(value: string): string {
   return /[;"\n\r]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }
 
+/** Contrat v1.12 : contrôle possible pour un événement PUBLISHED terminé depuis moins de 24 h. */
+function checkinOpen(e: MockEvent): boolean {
+  return e.status === 'PUBLISHED' && Date.parse(e.endsAt) > Date.now() - 24 * 3_600_000;
+}
+
 export const orgHandlers = [
   // ---------------- Collectif ----------------
   route('get', '/orgs/:orgId', ({ request, params }) => {
@@ -562,6 +567,7 @@ export const orgHandlers = [
   }),
 
   // ---------------- Contrôle d'accès ----------------
+
   route('get', '/orgs/:orgId/checkin/events', ({ request, params }) => {
     const orgId = param(params, 'orgId');
     requireOrgRole(request, orgId, 'SCANNER');
@@ -577,6 +583,7 @@ export const orgHandlers = [
     const orgId = param(params, 'orgId');
     requireOrgRole(request, orgId, 'SCANNER');
     const e = orgEvent(orgId, param(params, 'eventId'));
+    if (!checkinOpen(e)) return notFound();
     return json({
       eventId: e.id,
       generatedAt: new Date().toISOString(),
@@ -603,6 +610,8 @@ export const orgHandlers = [
     if (previous) {
       return json({ result: previous.result, ticket: previous.publicId ? holderOf(previous.publicId) : null, usedAt: previous.usedAt });
     }
+    if (e.status === 'CANCELLED') return json({ result: 'CANCELLED', ticket: null, usedAt: null });
+    if (!checkinOpen(e)) return notFound();
     const { result, publicId } = await scanOne(e.id, qrPayload ?? '');
     const ticket = publicId ? mock.db.tickets.find((t) => t.publicId === publicId) : undefined;
     const usedAt = result === 'OK' || result === 'ALREADY_USED' ? (ticket?.usedAt ?? null) : null;
@@ -619,6 +628,7 @@ export const orgHandlers = [
     const scans = v.body.scans;
     if (!Array.isArray(scans) || scans.length < 1 || scans.length > 500) v.custom('scans', 'Entre 1 et 500 scans');
     v.done();
+    if (e.status !== 'CANCELLED' && !checkinOpen(e)) return notFound();
     const list = (scans as { scanId: string; qrPayload: string; scannedAt: string }[]).slice().sort((a, b) => a.scannedAt.localeCompare(b.scannedAt));
     if (new Set(list.map((s) => s.scanId)).size !== list.length) fail(400, 'VALIDATION_ERROR', 'scanId en double', { fields: [{ path: 'scans', message: 'scanId uniques' }] });
     const results: { scanId: string; result: SyncResult; usedAt: string | null }[] = [];
@@ -628,7 +638,7 @@ export const orgHandlers = [
         results.push({ scanId: s.scanId, result: previous.result === 'OK' ? 'ACCEPTED' : (previous.result as SyncResult), usedAt: previous.usedAt });
         continue;
       }
-      const { result, publicId } = await scanOne(e.id, s.qrPayload);
+      const { result, publicId } = e.status === 'CANCELLED' ? { result: 'CANCELLED' as const, publicId: null } : await scanOne(e.id, s.qrPayload);
       const ticket = publicId ? mock.db.tickets.find((t) => t.publicId === publicId) : undefined;
       if (result === 'OK' && ticket) ticket.usedAt = s.scannedAt;
       const usedAt = result === 'OK' || result === 'ALREADY_USED' ? (ticket?.usedAt ?? null) : null;

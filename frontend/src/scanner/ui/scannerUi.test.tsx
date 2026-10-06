@@ -141,6 +141,33 @@ describe('scanner : interface', () => {
     expect(result).toHaveTextContent('AUTRE ÉVÉNEMENT');
   });
 
+  it('v1.12 : âge de la liste affiché, avertissement si ancienne, mise à jour en un clic', async () => {
+    const user = userEvent.setup();
+    await buy(1);
+    await prepareAndOpen(user);
+    expect(screen.getByText(/Liste téléchargée il y a/)).toBeInTheDocument();
+    expect(screen.queryByText(/Liste ancienne/)).toBeNull();
+    const { scannerDb } = await import('../db');
+    const db = await scannerDb();
+    const meta = await db.get('snapshots', IDS.eventConcert);
+    if (meta) await db.put('snapshots', { ...meta, savedAt: new Date(Date.now() - 3 * 3_600_000).toISOString() });
+    // nouvelle visite de la page
+    await renderApp(SCAN);
+    expect((await screen.findAllByText(/Liste ancienne : mettez-la à jour/)).length).toBeGreaterThan(0);
+    const before = mock.db.calls.get('GET /orgs/:orgId/events/:eventId/checkin/snapshot') ?? 0;
+    await user.click(screen.getAllByRole('button', { name: 'Mettre à jour la liste' }).at(-1) as HTMLElement);
+    await waitFor(() => expect(mock.db.calls.get('GET /orgs/:orgId/events/:eventId/checkin/snapshot') ?? 0).toBe(before + 1));
+  });
+
+  it('v1.12 : préparation d’un événement hors fenêtre ⇒ message clair', async () => {
+    const user = userEvent.setup();
+    injectFault({ route: 'GET /orgs/:orgId/events/:eventId/checkin/snapshot', status: 404, code: 'NOT_FOUND' });
+    await renderApp('/scan', { as: 'scanner@nuits.test' });
+    const card = (await screen.findByRole('heading', { name: /Garonne Électrique/ })).closest('li') as HTMLElement;
+    await user.click(within(card).getByRole('button', { name: 'Préparer l’entrée hors-ligne' }));
+    expect(await screen.findByText(/Événement non disponible au contrôle/)).toBeInTheDocument();
+  });
+
   it('un acheteur sans rôle ne peut pas ouvrir le contrôle d’un collectif', async () => {
     await renderApp(SCAN, { as: 'acheteur@example.test' });
     expect(await screen.findByRole('heading', { name: 'Accès non autorisé' })).toBeInTheDocument();

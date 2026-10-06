@@ -1,4 +1,6 @@
 import { fetchSnapshot } from '../api/hooks/org';
+import { isApiError } from '../api/errors';
+import { EventNotAvailableError } from './engine';
 import type { CheckinEvent, TicketStatus } from '../api/types';
 import { listSnapshots, pendingCount, purgeEvent, saveSnapshot, type LocalTicket } from './db';
 
@@ -10,7 +12,13 @@ const PUBLIC_ID = /^[A-Za-z0-9_-]{22}$/;
  * la fois : les données d'un autre événement (sans scans en attente) sont purgées.
  */
 export async function prepareEvent(orgId: string, event: CheckinEvent, signal?: AbortSignal): Promise<{ ticketCount: number }> {
-  const snap = await fetchSnapshot(orgId, event.id, signal);
+  let snap;
+  try {
+    snap = await fetchSnapshot(orgId, event.id, signal);
+  } catch (e) {
+    if (isApiError(e) && e.code === 'NOT_FOUND') throw new EventNotAvailableError();
+    throw e;
+  }
   if (snap.eventId !== event.id) throw new Error('Liste reçue pour un autre événement');
   const tickets: LocalTicket[] = snap.tickets
     .filter((t) => PUBLIC_ID.test(t.publicId) && STATUSES.includes(t.status))

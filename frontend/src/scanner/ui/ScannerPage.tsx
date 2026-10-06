@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type SubmitEvent } from 'react';
 import { Link, useParams } from 'react-router';
-import { errorMessage } from '../../api/errors';
+import { isApiError } from '../../api/errors';
 import { useAuth } from '../../auth/AuthContext';
-import { ErrorAlert } from '../../components/ErrorAlert';
 import { PageLoader } from '../../components/PageLoader';
 import { useOnline } from '../../lib/hooks/useOnline';
 import { formatDateTime, formatTime, userTimeZone } from '../../lib/time';
@@ -12,9 +11,16 @@ import { CameraScanner } from './CameraScanner';
 import { signal } from './feedback';
 import { ResultOverlay } from './ResultOverlay';
 import { useScannerData } from './useScannerData';
+import { scannerErrorMessage } from './scannerError';
+import { EventNotAvailableError } from '../engine';
+import { prepareEvent } from '../snapshot';
+import { useLocalNow } from '../../lib/hooks/useLocalNow';
+import { formatAgo } from '../../lib/time';
 
 const AUTO_DISMISS_MS = 2500;
 const AUTO_SYNC_MS = 15_000;
+/** Au-delà, la liste locale est signalée comme ancienne. */
+const STALE_LIST_MS = 2 * 3_600_000;
 const CONFLICT_LABELS: Record<string, string> = {
   ALREADY_USED: 'déjà utilisé',
   INVALID: 'invalide',
@@ -34,6 +40,8 @@ export function ScannerPage() {
   const [syncInfo, setSyncInfo] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const processing = useRef(false);
+  const localNow = useLocalNow(30_000);
+  const [refreshing, setRefreshing] = useState(false);
 
   const sync = useCallback(async () => {
     if (!online || syncing) return;
@@ -41,8 +49,9 @@ export function ScannerPage() {
     try {
       const r = await syncEvent(orgId, eventId);
       if (r.accepted || r.conflicts) setSyncInfo(`Synchronisé : ${r.accepted} entrée(s) confirmée(s)${r.conflicts ? `, ${r.conflicts} conflit(s)` : ''}.`);
-    } catch {
-      // Réseau instable : nouvelle tentative automatique plus tard.
+    } catch (e) {
+      // Réseau instable : nouvelle tentative automatique plus tard. Événement fermé : on le signale.
+      if (isApiError(e) && e.code === 'NOT_FOUND') setError(new EventNotAvailableError());
     } finally {
       setSyncing(false);
       await reload();
@@ -111,6 +120,21 @@ export function ScannerPage() {
     void handleCode(v);
   };
 
+  /** Rafraîchit la liste (billets annulés / vendus depuis) — recommandé juste avant l'ouverture des portes. */
+  const refreshList = async () => {
+    if (!meta || refreshing) return;
+    setRefreshing(true);
+    setError(null);
+    try {
+      await prepareEvent(orgId, { id: eventId, title: meta.title, venue: null, isOnline: false, startsAt: '', endsAt: '', timezone: meta.timezone, status: 'PUBLISHED' });
+    } catch (e) {
+      setError(e);
+    } finally {
+      setRefreshing(false);
+      await reload();
+    }
+  };
+
   if (meta === undefined) return <PageLoader />;
   if (meta === null) {
     return (
@@ -132,8 +156,16 @@ export function ScannerPage() {
         <span className={`badge ${online ? 'badge--available' : 'badge--low'}`}>{online ? 'En ligne' : 'Hors-ligne'}</span>
       </div>
       <p className="muted m-0">
-        Liste du {formatDateTime(meta.savedAt, userTimeZone())} · {meta.ticketCount} billets
+        Liste téléchargée {formatAgo(Date.parse(meta.savedAt), localNow)} ({formatDateTime(meta.savedAt, userTimeZone())}) · {meta.ticketCount} billets
       </p>
+      {localNow - Date.parse(meta.savedAt) > STALE_LIST_MS ? (
+        <p className="alert alert--warning m-0">Liste ancienne : mettez-la à jour avant l’ouverture des portes (billets annulés ou vendus depuis).</p>
+      ) : null}
+      {online ? (
+        <button type="button" className="btn btn--secondary btn--small" disabled={refreshing || pending > 0} onClick={() => void refreshList()}>
+          {refreshing ? 'Mise à jour…' : 'Mettre à jour la liste'}
+        </button>
+      ) : null}
       <div inert={outcome !== null}>
         <CameraScanner onCode={(t) => void handleCode(t)} paused={outcome !== null} />
         <form className="row" onSubmit={submitManual} aria-label="Saisie manuelle">
@@ -146,7 +178,11 @@ export function ScannerPage() {
           </button>
         </form>
       </div>
-      <ErrorAlert error={error} />
+      {error ? (
+        <p className="alert alert--error" role="alert">
+          {scannerErrorMessage(error)}
+        </p>
+      ) : null}
       <div className="card stack" aria-live="polite">
         <p className="m-0">
           <strong>{pending}</strong> scan{pending > 1 ? 's' : ''} en attente de synchro
@@ -177,7 +213,6 @@ export function ScannerPage() {
       <p>
         <Link to="/scan">Changer d’événement</Link>
       </p>
-      {error ? <p className="sr-only">{errorMessage(error)}</p> : null}
     </section>
   );
 }

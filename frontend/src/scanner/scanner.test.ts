@@ -13,7 +13,8 @@ import './cleanup';
 import { deviceId, getLocalTicket, listConflicts, listQueue, listSnapshots, pendingCount, purgeEvent } from './db';
 import { admitUnknown, localScan, scanTicket } from './engine';
 import { prepareEvent } from './snapshot';
-import { syncEvent } from './sync';
+import { MAX_BATCH_BYTES, splitBatch, syncEvent } from './sync';
+import { EventNotAvailableError } from './engine';
 import { parseQr, verifyOptions, verifySignature } from './verify';
 
 const ORG = IDS.orgNuits;
@@ -214,5 +215,37 @@ describe('scanner hors-ligne', () => {
     expect(await pendingCount()).toBe(0);
     expect(await getLocalTicket(IDS.eventConcert, (qr ?? '').split('.')[2] ?? '')).toBeUndefined();
     expect(await deviceId()).toBe(id);
+  });
+});
+
+describe('contrat v1.12', () => {
+  it('lots de synchro ≤ 500 scans ET ≤ 150 ko sérialisés', () => {
+    const scan = (i: number) => ({ scanId: crypto.randomUUID(), qrPayload: `NG1.${'e'.repeat(36)}.${'p'.repeat(22)}.${'s'.repeat(86)}`, scannedAt: new Date(i).toISOString() });
+    const many = Array.from({ length: 1200 }, (_, i) => scan(i));
+    const first = splitBatch(many);
+    expect(first.length).toBeLessThanOrEqual(500);
+    expect(new TextEncoder().encode(JSON.stringify({ deviceId: crypto.randomUUID(), scans: first })).length).toBeLessThanOrEqual(MAX_BATCH_BYTES + 100);
+    const big = Array.from({ length: 100 }, (_, i) => ({ ...scan(i), qrPayload: 'x'.repeat(5000) }));
+    const b = splitBatch(big);
+    expect(b.length).toBeLessThan(100);
+    expect(b.length).toBeGreaterThan(0);
+  });
+
+  it('événement hors fenêtre de contrôle ⇒ « non disponible au contrôle » (préparation et scan)', async () => {
+    await ticketsFor(1);
+    const ev = mock.db.events.find((e) => e.id === IDS.eventConcert);
+    const saved = ev?.endsAt;
+    if (ev) ev.endsAt = new Date(Date.now() - 25 * 3_600_000).toISOString();
+    await expect(prepareEvent(ORG, EVENT)).rejects.toBeInstanceOf(EventNotAvailableError);
+    await expect(scanTicket({ orgId: ORG, eventId: IDS.eventConcert, qrPayload: 'x', online: true })).rejects.toBeInstanceOf(EventNotAvailableError);
+    if (ev && saved) ev.endsAt = saved;
+  });
+
+  it('événement annulé ⇒ résultat CANCELLED au scan en ligne', async () => {
+    const [qr] = await ticketsFor(1);
+    await prepareEvent(ORG, EVENT);
+    const ev = mock.db.events.find((e) => e.id === IDS.eventConcert);
+    if (ev) ev.status = 'CANCELLED';
+    expect((await scanTicket({ orgId: ORG, eventId: IDS.eventConcert, qrPayload: qr ?? '', online: true })).kind).toBe('CANCELLED');
   });
 });
