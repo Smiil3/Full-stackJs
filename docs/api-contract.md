@@ -1,7 +1,7 @@
 # Contrat d'API — Billetterie « Les Nuits de la Garonne »
 
 > **Source de vérité commune front / back.** Toute modification passe par le PO (session `fullstack-js`) : demander via une ligne `NEED: changement de contrat …`. Ne jamais diverger silencieusement.
-> Version : 1.4 — 2026-10-06 (voir §11 Historique)
+> Version : 1.5 — 2026-10-06 (voir §11 Historique)
 
 ## 1. Conventions
 
@@ -52,6 +52,9 @@
 - **Refresh token** : opaque, cookie `nuits_rt` — `HttpOnly; Secure; SameSite=Strict; Path=/api/v1/auth; Max-Age=30 jours` (en dev HTTP, `Secure` désactivé par config). Rotation à chaque appel ; réutilisation d'un ancien token ⇒ toute la famille révoquée ⇒ 401 `INVALID_REFRESH_TOKEN`.
 - Les endpoints utilisant le cookie (`/auth/refresh`, `/auth/logout`) exigent l'en-tête `X-Requested-With: nuits-web` **et** un `Origin` dans l'allowlist, sinon 403 `CSRF_CHECK_FAILED`.
 - Toutes les requêtes front : `credentials: 'include'`.
+- **Délai de grâce de rotation** : un refresh rejoué dans les 10 s avec le token précédent, si son successeur n'a jamais servi, renvoie une nouvelle session valide (cas réponse perdue sur réseau mobile). Le cookie n'est effacé que sur 401.
+- Durée de vie absolue d'une famille de refresh : 90 jours ⇒ reconnexion obligatoire.
+- `POST /auth/verify-email` révoque toutes les sessions existantes : après vérification, le front envoie vers la page de connexion.
 - Les rôles ne sont **pas** dans le JWT : `GET /auth/me` donne les adhésions.
 
 ### Objets
@@ -63,10 +66,10 @@ type AuthSession = { accessToken: string; expiresIn: number /* secondes */; user
 
 | Méthode & chemin | Auth | Body | Réponse |
 |---|---|---|---|
-| `POST /auth/register` | — | `{ email, password (12–128), displayName (1–80) }` | **202** `{ message }` — identique que l'email existe ou non. Envoie un mail de vérification. |
+| `POST /auth/register` | — | `{ email (ASCII), password (12–128 caractères, ≤ 256 octets, pas un mot de passe courant), displayName (1–80) }` | **202** `{ message }` — identique que l'email existe ou non, temps de réponse constant. Compte non vérifié existant ⇒ la nouvelle inscription remplace l'ancienne (anciens liens invalidés). Compte vérifié ⇒ mail « vous avez déjà un compte ». |
 | `POST /auth/verify-email` | — | `{ token }` | 204 · 400 `VALIDATION_ERROR` si token invalide/expiré |
 | `POST /auth/resend-verification` | — | `{ email }` | 202 (toujours) |
-| `POST /auth/login` | — | `{ email, password }` | 200 `AuthSession` + cookie · 401 `INVALID_CREDENTIALS` · 429 |
+| `POST /auth/login` | — | `{ email, password }` | 200 `AuthSession` + cookie · 401 `INVALID_CREDENTIALS` · **403 `EMAIL_NOT_VERIFIED`** (uniquement si le mot de passe est correct ; aucune session créée) · 429 |
 | `POST /auth/refresh` | cookie + anti-CSRF | — | 200 `AuthSession` + nouveau cookie · 401 `INVALID_REFRESH_TOKEN` |
 | `POST /auth/logout` | cookie + anti-CSRF | — | 204, cookie effacé, famille révoquée |
 | `POST /auth/forgot-password` | — | `{ email }` | 202 (toujours) |
@@ -249,6 +252,7 @@ type EventStats = { eventId; generatedAt; currency: 'EUR';
 - En-têtes de sécurité via helmet ; CORS : origine `FRONT_URL` uniquement, `credentials: true`.
 
 ## 11. Historique
+- **1.5** (2026-10-06) : login non vérifié ⇒ 403 `EMAIL_NOT_VERIFIED` ; règles d'inscription (ASCII, mots de passe courants refusés, dernière inscription gagne) ; délai de grâce 10 s de rotation ; famille 90 j ; verify-email révoque les sessions.
 - **1.4** (2026-10-06) : `/admin/*` pour non-admin ⇒ 404 ; liste d'attente désactivée ⇒ 409 `WAITLIST_DISABLED`.
 - **1.3** (2026-10-06) : codes `PAYLOAD_TOO_LARGE` (413) et `UNSUPPORTED_MEDIA_TYPE` (415) ; JSON malformé ⇒ 400 `VALIDATION_ERROR`.
 - **1.2** (2026-10-06) : `OrderAdmin.transferInstructions` avec IBAN masqué ; `INVALID_CREDENTIALS` couvre compte verrouillé et mauvais mot de passe actuel ; commande à 0 € ⇒ `PAID` directement à la création (pas de checkout) ; annulation d'événement ⇒ remboursement 100 % frais compris.
