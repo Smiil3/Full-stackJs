@@ -110,7 +110,8 @@ describe('scan en ligne', () => {
     const other = tickets[1]!.publicId;
     const { privateKey } = generateKeyPairSync('ed25519');
     const forged = sign(null, Buffer.from(`NG1.${eventId}.${publicId}`), privateKey).toString('base64url');
-    const flipped = sig.slice(0, -2) + (sig.endsWith('A') ? 'BA' : 'AA');
+    // Caractère de données altéré à coup sûr (l'ancienne version laissait la signature intacte si elle finissait par « BA »).
+    const flipped = `${sig.slice(0, -2)}${sig.at(-2) === 'A' ? 'B' : 'A'}${sig.slice(-1)}`;
     for (const payload of [
       `${prefix}.${ev}.${other}.${sig}`, // signature d'un autre billet
       `${prefix}.${ev}.${publicId}.${forged}`, // signé avec une autre clé

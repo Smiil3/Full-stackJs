@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { testClock } from '../../src/lib/clock.js';
 import { getDb } from '../../src/lib/db.js';
-import { csvCell, csvRow } from '../../src/lib/csv.js';
+import { csvCell, csvIdentifier, csvRow } from '../../src/lib/csv.js';
 import { api, loggedInUser, type LoggedIn } from '../helpers.js';
 import { createEvent, openCheckinWindow, orgWithStaff, type OrgFixture } from '../fixtures.js';
 import { openSession, paymentEvent, postWebhook, startPsp, type PspHarness } from '../psp.js';
@@ -14,6 +15,7 @@ beforeEach(async () => {
   h = await startPsp();
 });
 afterEach(async () => {
+  testClock.reset();
   await h.close();
 });
 
@@ -76,15 +78,28 @@ describe('export CSV des participants', () => {
     expect(csvCell('normal')).toBe('normal');
     expect(csvCell(null)).toBe('');
     expect(csvRow(['a', 'b'])).toBe('a;b\r\n');
+    // Identifiant technique : intact, même s'il commence par « - » ; hors alphabet base64url, neutralisé.
+    expect(csvCell(csvIdentifier('-AbC_12'))).toBe('-AbC_12');
+    expect(csvCell(csvIdentifier('=1+1'))).toBe("'=1+1");
   });
 
-  it('flux CSV : en-têtes, BOM, colonnes, heure locale, injection neutralisée, audit', async () => {
-    const ev = await createEvent(org, { ticketTypes: [{ name: '=Fosse', capacity: 10, priceCents: 0 }], publish: true, body: { timezone: 'America/New_York' } });
+  it('flux CSV : en-têtes, BOM, colonnes, heure locale, injection neutralisée, identifiant intact, audit', async () => {
+    // Horloge figée et dates fixes : le scan a lieu le 14/03/2030 à 23:30:00 UTC = 19:30 à New York (heure d'été).
+    testClock.freeze(new Date('2030-03-14T23:30:00.000Z'));
+    const ev = await createEvent(org, {
+      ticketTypes: [{ name: '=Fosse', capacity: 10, priceCents: 0 }], publish: true,
+      body: {
+        timezone: 'America/New_York', salesStartAt: '2030-03-01T00:00:00.000Z',
+        startsAt: '2030-03-15T00:30:00.000Z', endsAt: '2030-03-15T05:30:00.000Z', salesEndAt: '2030-03-15T00:30:00.000Z',
+      },
+    });
     const evil = await loggedInUser({ displayName: '=cmd|"/C calc"!A0', email: 'evil@test.fr' });
     await buy(evil, ev.eventId, ev.ticketTypeIds[0]!, 1, false);
     const ticket = ((await api().get('/api/v1/me/tickets').set(evil.auth)).body.items as { qrPayload: string; publicId: string }[])[0]!;
-    await openCheckinWindow(ev.eventId);
-    await api().post(`/api/v1/orgs/${org.id}/events/${ev.eventId}/checkin/scan`).set(org.scanner.auth).send({ qrPayload: ticket.qrPayload, deviceId: randomUUID(), scanId: randomUUID() }).expect(200);
+    const scan = await api().post(`/api/v1/orgs/${org.id}/events/${ev.eventId}/checkin/scan`).set(org.scanner.auth).send({ qrPayload: ticket.qrPayload, deviceId: randomUUID(), scanId: randomUUID() }).expect(200);
+    expect(scan.body.result).toBe('OK');
+    // Identifiant public fixe commençant par « - » (1 tirage sur 64) : il doit sortir TEL QUEL (contrat §5).
+    await getDb().ticket.update({ where: { publicId: ticket.publicId }, data: { publicId: '-AbCdEfGhIjKlMnOpQrStU' } });
     const res = await api().get(`/api/v1/orgs/${org.id}/events/${ev.eventId}/attendees.csv`).set(org.manager.auth).buffer(true).parse((r, cb) => {
       let data = '';
       r.setEncoding('utf8');
@@ -95,12 +110,11 @@ describe('export CSV des participants', () => {
     expect(res.headers['content-disposition']).toBe(`attachment; filename="participants-${ev.eventId}.csv"`);
     const text = res.body as string;
     expect(text.charCodeAt(0)).toBe(0xfeff);
-    const lines = text.slice(1).split('\r\n');
-    expect(lines[0]).toBe('billet;type;nom;email;statut;scanne_le');
-    expect(lines[1]!.startsWith(`${ticket.publicId};'=Fosse;"'=cmd|""/C calc""!A0";evil@test.fr;scanné;`)).toBe(true);
-    const used = await getDb().ticket.findFirstOrThrow({ where: { publicId: ticket.publicId } });
-    const local = new Intl.DateTimeFormat('fr-FR', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(used.usedAt!);
-    expect(lines[1]!.endsWith(local)).toBe(true);
+    expect(text.slice(1).split('\r\n')).toEqual([
+      'billet;type;nom;email;statut;scanne_le',
+      `-AbCdEfGhIjKlMnOpQrStU;'=Fosse;"'=cmd|""/C calc""!A0";evil@test.fr;scanné;14/03/2030 19:30`,
+      '',
+    ]);
     expect(await getDb().auditLog.count({ where: { action: 'attendees.export', orgId: org.id } })).toBe(1);
   });
 

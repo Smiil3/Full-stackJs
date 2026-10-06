@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { SignJWT, UnsecuredJWT } from 'jose';
+import { decodeJwt, SignJWT, UnsecuredJWT } from 'jose';
 import supertest from 'supertest';
 import { createApp } from '../../src/app.js';
 import { authMetrics } from '../../src/modules/auth/service.js';
 import { getDb } from '../../src/lib/db.js';
 import { api, createUser, csrfHeaders, lastMail, login, loggedInUser, PASSWORD, refreshCookieOf, tokenFromMail } from '../helpers.js';
+
+/** Altère un caractère de données de la signature (jamais une altération nulle, quel que soit le tirage). */
+const tamper = (jwt: string) => `${jwt.slice(0, -4)}${jwt.at(-4) === 'A' ? 'B' : 'A'}${jwt.slice(-3)}`;
 
 const A = '/api/v1/auth';
 
@@ -354,7 +357,7 @@ describe('access token JWT', () => {
       await forge(u.id, { aud: 'autre-app' }),
       await forge(u.id, { iss: 'autre-emetteur' }),
       await forge(u.id, { exp: Math.floor(Date.now() / 1000) - 60 }),
-      (await forge(u.id)).slice(0, -3) + 'abc',
+      tamper(await forge(u.id)),
       await forge(u.id, { ver: 1 }),
       await forge(u.id, { ver: '0' }),
       await forge(u.id, { ver: null }),
@@ -449,12 +452,13 @@ describe('mot de passe oublié / changement', () => {
   it('tokenVersion : jeton émis juste avant un change-password (même seconde) ⇒ 401', async () => {
     const u = await loggedInUser();
     const second = await login(u);
-    const before = Math.floor(Date.now() / 1000);
     await api().post(`${A}/change-password`).set(u.auth).send({ currentPassword: PASSWORD, newPassword: 'nouveau-mot-de-passe-42' }).expect(204);
     const res = await api().get(`${A}/me`).set(second.auth);
     expect(res.status).toBe(401);
-    // Le scénario se joue bien dans la même seconde (ou la suivante au pire) : la version, pas l'horloge, fait foi.
-    expect(Math.floor(Date.now() / 1000) - before).toBeLessThanOrEqual(1);
+    // Refus par la VERSION du jeton, indépendamment de l'heure d'émission (aucune dépendance au bord de seconde).
+    const { ver } = decodeJwt(second.auth.Authorization.slice('Bearer '.length));
+    const { tokenVersion } = await getDb().user.findUniqueOrThrow({ where: { id: u.id } });
+    expect(ver).toBeLessThan(tokenVersion);
     const fresh = await login(u, 'nouveau-mot-de-passe-42');
     await api().get(`${A}/me`).set(fresh.auth).expect(200);
   });

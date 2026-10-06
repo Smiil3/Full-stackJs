@@ -1,6 +1,6 @@
 import type { Response } from 'express';
 import { writeAudit } from '../../lib/audit.js';
-import { csvRow, UTF8_BOM } from '../../lib/csv.js';
+import { csvIdentifier, csvRow, UTF8_BOM } from '../../lib/csv.js';
 import { getDb } from '../../lib/db.js';
 import { errors } from '../../lib/errors.js';
 import { formatInTimezone } from '../../lib/time.js';
@@ -53,7 +53,7 @@ export async function streamAttendees(orgId: string, actorId: string, eventId: s
       let chunk = '';
       for (const t of tickets) {
         chunk += csvRow([
-          t.publicId,
+          csvIdentifier(t.publicId),
           t.orderItem.ticketType.name,
           t.orderItem.order.user.displayName,
           t.orderItem.order.user.email,
