@@ -66,6 +66,18 @@ describe('AuthProvider', () => {
     expect(await screen.findByText('offline:-')).toBeInTheDocument();
   });
 
+  it('démarrage hors-ligne puis retour du réseau ⇒ session restaurée automatiquement', async () => {
+    const { injectFault } = await import('../mocks/core');
+    mock.db.refreshCookie = { token: 'x', userId: mock.db.users[0]?.id ?? '' };
+    injectFault({ route: 'POST /auth/refresh', status: 0, code: 'INTERNAL_ERROR', network: true });
+    setup();
+    expect(await screen.findByText('offline:-')).toBeInTheDocument();
+    act(() => {
+      window.dispatchEvent(new Event('online'));
+    });
+    expect(await screen.findByText('authenticated:acheteur@example.test')).toBeInTheDocument();
+  });
+
   it('logout ⇒ cache TanStack Query vidé et nettoyages hors-ligne exécutés', async () => {
     const { qc, auth } = setup();
     await screen.findByText('anonymous:-');

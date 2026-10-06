@@ -58,6 +58,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return off;
   }, [wipe]);
 
+  // Démarrage hors-ligne : la session est re-tentée dès le retour du réseau (synchro du scanner, billets…).
+  useEffect(() => {
+    if (status !== 'offline') return;
+    const retry = () => {
+      refreshSession().catch((err: unknown) => {
+        if (isApiError(err) && err.status === 401) setStatus('anonymous');
+      });
+    };
+    window.addEventListener('online', retry);
+    return () => {
+      window.removeEventListener('online', retry);
+    };
+  }, [status]);
+
   const login = useCallback(async (email: string, password: string) => (await apiLogin(email, password)).user, []);
   /** La déconnexion n'est terminée qu'une fois les données hors-ligne effacées (billets = justificatifs). */
   const logout = useCallback(async () => {
