@@ -5,7 +5,8 @@ import cookieParser from 'cookie-parser';
 import { pinoHttp } from 'pino-http';
 import Joi from 'joi';
 import { getEnv } from './config/env.js';
-import { getLogger } from './lib/logger.js';
+import type { Logger } from 'pino';
+import { getLogger, serializeError } from './lib/logger.js';
 import { clientRequestId, genRequestId } from './middlewares/requestId.js';
 import { requireJsonContentType } from './middlewares/contentType.js';
 import { errorHandler, notFoundHandler } from './middlewares/errorHandler.js';
@@ -27,6 +28,8 @@ function rejectPrototypeKeys(key: string, value: unknown): unknown {
 export interface AppOptions {
   /** Multiplicateur des plafonds de rate limiting (tests). */
   rateLimitMultiplier?: number;
+  /** Logger injecté (tests : capture des journaux). */
+  logger?: Logger;
 }
 
 export function createApp(options: AppOptions = {}): Express {
@@ -39,10 +42,11 @@ export function createApp(options: AppOptions = {}): Express {
 
   app.use(
     pinoHttp({
-      logger: getLogger(),
+      logger: options.logger ?? getLogger(),
       genReqId: genRequestId,
       // Les URL peuvent contenir des jetons (liens de mail rejoués) : on ne journalise que le chemin.
       serializers: {
+        err: serializeError,
         req: (req: { id: unknown; method: string; url: string }) => ({ id: req.id, method: req.method, path: req.url.split('?')[0] }),
       },
       // L'identifiant fourni par le client n'est jamais réutilisé comme requestId : il est journalisé à part, filtré.
