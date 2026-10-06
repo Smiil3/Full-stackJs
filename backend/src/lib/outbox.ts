@@ -64,7 +64,8 @@ export async function processOutboxBatch(transport: MailTransport): Promise<{ se
   await db.$transaction(async (tx) => {
     const rows = await tx.$queryRaw<OutboxRow[]>`
       SELECT "id", "to", "template", "payload", "attempts" FROM "email_outbox"
-      WHERE "status" = 'PENDING' AND "nextAttemptAt" <= now()
+      -- Tolérance de 2 s : l'échéance est posée par l'application, comparée à l'horloge de la base.
+      WHERE "status" = 'PENDING' AND "nextAttemptAt" <= now() + interval '2 seconds'
       ORDER BY "nextAttemptAt", "id"
       LIMIT ${BATCH_SIZE}
       FOR UPDATE SKIP LOCKED`;

@@ -19,7 +19,8 @@ export async function processRefunds(): Promise<{ succeeded: number; failed: num
     const rows = await tx.$queryRaw<{ id: string; amountCents: number; attempts: number; providerPaymentId: string }[]>`
       SELECT r."id", r."amountCents", r."attempts", p."providerPaymentId"
       FROM "refunds" r JOIN "payments" p ON p."id" = r."paymentId"
-      WHERE r."status" = 'PENDING' AND r."nextAttemptAt" <= now()
+      -- Tolérance de 2 s : échéance posée par l'application, comparée à l'horloge de la base.
+      WHERE r."status" = 'PENDING' AND r."nextAttemptAt" <= now() + interval '2 seconds'
       ORDER BY r."nextAttemptAt", r."id"
       LIMIT ${BATCH}
       FOR UPDATE OF r SKIP LOCKED`;
