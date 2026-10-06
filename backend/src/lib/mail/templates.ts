@@ -1,0 +1,123 @@
+import { escapeHtml } from './escape.js';
+
+/** Données de chaque gabarit (sérialisées en JSON dans l'outbox). */
+export interface TemplatePayloads {
+  verifyEmail: { displayName: string; link: string };
+  accountExists: { displayName: string; resetLink: string };
+  resetPassword: { displayName: string; link: string };
+  passwordChanged: { displayName: string };
+  orderConfirmed: { displayName: string; orderId: string; eventTitle: string; eventDate: string; ticketsLink: string };
+  transferInstructions: {
+    displayName: string; eventTitle: string; amount: string; reference: string; beneficiary: string; iban: string; bic: string; deadline: string;
+  };
+  orderExpired: { displayName: string; eventTitle: string };
+  orderRefunded: { displayName: string; eventTitle: string; amount: string; reason: string };
+  latePaymentRefunded: { displayName: string; eventTitle: string; amount: string };
+  waitlistOffer: { displayName: string; eventTitle: string; ticketTypeName: string; quantity: number; deadline: string; link: string };
+  eventCancelled: { displayName: string; eventTitle: string; reason: string; amount: string | null };
+}
+
+export type MailTemplate = keyof TemplatePayloads;
+
+export interface RenderedMail {
+  subject: string;
+  html: string;
+  text: string;
+}
+
+function layout(title: string, paragraphs: string[], action?: { label: string; url: string }): string {
+  const body = paragraphs.map((p) => `<p style="margin:0 0 12px">${p}</p>`).join('');
+  const button = action
+    ? `<p style="margin:20px 0"><a href="${escapeHtml(action.url)}" style="background:#1d3557;color:#fff;padding:10px 16px;border-radius:6px;text-decoration:none">${escapeHtml(action.label)}</a></p>`
+    : '';
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title></head>`
+    + `<body style="font-family:Arial,sans-serif;color:#1b1b1b;max-width:560px;margin:auto;padding:16px">`
+    + `<h1 style="font-size:20px">${escapeHtml(title)}</h1>${body}${button}`
+    + `<p style="color:#666;font-size:12px">Les Nuits de la Garonne — billetterie</p></body></html>`;
+}
+
+const e = escapeHtml;
+
+export function renderTemplate<T extends MailTemplate>(template: T, data: TemplatePayloads[T]): RenderedMail {
+  // Chaque branche ne lit que les champs de son gabarit ; toute valeur est échappée.
+  const d = data as unknown as Record<string, string | number | null>;
+  const s = (k: string): string => String(d[k] ?? '');
+  switch (template) {
+    case 'verifyEmail':
+      return {
+        subject: 'Confirmez votre adresse email',
+        html: layout('Bienvenue !', [`Bonjour ${e(s('displayName'))},`, 'Confirmez votre adresse pour pouvoir réserver. Ce lien expire dans 30 minutes.'], { label: 'Confirmer mon adresse', url: s('link') }),
+        text: `Bonjour ${s('displayName')},\nConfirmez votre adresse (lien valable 30 minutes) : ${s('link')}`,
+      };
+    case 'accountExists':
+      return {
+        subject: 'Tentative d’inscription avec votre adresse',
+        html: layout('Vous avez déjà un compte', [`Bonjour ${e(s('displayName'))},`, 'Quelqu’un (peut-être vous) a tenté de créer un compte avec cette adresse. Si vous avez oublié votre mot de passe, vous pouvez le réinitialiser. Sinon, ignorez ce message.'], { label: 'Réinitialiser mon mot de passe', url: s('resetLink') }),
+        text: `Bonjour ${s('displayName')},\nUn compte existe déjà avec cette adresse. Mot de passe oublié : ${s('resetLink')}`,
+      };
+    case 'resetPassword':
+      return {
+        subject: 'Réinitialisation de votre mot de passe',
+        html: layout('Réinitialiser le mot de passe', [`Bonjour ${e(s('displayName'))},`, 'Ce lien est valable 30 minutes et ne peut servir qu’une fois. Si vous n’êtes pas à l’origine de cette demande, ignorez ce message.'], { label: 'Choisir un nouveau mot de passe', url: s('link') }),
+        text: `Bonjour ${s('displayName')},\nRéinitialisez votre mot de passe (lien valable 30 minutes) : ${s('link')}`,
+      };
+    case 'passwordChanged':
+      return {
+        subject: 'Votre mot de passe a été modifié',
+        html: layout('Mot de passe modifié', [`Bonjour ${e(s('displayName'))},`, 'Votre mot de passe vient d’être modifié et toutes vos sessions ont été fermées. Si vous n’êtes pas à l’origine de ce changement, réinitialisez-le immédiatement.']),
+        text: `Bonjour ${s('displayName')},\nVotre mot de passe vient d'être modifié. Toutes vos sessions ont été fermées.`,
+      };
+    case 'orderConfirmed':
+      return {
+        subject: `Vos billets — ${s('eventTitle')}`,
+        html: layout('Paiement confirmé', [`Bonjour ${e(s('displayName'))},`, `Votre commande pour <strong>${e(s('eventTitle'))}</strong> (${e(s('eventDate'))}) est confirmée. Vos billets sont en pièce jointe et dans votre espace.`], { label: 'Voir mes billets', url: s('ticketsLink') }),
+        text: `Bonjour ${s('displayName')},\nVotre commande pour ${s('eventTitle')} (${s('eventDate')}) est confirmée. Vos billets : ${s('ticketsLink')}`,
+      };
+    case 'transferInstructions':
+      return {
+        subject: `Instructions de virement — ${s('eventTitle')}`,
+        html: layout('Réservation en attente de virement', [
+          `Bonjour ${e(s('displayName'))},`,
+          `Vos places pour <strong>${e(s('eventTitle'))}</strong> sont réservées jusqu’au ${e(s('deadline'))}.`,
+          `Montant : <strong>${e(s('amount'))}</strong><br>Bénéficiaire : ${e(s('beneficiary'))}<br>IBAN : ${e(s('iban'))}<br>BIC : ${e(s('bic'))}<br>Référence à indiquer impérativement : <strong>${e(s('reference'))}</strong>`,
+        ]),
+        text: `Bonjour ${s('displayName')},\nMontant : ${s('amount')}\nBénéficiaire : ${s('beneficiary')}\nIBAN : ${s('iban')}\nBIC : ${s('bic')}\nRéférence : ${s('reference')}\nÀ régler avant le ${s('deadline')}.`,
+      };
+    case 'orderExpired':
+      return {
+        subject: `Réservation expirée — ${s('eventTitle')}`,
+        html: layout('Réservation expirée', [`Bonjour ${e(s('displayName'))},`, `Votre réservation pour <strong>${e(s('eventTitle'))}</strong> n’a pas été réglée à temps : les places ont été libérées.`]),
+        text: `Bonjour ${s('displayName')},\nVotre réservation pour ${s('eventTitle')} a expiré, les places ont été libérées.`,
+      };
+    case 'orderRefunded':
+      return {
+        subject: `Remboursement — ${s('eventTitle')}`,
+        html: layout('Commande annulée', [`Bonjour ${e(s('displayName'))},`, `Votre commande pour <strong>${e(s('eventTitle'))}</strong> est annulée (${e(s('reason'))}). Montant remboursé : <strong>${e(s('amount'))}</strong>.`]),
+        text: `Bonjour ${s('displayName')},\nVotre commande pour ${s('eventTitle')} est annulée (${s('reason')}). Remboursement : ${s('amount')}.`,
+      };
+    case 'latePaymentRefunded':
+      return {
+        subject: `Paiement reçu trop tard — ${s('eventTitle')}`,
+        html: layout('Paiement remboursé', [`Bonjour ${e(s('displayName'))},`, `Votre paiement pour <strong>${e(s('eventTitle'))}</strong> est arrivé après l’expiration de votre réservation et il n’y avait plus de places disponibles. Vous êtes intégralement remboursé(e) : <strong>${e(s('amount'))}</strong>.`]),
+        text: `Bonjour ${s('displayName')},\nPaiement reçu après expiration, plus de places : remboursement intégral de ${s('amount')}.`,
+      };
+    case 'waitlistOffer':
+      return {
+        subject: `Des places se sont libérées — ${s('eventTitle')}`,
+        html: layout('C’est votre tour !', [`Bonjour ${e(s('displayName'))},`, `${e(s('quantity'))} place(s) « ${e(s('ticketTypeName'))} » pour <strong>${e(s('eventTitle'))}</strong> vous sont réservées jusqu’au ${e(s('deadline'))}.`], { label: 'Accepter l’offre', url: s('link') }),
+        text: `Bonjour ${s('displayName')},\n${s('quantity')} place(s) ${s('ticketTypeName')} pour ${s('eventTitle')} vous sont réservées jusqu'au ${s('deadline')} : ${s('link')}`,
+      };
+    case 'eventCancelled':
+      return {
+        subject: `Événement annulé — ${s('eventTitle')}`,
+        html: layout('Événement annulé', [`Bonjour ${e(s('displayName'))},`, `<strong>${e(s('eventTitle'))}</strong> est annulé : ${e(s('reason'))}.`, d['amount'] ? `Vous êtes remboursé(e) de <strong>${e(s('amount'))}</strong>.` : 'Votre réservation non payée a été annulée.']),
+        text: `Bonjour ${s('displayName')},\n${s('eventTitle')} est annulé : ${s('reason')}.${d['amount'] ? ` Remboursement : ${s('amount')}.` : ''}`,
+      };
+    default:
+      throw new Error('Gabarit de mail inconnu');
+  }
+}
+
+export function formatEuros(cents: number): string {
+  return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(cents / 100);
+}
