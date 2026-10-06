@@ -15,8 +15,16 @@ Décisions non bloquantes prises pendant l'implémentation (option la plus sûre
 - **2026-10-06 — `Ticket.eventId` dénormalisé.** — Le scan atomique `UPDATE … WHERE publicId = $1 AND eventId = $2 AND status = 'VALID'` et le snapshot n'ont pas besoin de jointure ; l'appartenance à l'événement fait partie de la condition atomique.
 - **2026-10-06 — Table `Refund` (remboursement asynchrone).** — Les remboursements sont enregistrés dans la transaction métier puis exécutés auprès du PSP par le worker (avec clé d'idempotence = id du remboursement) : aucun appel réseau externe pendant une transaction, pas de remboursement perdu en cas de crash.
 - **2026-10-06 — Table `EmailToken` unique pour vérification d'email et reset.** — Même cycle de vie (hash SHA-256, usage unique, 30 min) ; le champ `purpose` empêche d'utiliser un jeton de vérification pour un reset.
-- **2026-10-06 — `User.tokensValidAfter`.** — Le middleware d'auth relit l'utilisateur en base et refuse tout access token émis avant cette date : un changement / reset de mot de passe invalide aussi les access tokens en cours (et pas seulement les refresh tokens).
+- **2026-10-06 — `User.tokenVersion` (claim `ver`), remplace `tokensValidAfter`.** — Le middleware d'auth relit l'utilisateur en base et exige `ver === tokenVersion` : un changement / reset de mot de passe incrémente la version et invalide immédiatement tous les access tokens en cours, sans la fenêtre d'une seconde qu'imposait la comparaison sur `iat` (décision PO).
 - **2026-10-06 — Contraintes CHECK étendues.** — En plus du stock (`sold + held <= capacity`) : montants positifs, `total = sous-total + frais`, cohérence early, dates d'événement, bornes des réglages (collectif et surcharges), `USED ⇔ usedAt`. Filet de sécurité si un bug applicatif passait la validation Joi.
 - **2026-10-06 — Nettoyage de la base de test par une liste de tables statique.** — `TRUNCATE` ne prend pas de paramètres liés ; plutôt que `$executeRawUnsafe` (interdit), liste littérale + test qui vérifie qu'elle couvre toutes les tables du schéma.
 - **2026-10-06 — Seed refusé en production et sur base non vide ; mot de passe commun aléatoire affiché une fois si `SEED_PASSWORD` est vide.**
 - **2026-10-06 — Frais de service nuls sur une commande à 0 €.** — Éviter de facturer des frais sur une entrée gratuite (une commande gratuite n'a pas de paiement PSP).
+
+## B2 — Authentification
+
+- **2026-10-06 — Refresh strict, sans période de grâce.** — Un jeton déjà remplacé ou révoqué qui revient révoque toute la famille, y compris en cas de deux refresh simultanés (le front sérialise via `navigator.locks`). Décision PO.
+- **2026-10-06 — Compte verrouillé ⇒ 401 `INVALID_CREDENTIALS`.** — Ne révèle pas l'existence du compte (validé PO, contrat 1.2). Verrouillage : 5 échecs ⇒ 1 min, puis doublement jusqu'à 60 min.
+- **2026-10-06 — Inscription avec un email déjà vérifié ⇒ mail « vous avez déjà un compte » avec lien de reset ; email non vérifié ⇒ nouveau lien de vérification.** — Réponse HTTP identique dans tous les cas.
+- **2026-10-06 — Le reset de mot de passe vaut vérification d'email.** — Le lien reçu prouve la possession de l'adresse.
+- **2026-10-06 — Jetons mail stockés hashés ; le lien en clair ne vit que dans le payload de l'outbox, purgé après envoi.**

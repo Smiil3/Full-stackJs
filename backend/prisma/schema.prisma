@@ -93,8 +93,9 @@ model User {
   isPlatformAdmin  Boolean   @default(false)
   failedLoginCount Int       @default(0)
   lockedUntil      DateTime? @db.Timestamptz(3)
-  /// Tout access token émis avant cette date est refusé (changement / reset de mot de passe).
-  tokensValidAfter DateTime  @default(now()) @db.Timestamptz(3)
+  /// Version des access tokens (claim `ver`) : incrémentée à chaque changement / reset de mot de passe,
+  /// ce qui invalide immédiatement tous les access tokens en cours.
+  tokenVersion     Int       @default(0)
   createdAt        DateTime  @default(now()) @db.Timestamptz(3)
   updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
 

@@ -211,8 +211,8 @@ describe('refresh token rotatif', () => {
 
 describe('access token JWT', () => {
   const secret = () => new TextEncoder().encode(process.env['JWT_ACCESS_SECRET']);
-  const forge = (sub: string, opts: { alg?: string; aud?: string; iss?: string; exp?: string | number } = {}) =>
-    new SignJWT({})
+  const forge = (sub: string, opts: { alg?: string; aud?: string; iss?: string; exp?: string | number; ver?: unknown } = {}) =>
+    new SignJWT(opts.ver === undefined ? { ver: 0 } : { ver: opts.ver })
       .setProtectedHeader({ alg: opts.alg ?? 'HS256' })
       .setSubject(sub)
       .setJti('11111111-1111-4111-8111-111111111111')
@@ -225,7 +225,7 @@ describe('access token JWT', () => {
   it('jeton valide accepté ; payload limité à sub, jti et claims standard', async () => {
     const u = await loggedInUser();
     const payload = JSON.parse(Buffer.from(u.token.split('.')[1]!, 'base64url').toString()) as Record<string, unknown>;
-    expect(Object.keys(payload).sort()).toEqual(['aud', 'exp', 'iat', 'iss', 'jti', 'sub']);
+    expect(Object.keys(payload).sort()).toEqual(['aud', 'exp', 'iat', 'iss', 'jti', 'sub', 'ver']);
     const header = JSON.parse(Buffer.from(u.token.split('.')[0]!, 'base64url').toString()) as Record<string, unknown>;
     expect(header['alg']).toBe('HS256');
     const me = await api().get(`${A}/me`).set(u.auth).expect(200);
@@ -243,6 +243,9 @@ describe('access token JWT', () => {
       await forge(u.id, { iss: 'autre-emetteur' }),
       await forge(u.id, { exp: Math.floor(Date.now() / 1000) - 60 }),
       (await forge(u.id)).slice(0, -3) + 'abc',
+      await forge(u.id, { ver: 1 }),
+      await forge(u.id, { ver: '0' }),
+      await forge(u.id, { ver: null }),
       'pas-un-jwt',
     ];
     for (const token of cases) {
@@ -282,8 +285,6 @@ describe('mot de passe oublié / changement', () => {
     const u = await loggedInUser({ email: 'reset@test.fr' });
     await api().post(`${A}/forgot-password`).send({ email: u.email }).expect(202);
     const token = await tokenFromMail(u.email, 'resetPassword');
-    // Les access tokens émis dans la même seconde restent tolérés (cf. DECISIONS) : on simule un jeton plus ancien.
-    await new Promise((r) => setTimeout(r, 1100));
     await api().post(`${A}/reset-password`).send({ token, password: 'nouveau-mot-de-passe-42' }).expect(204);
     await api().post(`${A}/reset-password`).send({ token, password: 'encore-un-autre-mdp-43' }).expect(400);
     await api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', u.cookie).expect(401);
@@ -305,9 +306,22 @@ describe('mot de passe oublié / changement', () => {
     expect(res.body.error.code).toBe('INVALID_CREDENTIALS');
   });
 
+  it('tokenVersion : jeton émis juste avant un change-password (même seconde) ⇒ 401', async () => {
+    const u = await loggedInUser();
+    const second = await login(u);
+    const before = Math.floor(Date.now() / 1000);
+    await api().post(`${A}/change-password`).set(u.auth).send({ currentPassword: PASSWORD, newPassword: 'nouveau-mot-de-passe-42' }).expect(204);
+    const res = await api().get(`${A}/me`).set(second.auth);
+    expect(res.status).toBe(401);
+    // Le scénario se joue bien dans la même seconde (ou la suivante au pire) : la version, pas l'horloge, fait foi.
+    expect(Math.floor(Date.now() / 1000) - before).toBeLessThanOrEqual(1);
+    const fresh = await login(u, 'nouveau-mot-de-passe-42');
+    await api().get(`${A}/me`).set(fresh.auth).expect(200);
+  });
+
   it('change-password : 204, cookie effacé, sessions et access tokens révoqués', async () => {
     const u = await loggedInUser();
-    await new Promise((r) => setTimeout(r, 1100));
+    // Aucune attente : un jeton émis dans la même seconde que le changement doit être refusé.
     const res = await api().post(`${A}/change-password`).set(u.auth).send({ currentPassword: PASSWORD, newPassword: 'nouveau-mot-de-passe-42' }).expect(204);
     expect(String(res.headers['set-cookie'])).toMatch(/nuits_rt=;/);
     await api().get(`${A}/me`).set(u.auth).expect(401);

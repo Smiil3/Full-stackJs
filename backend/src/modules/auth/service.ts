@@ -57,11 +57,6 @@ async function verifyPassword(hash: string, password: string): Promise<boolean> 
   }
 }
 
-/** Les access tokens émis avant ce moment seront refusés (seconde courante, cf. middleware). */
-function tokensCutoff(): Date {
-  return new Date();
-}
-
 async function issueEmailToken(tx: Tx, userId: string, purpose: 'VERIFY_EMAIL' | 'RESET_PASSWORD'): Promise<string> {
   const raw = randomToken(32);
   await repo.invalidateEmailTokens(tx, userId, purpose);
@@ -73,10 +68,10 @@ function link(path: string, token: string): string {
   return `${getEnv().frontUrl}${path}?token=${encodeURIComponent(token)}`;
 }
 
-async function loadUserView(userId: string): Promise<UserView> {
+async function loadUser(userId: string): Promise<{ view: UserView; tokenVersion: number }> {
   const user = await repo.findUserWithMemberships(userId);
   if (!user) throw errors.unauthenticated();
-  return {
+  const view: UserView = {
     id: user.id,
     email: user.email,
     displayName: user.displayName,
@@ -84,6 +79,7 @@ async function loadUserView(userId: string): Promise<UserView> {
     isPlatformAdmin: user.isPlatformAdmin,
     memberships: user.memberships.map((m) => ({ orgId: m.organization.id, orgName: m.organization.name, orgSlug: m.organization.slug, role: m.role })),
   };
+  return { view, tokenVersion: user.tokenVersion };
 }
 
 async function createRefreshToken(tx: Tx, userId: string, familyId: string): Promise<{ id: string; raw: string }> {
@@ -96,8 +92,9 @@ async function createRefreshToken(tx: Tx, userId: string, familyId: string): Pro
 }
 
 async function buildSession(userId: string, refreshToken: string): Promise<SessionResult> {
-  const [accessToken, user] = await Promise.all([signAccessToken(userId), loadUserView(userId)]);
-  return { session: { accessToken, expiresIn: ACCESS_TOKEN_TTL_SECONDS, user }, refreshToken };
+  const { view, tokenVersion } = await loadUser(userId);
+  const accessToken = await signAccessToken(userId, tokenVersion);
+  return { session: { accessToken, expiresIn: ACCESS_TOKEN_TTL_SECONDS, user: view }, refreshToken };
 }
 
 /**
@@ -232,7 +229,7 @@ export async function resetPassword(token: string, password: string): Promise<vo
     const user = await tx.user.update({
       where: { id: userId },
       // Le lien reçu par mail prouve aussi la possession de l'adresse.
-      data: { passwordHash, failedLoginCount: 0, lockedUntil: null, tokensValidAfter: tokensCutoff(), emailVerifiedAt: new Date() },
+      data: { passwordHash, failedLoginCount: 0, lockedUntil: null, tokenVersion: { increment: 1 }, emailVerifiedAt: new Date() },
     });
     await repo.revokeAllForUser(tx, userId);
     await repo.invalidateEmailTokens(tx, userId, 'RESET_PASSWORD');
@@ -247,12 +244,12 @@ export async function changePassword(userId: string, currentPassword: string, ne
   if (!user || !(await verifyPassword(user.passwordHash, currentPassword))) throw errors.invalidCredentials();
   const passwordHash = await hashPassword(newPassword);
   await transaction(async (tx) => {
-    await tx.user.update({ where: { id: userId }, data: { passwordHash, tokensValidAfter: tokensCutoff() } });
+    await tx.user.update({ where: { id: userId }, data: { passwordHash, tokenVersion: { increment: 1 } } });
     await repo.revokeAllForUser(tx, userId);
     await enqueueEmail(tx, user.email, 'passwordChanged', { displayName: user.displayName });
   });
 }
 
-export function me(userId: string): Promise<UserView> {
-  return loadUserView(userId);
+export async function me(userId: string): Promise<UserView> {
+  return (await loadUser(userId)).view;
 }

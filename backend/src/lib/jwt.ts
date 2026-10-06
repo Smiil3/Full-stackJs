@@ -10,10 +10,13 @@ function key(): Uint8Array {
   return new TextEncoder().encode(getEnv().jwtAccessSecret);
 }
 
-/** Access token : payload minimal (`sub`, `jti` + claims standard), aucun rôle ni donnée personnelle. */
-export async function signAccessToken(userId: string): Promise<string> {
+/**
+ * Access token : payload minimal (`sub`, `jti`, `ver` + claims standard), aucun rôle ni donnée personnelle.
+ * `ver` = User.tokenVersion au moment de l'émission ; comparé strictement à chaque requête.
+ */
+export async function signAccessToken(userId: string, tokenVersion: number): Promise<string> {
   const env = getEnv();
-  return new SignJWT({})
+  return new SignJWT({ ver: tokenVersion })
     .setProtectedHeader({ alg: ALGORITHM, typ: 'JWT' })
     .setSubject(userId)
     .setJti(randomUUID())
@@ -26,7 +29,7 @@ export async function signAccessToken(userId: string): Promise<string> {
 
 export interface AccessClaims {
   userId: string;
-  issuedAt: number;
+  tokenVersion: number;
 }
 
 /**
@@ -40,11 +43,14 @@ export async function verifyAccessToken(token: string): Promise<AccessClaims | n
       algorithms: [ALGORITHM],
       issuer: env.jwtIssuer,
       audience: env.jwtAudience,
-      requiredClaims: ['sub', 'jti', 'iat', 'exp'],
+      requiredClaims: ['sub', 'jti', 'iat', 'exp', 'ver'],
       clockTolerance: 5,
     });
-    if (typeof payload.sub !== 'string' || !UUID_RE.test(payload.sub) || typeof payload.iat !== 'number') return null;
-    return { userId: payload.sub, issuedAt: payload.iat };
+    const ver = payload['ver'];
+    if (typeof payload.sub !== 'string' || !UUID_RE.test(payload.sub) || typeof ver !== 'number' || !Number.isSafeInteger(ver) || ver < 0) {
+      return null;
+    }
+    return { userId: payload.sub, tokenVersion: ver };
   } catch {
     return null;
   }

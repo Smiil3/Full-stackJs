@@ -13,7 +13,7 @@ export function findUserWithMemberships(userId: string) {
   return getDb().user.findUnique({
     where: { id: userId },
     select: {
-      id: true, email: true, displayName: true, emailVerifiedAt: true, isPlatformAdmin: true,
+      id: true, email: true, displayName: true, emailVerifiedAt: true, isPlatformAdmin: true, tokenVersion: true,
       memberships: {
         select: { role: true, organization: { select: { id: true, name: true, slug: true } } },
         orderBy: { createdAt: 'asc' },
