@@ -1,7 +1,7 @@
 # Contrat d'API — Billetterie « Les Nuits de la Garonne »
 
 > **Source de vérité commune front / back.** Toute modification passe par le PO (session `fullstack-js`) : demander via une ligne `NEED: changement de contrat …`. Ne jamais diverger silencieusement.
-> Version : 1.11 — 2026-10-06 (voir §11 Historique)
+> Version : 1.12 — 2026-10-06 (voir §11 Historique)
 
 ## 1. Conventions
 
@@ -129,6 +129,8 @@ Après paiement, le PSP redirige vers `${FRONT_URL}/orders/:orderId?payment=succ
 type Ticket = { id; publicId: string; status: 'VALID'|'USED'|'CANCELLED'; usedAt: string|null; qrPayload: string;
   ticketTypeName; orderId; event: { id; title; venue; isOnline; startsAt; endsAt; timezone } }
 ```
+Un billet passe `CANCELLED` dès que sa commande devient `CANCELLED`, `REFUNDED` ou `EXPIRED` (y compris annulation d'événement) ; un billet `USED` le reste.
+
 `qrPayload` = `NG1.<eventId>.<publicId>.<signature>` — à encoder tel quel dans le QR. Aucune donnée personnelle.
 - `eventId` : UUID de l'événement (forme canonique minuscule, 36 caractères).
 - `publicId` : 16 octets aléatoires encodés **base64url sans padding** (22 caractères). C'est **exactement la même chaîne** partout (snapshot, réponses de scan, CSV).
@@ -239,7 +241,7 @@ Un remboursement de commande payée par virement est toujours `MANUAL_REQUIRED`.
 | `GET /orgs/:orgId/checkin/events` | SCANNER+ | — | 200 `{ items: { id; title; venue; isOnline; startsAt; endsAt; timezone; status }[] }` — événements PUBLISHED dont la fin date de moins de 24 h, sans aucun chiffre de vente |
 | Méthode & chemin | Rôle | Body | Réponse |
 |---|---|---|---|
-| `GET /orgs/:orgId/events/:eventId/checkin/snapshot` | SCANNER+ | — | 200 `{ eventId; generatedAt; publicKeyJwk: { kty:'OKP', crv:'Ed25519', x }; tickets: { publicId; ticketTypeName; holderInitials; status; usedAt }[] }` |
+| `GET /orgs/:orgId/events/:eventId/checkin/snapshot` | SCANNER+ (événement PUBLISHED terminé depuis < 24 h, sinon 404) | — | 200 `{ eventId; generatedAt; publicKeyJwk: { kty:'OKP', crv:'Ed25519', x }; tickets: { publicId; ticketTypeName; holderInitials; status; usedAt }[] }` |
 | `POST /orgs/:orgId/events/:eventId/checkin/scan` | SCANNER+ | `{ qrPayload (≤256), deviceId (uuid), scanId (uuid, généré par l'appareil pour chaque tentative) }` | 200 `{ result: 'OK'|'ALREADY_USED'|'INVALID'|'CANCELLED'|'WRONG_EVENT'; ticket: null | { publicId; ticketTypeName; holderInitials }; usedAt: string|null }` — rate-limité |
 | `POST /orgs/:orgId/events/:eventId/checkin/sync` | SCANNER+ | `{ deviceId, scans: [{ scanId (uuid), qrPayload, scannedAt }] (1–500, scanId uniques) }` | 200 `{ results: [{ scanId; result: 'ACCEPTED'|'ALREADY_USED'|'INVALID'|'CANCELLED'|'WRONG_EVENT'; usedAt: string|null }] }` — le premier scan (ordre `scannedAt`, puis arrivée serveur) gagne |
 
@@ -270,10 +272,11 @@ Un remboursement de commande payée par virement est toujours `MANUAL_REQUIRED`.
 
 ## 10. Divers
 - `GET /health` → 200 `{ status: 'ok' }` (sans info de version).
-- Taille maximale des corps JSON : 10 ko partout, **sauf** `POST …/checkin/sync` (256 ko, route authentifiée et limitée) ; webhook PSP : 64 ko en brut.
+- Taille maximale des corps JSON : 10 ko partout, **sauf** `POST …/checkin/sync` (160 ko, analysé seulement après authentification, contrôle du rôle et limitation) ; webhook PSP : 64 ko en brut.
 - En-têtes de sécurité via helmet ; CORS : origine `FRONT_URL` uniquement, `credentials: true`.
 
 ## 11. Historique
+- **1.12** (2026-10-06) : sync ≤ 160 ko après authentification ; check-in limité aux événements PUBLISHED terminés depuis < 24 h (CANCELLED ⇒ résultat `CANCELLED`) ; tout billet d'une commande annulée/remboursée/expirée est `CANCELLED`.
 - **1.11** (2026-10-06) : `data.refundId` sur `refund.succeeded` ; limites de taille de corps explicitées (sync 256 ko).
 - **1.10** (2026-10-06) : webhook — 200 pour tout événement signé (paiement jamais perdu, remboursement auto des anomalies) ; suivi des remboursements (§7.3 bis) ; `refundsToProcess` dans les stats.
 - **1.9** (2026-10-06) : portée et cycle de vie de l'Idempotency-Key précisés.
