@@ -17,7 +17,8 @@ async function login(page: Page, email: string, next = '/') {
 /** Endpoints du contrat pas encore livrés par le back (jalons B5–B7) : à vider en F5. */
 const NOT_YET_DELIVERED = ['/api/v1/me/waitlist', '/api/v1/me/tickets'];
 
-function collectErrors(page: Page): string[] {
+/** `allowed` : réponses d'erreur attendues par le scénario (ex. « 403 POST /api/v1/auth/login »). */
+function collectErrors(page: Page, allowed: string[] = []): string[] {
   const errors: string[] = [];
   page.on('console', (m) => {
     // Les statuts HTTP sont contrôlés précisément via l'événement `response` ci-dessous.
@@ -26,13 +27,14 @@ function collectErrors(page: Page): string[] {
   page.on('pageerror', (e) => errors.push(e.message));
   page.on('response', (r) => {
     const path = new URL(r.url()).pathname;
-    if (r.status() >= 400 && r.status() !== 401 && !(r.status() === 404 && NOT_YET_DELIVERED.includes(path))) errors.push(`${r.status()} ${r.request().method()} ${path}`);
+    const line = `${r.status()} ${r.request().method()} ${path}`;
+    if (r.status() >= 400 && r.status() !== 401 && !(r.status() === 404 && NOT_YET_DELIVERED.includes(path)) && !allowed.includes(line)) errors.push(line);
   });
   return errors;
 }
 
-test('acheteur : inscription, vérification email (Mailpit), réservation par carte, mes commandes', async ({ page }) => {
-  const errors = collectErrors(page);
+test('acheteur : inscription, vérification email (Mailpit), réservation par carte puis virement, mes commandes', async ({ page }) => {
+  const errors = collectErrors(page, ['403 POST /api/v1/auth/login']); // connexion avant vérification : refus attendu (v1.5)
   const email = `e2e-${Date.now()}@example.test`;
   const password = 'une phrase de passe e2e solide';
   await page.goto('/register');
@@ -58,12 +60,20 @@ test('acheteur : inscription, vérification email (Mailpit), réservation par ca
   await expect(page.getByRole('heading', { name: 'Événements à venir' })).toBeVisible();
   await page.getByRole('main').getByRole('link', { name: 'Jazz au Hangar' }).click();
   await expect(page.getByText(/heure de Paris/).first()).toBeVisible();
-  const select = page.getByRole('combobox').first();
-  await select.selectOption('1');
+  // Carte
+  await page.getByLabel('Nombre de places « Parterre »').selectOption('1');
   await page.getByRole('button', { name: /Réserver 1 place/ }).click();
   await expect(page.getByRole('heading', { name: 'Commande' })).toBeVisible();
   await expect(page.getByRole('button', { name: /Payer .* par carte/ })).toBeVisible();
   await expect(page.getByText(/Places réservées encore/).first()).toBeVisible();
+  // Virement
+  await page.goBack();
+  await page.getByLabel('Nombre de places « Parterre »').selectOption('1');
+  await page.getByRole('radio', { name: /Virement bancaire/ }).check();
+  await page.getByRole('button', { name: /Réserver 1 place/ }).click();
+  await expect(page.getByRole('heading', { name: 'Instructions de virement' })).toBeVisible();
+  await expect(page.getByText(/FR76 3000 6000 0112 3456 7890 189/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Copier la référence' })).toBeVisible();
   await page.getByRole('link', { name: 'Commandes' }).first().click();
   await expect(page.getByRole('heading', { name: 'Mes commandes' })).toBeVisible();
   await expect(page.getByText('Jazz au Hangar').first()).toBeVisible();
