@@ -4,7 +4,7 @@ import { getDb } from '../../src/lib/db.js';
 import { processEventCancellations } from '../../src/jobs/processEventCancellations.js';
 import { testClock } from '../../src/lib/clock.js';
 import { api, lastMail, loggedInUser, PASSWORD, type LoggedIn } from '../helpers.js';
-import { createEvent, orgWithStaff, type OrgFixture } from '../fixtures.js';
+import { createEvent, openCheckinWindow, orgWithStaff, type OrgFixture } from '../fixtures.js';
 import { openSession, paymentEvent, postWebhook, startPsp, type PspHarness } from '../psp.js';
 
 let org: OrgFixture;
@@ -82,6 +82,7 @@ describe('annulation self-service', () => {
     const tickets = (await api().get('/api/v1/me/tickets').set(buyer.auth)).body.items as { qrPayload: string }[];
     await cancel(orderId).expect(200);
     await getDb().event.update({ where: { id: eventId }, data: { offlineCheckinEnabled: true } });
+    await openCheckinWindow(eventId);
     const scan = await api().post(`/api/v1/orgs/${org.id}/events/${eventId}/checkin/scan`).set(org.scanner.auth)
       .send({ qrPayload: tickets[0]!.qrPayload, deviceId: randomUUID(), scanId: randomUUID() }).expect(200);
     expect(scan.body.result).toBe('CANCELLED');
@@ -105,6 +106,7 @@ describe('annulation self-service', () => {
   it('après un scan ⇒ 409 CANCELLATION_CLOSED', async () => {
     const { orderId, eventId } = await paidOrder();
     const tickets = (await api().get('/api/v1/me/tickets').set(buyer.auth)).body.items as { qrPayload: string }[];
+    await openCheckinWindow(eventId);
     await api().post(`/api/v1/orgs/${org.id}/events/${eventId}/checkin/scan`).set(org.scanner.auth)
       .send({ qrPayload: tickets[0]!.qrPayload, deviceId: randomUUID(), scanId: randomUUID() }).expect(200);
     expect((await api().get(`/api/v1/orders/${orderId}`).set(buyer.auth)).body.refundPreviewCents).toBeNull();

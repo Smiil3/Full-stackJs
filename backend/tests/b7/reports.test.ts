@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getDb } from '../../src/lib/db.js';
 import { csvCell, csvRow } from '../../src/lib/csv.js';
 import { api, loggedInUser, type LoggedIn } from '../helpers.js';
-import { createEvent, orgWithStaff, type OrgFixture } from '../fixtures.js';
+import { createEvent, openCheckinWindow, orgWithStaff, type OrgFixture } from '../fixtures.js';
 import { openSession, paymentEvent, postWebhook, startPsp, type PspHarness } from '../psp.js';
 
 let org: OrgFixture;
@@ -42,6 +42,7 @@ describe('statistiques temps réel', () => {
     await api().post(`/api/v1/orders/${bOrder}/cancel`).set(b.auth).expect(200);
     // un billet de a est scanné.
     const ticket = ((await api().get('/api/v1/me/tickets').set(a.auth)).body.items as { qrPayload: string }[])[0]!;
+    await openCheckinWindow(ev.eventId);
     await api().post(`/api/v1/orgs/${org.id}/events/${ev.eventId}/checkin/scan`).set(org.scanner.auth).send({ qrPayload: ticket.qrPayload, deviceId: randomUUID(), scanId: randomUUID() }).expect(200);
     const res = await api().get(`/api/v1/orgs/${org.id}/events/${ev.eventId}/stats`).set(org.manager.auth).expect(200);
     expect(res.body.ticketTypes).toEqual([
@@ -82,6 +83,7 @@ describe('export CSV des participants', () => {
     const evil = await loggedInUser({ displayName: '=cmd|"/C calc"!A0', email: 'evil@test.fr' });
     await buy(evil, ev.eventId, ev.ticketTypeIds[0]!, 1, false);
     const ticket = ((await api().get('/api/v1/me/tickets').set(evil.auth)).body.items as { qrPayload: string; publicId: string }[])[0]!;
+    await openCheckinWindow(ev.eventId);
     await api().post(`/api/v1/orgs/${org.id}/events/${ev.eventId}/checkin/scan`).set(org.scanner.auth).send({ qrPayload: ticket.qrPayload, deviceId: randomUUID(), scanId: randomUUID() }).expect(200);
     const res = await api().get(`/api/v1/orgs/${org.id}/events/${ev.eventId}/attendees.csv`).set(org.manager.auth).buffer(true).parse((r, cb) => {
       let data = '';

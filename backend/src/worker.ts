@@ -5,13 +5,7 @@ import { loadTicketKeys, TicketKeyError } from './lib/ticketSigning.js';
 import { disconnectDb } from './lib/db.js';
 import { getLogger } from './lib/logger.js';
 import { createSmtpTransport } from './lib/mailer.js';
-import { processOutboxBatch } from './lib/outbox.js';
-import { purgeExpiredBuckets } from './lib/rateLimitStore.js';
-import { expireOrders } from './jobs/expireOrders.js';
-import { processRefunds } from './jobs/processRefunds.js';
-import { reconcileRecentSessions } from './jobs/reconcilePayments.js';
-import { processEventCancellations } from './jobs/processEventCancellations.js';
-import { expireWaitlistOffers, sweepWaitlist } from './modules/waitlist/service.js';
+import { workerJobs } from './jobs/schedule.js';
 
 /**
  * Worker : expirations, envoi des mails (outbox), purge des compteurs.
@@ -39,17 +33,7 @@ const transport = createSmtpTransport();
 const stop = new AbortController();
 
 async function tick(): Promise<void> {
-  const jobs: [string, () => Promise<unknown>][] = [
-    // Annulations d'abord : une commande d'un événement annulé est remboursée / annulée, jamais simplement expirée.
-    ['eventCancellations', () => processEventCancellations()],
-    ['reconcilePayments', () => reconcileRecentSessions()],
-    ['expireOrders', () => expireOrders()],
-    ['expireWaitlistOffers', () => expireWaitlistOffers()],
-    ['sweepWaitlist', () => sweepWaitlist()],
-    ['refunds', () => processRefunds()],
-    ['outbox', () => processOutboxBatch(transport)],
-    ['purgeRateLimits', () => purgeExpiredBuckets()],
-  ];
+  const jobs = workerJobs(transport);
   for (const [name, job] of jobs) {
     try {
       const result = await job();

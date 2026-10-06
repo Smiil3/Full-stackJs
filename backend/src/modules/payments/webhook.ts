@@ -6,6 +6,7 @@ import { getLogger } from '../../lib/logger.js';
 import { verifySignature } from '../../lib/pspSignature.js';
 import { consumeQuota } from '../../lib/rateLimitStore.js';
 import { loadOrderForUpdate, refundUnexpectedPayment, settleHeldOrder, settleLateHeldOrder, tryResettleExpiredOrder } from './settle.js';
+import { clock } from '../../lib/clock.js';
 
 interface PspEnvelope {
   id: string;
@@ -90,7 +91,7 @@ export async function handlePspWebhook(raw: Buffer, signature: string | undefine
   await transaction(async (tx) => {
     const inserted = await tx.$queryRaw<{ id: string }[]>`
       INSERT INTO "webhook_events" ("id", "providerEventId", "type", "receivedAt")
-      VALUES (gen_random_uuid(), ${event.id}, ${event.type.slice(0, 50)}, now())
+      VALUES (gen_random_uuid(), ${event.id}, ${event.type.slice(0, 50)}, ${clock.now()})
       ON CONFLICT ("providerEventId") DO NOTHING
       RETURNING "id"`;
     // Doublon : déjà traité (ou en cours dans une transaction concurrente qui a la priorité).
@@ -109,7 +110,7 @@ export async function handlePspWebhook(raw: Buffer, signature: string | undefine
       default:
         getLogger().warn({ eventId: event.id, type: event.type }, 'type d’événement PSP non géré : ignoré');
     }
-    await tx.webhookEvent.update({ where: { id: webhookRowId }, data: { processedAt: new Date() } });
+    await tx.webhookEvent.update({ where: { id: webhookRowId }, data: { processedAt: clock.now() } });
   });
   return { received: true };
 }

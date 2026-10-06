@@ -1,5 +1,6 @@
 import type { Prisma } from '../../generated/prisma/client.js';
 import { getDb, type Tx } from '../../lib/db.js';
+import { clock } from '../../lib/clock.js';
 
 export const orderInclude = {
   event: { select: { title: true, startsAt: true, timezone: true } },
@@ -71,7 +72,7 @@ export async function alreadyOwned(tx: Tx, userId: string, eventId: string): Pro
  */
 export async function reserve(tx: Tx, eventId: string, ticketTypeId: string, quantity: number, now: Date): Promise<boolean> {
   const rows = await tx.$queryRaw<{ id: string }[]>`
-    UPDATE "ticket_types" SET "held" = "held" + ${quantity}, "updatedAt" = now()
+    UPDATE "ticket_types" SET "held" = "held" + ${quantity}, "updatedAt" = ${clock.now()}
     WHERE "id" = ${ticketTypeId}::uuid AND "eventId" = ${eventId}::uuid
       AND "sold" + "held" + ${quantity} <= "capacity"
       -- Priorité à la liste d'attente : bloqué seulement si une personne en attente pourrait être servie
@@ -88,7 +89,7 @@ export async function reserve(tx: Tx, eventId: string, ticketTypeId: string, qua
 /** Libère des places bloquées (expiration, annulation d'une commande non payée). */
 export async function releaseHeld(tx: Tx, eventId: string, ticketTypeId: string, quantity: number): Promise<void> {
   const changed = await tx.$executeRaw`
-    UPDATE "ticket_types" SET "held" = "held" - ${quantity}, "updatedAt" = now()
+    UPDATE "ticket_types" SET "held" = "held" - ${quantity}, "updatedAt" = ${clock.now()}
     WHERE "id" = ${ticketTypeId}::uuid AND "eventId" = ${eventId}::uuid AND "held" >= ${quantity}`;
   if (changed !== 1) throw new Error('Incohérence de stock : places bloquées insuffisantes');
 }
@@ -96,7 +97,7 @@ export async function releaseHeld(tx: Tx, eventId: string, ticketTypeId: string,
 /** Bloquées → vendues (paiement confirmé). */
 export async function heldToSold(tx: Tx, eventId: string, ticketTypeId: string, quantity: number): Promise<void> {
   const changed = await tx.$executeRaw`
-    UPDATE "ticket_types" SET "held" = "held" - ${quantity}, "sold" = "sold" + ${quantity}, "updatedAt" = now()
+    UPDATE "ticket_types" SET "held" = "held" - ${quantity}, "sold" = "sold" + ${quantity}, "updatedAt" = ${clock.now()}
     WHERE "id" = ${ticketTypeId}::uuid AND "eventId" = ${eventId}::uuid AND "held" >= ${quantity}`;
   if (changed !== 1) throw new Error('Incohérence de stock : places bloquées insuffisantes');
 }

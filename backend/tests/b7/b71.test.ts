@@ -10,7 +10,7 @@ import { renderTemplate } from '../../src/lib/mail/templates.js';
 import { expireOrders } from '../../src/jobs/expireOrders.js';
 import { processEventCancellations } from '../../src/jobs/processEventCancellations.js';
 import { api, loggedInUser, PASSWORD, type LoggedIn } from '../helpers.js';
-import { createEvent, orgWithStaff, type OrgFixture } from '../fixtures.js';
+import { createEvent, openCheckinWindow, orgWithStaff, type OrgFixture } from '../fixtures.js';
 import { openSession, paymentEvent, postWebhook, startPsp, type PspHarness } from '../psp.js';
 
 let org: OrgFixture;
@@ -244,6 +244,7 @@ describe('concurrence (B7.1 tests manquants)', () => {
       const o = await order(buyer, eventId, ticketTypeIds[0]!).expect(201);
       await payCard(buyer, o.body.id as string, 1000);
       const ticket = ((await api().get('/api/v1/me/tickets').set(buyer.auth)).body.items as { qrPayload: string }[])[0]!;
+      await openCheckinWindow(eventId);
       const [cancel, scan] = await Promise.all([
         api().post(`/api/v1/orders/${o.body.id as string}/cancel`).set(buyer.auth),
         api().post(`/api/v1/orgs/${org.id}/events/${eventId}/checkin/scan`).set(org.scanner.auth).send({ qrPayload: ticket.qrPayload, deviceId: randomUUID(), scanId: randomUUID() }),

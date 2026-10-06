@@ -36,6 +36,12 @@ export function eventBody(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** Dates d'un événement qui commence dans 2 h : dans la fenêtre de contrôle (startsAt − 12 h → endsAt + 24 h). */
+export function soonBody() {
+  const start = Date.now() + 2 * HOUR;
+  return { startsAt: new Date(start).toISOString(), endsAt: new Date(start + 5 * HOUR).toISOString(), salesEndAt: new Date(start).toISOString() };
+}
+
 /** Crée un événement (DRAFT) via l'API, avec des types de places optionnels, puis le publie si demandé. */
 export async function createEvent(
   org: OrgFixture,
@@ -52,6 +58,11 @@ export async function createEvent(
   }
   if (opts.publish) await api().post(`/api/v1/orgs/${org.id}/events/${eventId}/publish`).set(org.manager.auth).expect(200);
   return { eventId, ticketTypeIds };
+}
+
+/** Rapproche le début de l'événement (dans 1 h) pour ouvrir la fenêtre de contrôle ; les commandes gardent leurs droits figés. */
+export async function openCheckinWindow(eventId: string) {
+  await getDb().event.update({ where: { id: eventId }, data: { startsAt: new Date(Date.now() + 3600_000) } });
 }
 
 export async function setStock(ticketTypeId: string, sold: number, held = 0) {

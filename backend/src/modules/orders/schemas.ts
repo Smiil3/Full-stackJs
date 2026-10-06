@@ -33,6 +33,7 @@ export const orderFields = {
   subtotalCents: int, serviceFeeCents: int, totalCents: int, currency: Joi.string().valid('EUR'),
   expiresAt: nullable(isoDateOutput), paidAt: nullable(isoDateOutput), cancellableUntil: nullable(isoDateOutput),
   refundPercent: int, refundAmountCents: nullable(int), refundPreviewCents: nullable(int),
+  paymentInProgress: Joi.boolean().required(),
   createdAt: isoDateOutput, transferInstructions: nullable(transferInstructions),
 };
 export const orderResponse = Joi.object(orderFields);

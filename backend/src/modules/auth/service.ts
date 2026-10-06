@@ -12,6 +12,7 @@ import { getDummyHash, hashPassword, verifyPasswordHash } from '../../lib/passwo
 import { normalizePassword } from '../../lib/passwordPolicy.js';
 import { normalizeEmail } from '../../lib/email.js';
 import * as repo from './repo.js';
+import { clock } from '../../lib/clock.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const REFRESH_TTL_MS = 30 * DAY_MS;
@@ -101,7 +102,7 @@ async function issueEmailToken(
   tx: Tx, user: { id: string; email: string }, purpose: 'VERIFY_EMAIL' | 'RESET_PASSWORD',
 ): Promise<string | null> {
   await repo.lockUser(tx, user.id);
-  const now = Date.now();
+  const now = clock.now().getTime();
   const recent = await repo.countEmailTokensSince(tx, user.id, new Date(now - MAIL_MIN_INTERVAL_MINUTES * 60_000));
   const daily = await repo.countEmailTokensSince(tx, user.id, new Date(now - 24 * 60 * 60_000));
   if (recent > 0 || daily >= MAIL_MAX_PER_DAY) return null;
@@ -146,7 +147,7 @@ async function createRefreshToken(tx: Tx, userId: string, family: FamilyInfo): P
       familyCreatedAt: family.familyCreatedAt,
       tokenVersion: family.tokenVersion,
       tokenHash: sha256Hex(raw),
-      expiresAt: new Date(Math.min(Date.now() + REFRESH_TTL_MS, familyEnd)),
+      expiresAt: new Date(Math.min(clock.now().getTime() + REFRESH_TTL_MS, familyEnd)),
     },
     select: { id: true },
   });
@@ -218,7 +219,7 @@ export async function verifyEmail(token: string): Promise<void> {
     const userId = await repo.consumeEmailToken(tx, sha256Hex(token), 'VERIFY_EMAIL');
     if (!userId) return false;
     // Ceinture et bretelles : toute session ouverte avant la vérification est révoquée.
-    await tx.user.update({ where: { id: userId }, data: { emailVerifiedAt: new Date(), tokenVersion: { increment: 1 } } });
+    await tx.user.update({ where: { id: userId }, data: { emailVerifiedAt: clock.now(), tokenVersion: { increment: 1 } } });
     await repo.revokeAllForUser(tx, userId);
     return true;
   });
@@ -260,7 +261,7 @@ export async function login(rawEmail: string, password: string): Promise<Session
     // Version lue sous verrou : un reset de mot de passe concurrent ne peut pas laisser une session valide.
     const locked = await repo.lockUser(tx, user.id);
     if (!locked) throw errors.invalidCredentials();
-    return createRefreshToken(tx, user.id, { familyId: randomUUID(), familyCreatedAt: new Date(), tokenVersion: locked.tokenVersion });
+    return createRefreshToken(tx, user.id, { familyId: randomUUID(), familyCreatedAt: clock.now(), tokenVersion: locked.tokenVersion });
   });
   return buildSession(user.id, refresh.raw);
 }
@@ -285,7 +286,7 @@ export async function refresh(rawToken: string | undefined): Promise<SessionResu
     if (!user || !row) return { ok: false };
     // Révoqué : déconnexion, changement de mot de passe, réutilisation, ou successeur supplanté pendant la grâce.
     if (row.revokedAt !== null) return { ok: false };
-    const now = Date.now();
+    const now = clock.now().getTime();
     if (
       row.expiresAt.getTime() <= now
       || row.familyCreatedAt.getTime() + REFRESH_FAMILY_MAX_MS <= now
@@ -303,14 +304,14 @@ export async function refresh(rawToken: string | undefined): Promise<SessionResu
         await repo.revokeFamily(tx, row.familyId);
         return { ok: false };
       }
-      await tx.refreshToken.update({ where: { id: successor.id }, data: { revokedAt: new Date() } });
+      await tx.refreshToken.update({ where: { id: successor.id }, data: { revokedAt: clock.now() } });
       const next = await createRefreshToken(tx, row.userId, family);
       // rotatedAt inchangé : la grâce reste bornée à 10 s après la première rotation.
       await tx.refreshToken.update({ where: { id: row.id }, data: { replacedById: next.id } });
       return { ok: true, userId: row.userId, raw: next.raw };
     }
     const next = await createRefreshToken(tx, row.userId, family);
-    await tx.refreshToken.update({ where: { id: row.id }, data: { replacedById: next.id, rotatedAt: new Date() } });
+    await tx.refreshToken.update({ where: { id: row.id }, data: { replacedById: next.id, rotatedAt: clock.now() } });
     return { ok: true, userId: row.userId, raw: next.raw };
   });
   if (!outcome.ok) throw errors.invalidRefreshToken();
@@ -351,7 +352,7 @@ export async function resetPassword(token: string, password: string): Promise<vo
     const user = await tx.user.update({
       where: { id: userId },
       // Le lien reçu par mail prouve aussi la possession de l'adresse.
-      data: { passwordHash, failedLoginCount: 0, lockedUntil: null, lastFailedLoginAt: null, tokenVersion: { increment: 1 }, emailVerifiedAt: new Date() },
+      data: { passwordHash, failedLoginCount: 0, lockedUntil: null, lastFailedLoginAt: null, tokenVersion: { increment: 1 }, emailVerifiedAt: clock.now() },
     });
     await repo.revokeAllForUser(tx, userId);
     await repo.invalidateEmailTokens(tx, userId, 'RESET_PASSWORD');

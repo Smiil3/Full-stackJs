@@ -9,6 +9,7 @@ export function createSmtpTransport(): MailTransport {
     host: smtp.host,
     port: smtp.port,
     secure: smtp.secure,
+    requireTLS: smtp.requireTls,
     ...(smtp.user && smtp.password ? { auth: { user: smtp.user, pass: smtp.password } } : {}),
     connectionTimeout: 10_000,
     greetingTimeout: 10_000,

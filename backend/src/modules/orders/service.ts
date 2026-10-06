@@ -69,6 +69,9 @@ export function toOrderView(order: repo.OrderWithDetails, scanned: number, viewe
     refundPercent: order.refundPercent,
     refundAmountCents: order.refundAmountCents,
     refundPreviewCents: refundPreview({ ...order, eventStartsAt: order.event.startsAt, scannedTickets: scanned }, now),
+    // Session PSP ouverte (contrat 1.16) : un refus l'efface (pspSessionId), un paiement fait passer PAID, et la session
+    // n'expire jamais avant la réservation ; checkout renvoie alors la MÊME session.
+    paymentInProgress: order.status === 'PENDING_PAYMENT' && order.pspSessionId !== null && order.expiresAt !== null && order.expiresAt > now,
     createdAt: iso(order.createdAt),
     transferInstructions,
   };

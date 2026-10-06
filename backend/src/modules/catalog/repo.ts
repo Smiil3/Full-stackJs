@@ -1,5 +1,6 @@
 import type { Prisma } from '../../generated/prisma/client.js';
 import { getDb } from '../../lib/db.js';
+import { clock } from '../../lib/clock.js';
 
 export type PublicSettings = Prisma.OrganizationSettingsGetPayload<{ select: typeof settingsSelect }>;
 
@@ -23,7 +24,7 @@ export function listPublished(filter: { orgSlug?: string; from?: Date; to?: Date
   if (filter.to) startsAt.lte = filter.to;
   const where: Prisma.EventWhereInput = {
     status: 'PUBLISHED',
-    endsAt: { gt: new Date() },
+    endsAt: { gt: clock.now() },
     startsAt,
     ...(filter.orgSlug ? { organization: { slug: filter.orgSlug } } : {}),
   };

@@ -22,7 +22,7 @@ export interface Env {
   dataKeyring: Keyring;
   ticketSigningPrivateKeyFile: string;
   ticketSigningPublicKeyFile: string;
-  smtp: { host: string; port: number; secure: boolean; user: string | null; password: string | null };
+  smtp: { host: string; port: number; secure: boolean; requireTls: boolean; user: string | null; password: string | null };
   mailFrom: string;
   psp: { baseUrl: string; port: number; apiKey: string; webhookSecret: string; webhookUrl: string };
   workerIntervalMs: number;
@@ -49,6 +49,25 @@ const key32 = Joi.string().base64()
 /** Variables portant un secret : jamais de valeur d'exemple, toutes distinctes entre elles. */
 const SECRET_KEYS = ['JWT_ACCESS_SECRET', 'PSP_API_KEY', 'PSP_WEBHOOK_SECRET', 'DATA_ENCRYPTION_KEY'] as const;
 const PLACEHOLDER_KEYS = [...SECRET_KEYS, 'DATABASE_URL', 'SMTP_PASSWORD'] as const;
+
+/** Secrets décodés en octets (courants et anciens), étiquetés par variable. Les formats sont validés par ailleurs. */
+function secretBytes(value: Record<string, unknown>): [string, Buffer][] {
+  const out: [string, Buffer][] = [];
+  const str = (key: string) => (typeof value[key] === 'string' ? value[key] : '');
+  for (const key of ['JWT_ACCESS_SECRET', 'PSP_API_KEY', 'PSP_WEBHOOK_SECRET'] as const) {
+    if (str(key) !== '') out.push([key, Buffer.from(str(key), 'base64url')]);
+  }
+  if (str('DATA_ENCRYPTION_KEY') !== '') out.push(['DATA_ENCRYPTION_KEY', Buffer.from(str('DATA_ENCRYPTION_KEY'), 'base64')]);
+  const previous = (key: string, encoding: BufferEncoding) => {
+    for (const entry of str(key).split(',')) {
+      const [kid, encoded] = entry.split(':');
+      if (kid && encoded) out.push([`${key} (${kid})`, Buffer.from(encoded, encoding)]);
+    }
+  };
+  previous('JWT_PREVIOUS_SECRETS', 'base64url');
+  previous('DATA_ENCRYPTION_PREVIOUS_KEYS', 'base64');
+  return out;
+}
 
 const schema = Joi.object({
   NODE_ENV: Joi.string().valid('development', 'test', 'production').required(),
@@ -99,6 +118,8 @@ const schema = Joi.object({
   SMTP_HOST: Joi.string().hostname().required(),
   SMTP_PORT: Joi.number().integer().min(1).max(65535).required(),
   SMTP_SECURE: Joi.boolean().truthy('true').falsy('false').default(false),
+  // STARTTLS exigé (port 587) : sans TLS, le serveur est refusé au lieu d'envoyer en clair.
+  SMTP_REQUIRE_TLS: Joi.boolean().truthy('true').falsy('false').default(false),
   SMTP_USER: Joi.string().allow('').default(''),
   SMTP_PASSWORD: Joi.string().allow('').default(''),
   MAIL_FROM: Joi.string().min(3).max(200).required(),
@@ -124,19 +145,28 @@ const schema = Joi.object({
       const v = value[key];
       if (typeof v === 'string' && /CHANGE_ME/i.test(v)) return helpers.error('env.placeholder', { key });
     }
+    // Comparaison sur les OCTETS décodés (deux encodages d'une même clé sont la même clé), anciens secrets compris.
     const seen = new Map<string, string>();
-    for (const key of SECRET_KEYS) {
-      const v = value[key];
-      if (typeof v !== 'string') continue;
-      const other = seen.get(v);
+    for (const [key, bytes] of secretBytes(value)) {
+      const fingerprint = bytes.toString('hex');
+      const other = seen.get(fingerprint);
       if (other) return helpers.error('env.duplicate', { key, other });
-      seen.set(v, key);
+      seen.set(fingerprint, key);
+    }
+    if (value['NODE_ENV'] === 'production') {
+      for (const key of ['FRONT_URL', 'PSP_BASE_URL'] as const) {
+        const v = value[key];
+        if (typeof v === 'string' && !v.startsWith('https://')) return helpers.error('env.https', { key });
+      }
+      if (value['SMTP_SECURE'] !== true && value['SMTP_REQUIRE_TLS'] !== true) return helpers.error('env.smtpTls');
     }
     return value;
   })
   .messages({
     'env.placeholder': '{{#key}} contient une valeur d’exemple (CHANGE_ME) : générer un vrai secret',
     'env.duplicate': '{{#key}} et {{#other}} doivent être des secrets distincts',
+    'env.https': '{{#key}} doit être en https en production',
+    'env.smtpTls': 'En production, SMTP_SECURE=true ou SMTP_REQUIRE_TLS=true est obligatoire (mails jamais en clair)',
   });
 
 interface RawEnv {
@@ -161,6 +191,7 @@ interface RawEnv {
   SMTP_HOST: string;
   SMTP_PORT: number;
   SMTP_SECURE: boolean;
+  SMTP_REQUIRE_TLS: boolean;
   SMTP_USER: string;
   SMTP_PASSWORD: string;
   MAIL_FROM: string;
@@ -207,6 +238,7 @@ export function parseEnv(source: NodeJS.ProcessEnv): Env {
       host: raw.SMTP_HOST,
       port: raw.SMTP_PORT,
       secure: raw.SMTP_SECURE,
+      requireTls: raw.SMTP_REQUIRE_TLS,
       user: raw.SMTP_USER === '' ? null : raw.SMTP_USER,
       password: raw.SMTP_PASSWORD === '' ? null : raw.SMTP_PASSWORD,
     },

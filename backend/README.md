@@ -41,7 +41,7 @@ Trois processus en développement (un terminal chacun) :
 | Commande | Rôle | Port |
 |---|---|---|
 | `npm run dev` | API | 4000 (`/health`, `/api/v1/…`) |
-| `npm run dev:worker` | Worker : expirations de réservations et d'offres de liste d'attente, remboursements, envoi des mails (outbox), purge des compteurs | — |
+| `npm run dev:worker` | Worker : annulations d'événement, rapprochement des paiements auprès du PSP, expirations de réservations et d'offres de liste d'attente, remboursements, envoi des mails (outbox), purge des compteurs | — |
 | `npm run dev:psp` | Prestataire de paiement **simulé** (refuse de démarrer en production) | 4001 |
 
 Production :
@@ -97,12 +97,12 @@ src/
     tickets, checkin  billets QR signés, scan, snapshot (mode secours), synchronisation hors-ligne
     waitlist      liste d'attente (FIFO, offres à durée limitée)
     reports       statistiques temps réel, export CSV
-  jobs/          expiration des réservations, exécution des remboursements
+  jobs/          ordre du worker (schedule), rapprochement des paiements, expiration des réservations, remboursements
   lib/           crypto (AES-GCM + AAD, jetons), jwt, password (argon2id + sémaphore), money (entiers, BigInt),
                  ticketSigning (Ed25519), outbox mail, rate limit PostgreSQL, horloge injectable, CSV sûr…
   mock-psp/      prestataire de paiement simulé (app Express séparée)
 prisma/          schéma, migrations (dont contraintes CHECK, index partiels et déclencheurs SQL), seed
-tests/           322 tests d'intégration et unitaires (Vitest + Supertest, base réelle)
+tests/           375 tests d'intégration et unitaires (Vitest + Supertest, base réelle)
 ```
 
 ### Garanties principales et où elles vivent
@@ -110,7 +110,7 @@ tests/           322 tests d'intégration et unitaires (Vitest + Supertest, base
 | Garantie | Mécanisme |
 |---|---|
 | Zéro survente | `UPDATE … SET held = held + q WHERE sold + held + q <= capacity` (types triés par id) + `CHECK (sold + held <= capacity)` ; test de 300 requêtes simultanées sur 10 places |
-| Réservations impayées libérées | Échéance figée sur la commande (carte / virement), worker `FOR UPDATE SKIP LOCKED`, une transaction par commande |
+| Réservations impayées libérées | Échéance figée sur la commande (carte / virement) et sur la session PSP, rapprochement auprès du PSP avant expiration, worker `FOR UPDATE SKIP LOCKED`, une transaction par commande |
 | Webhook en double | `WebhookEvent.providerEventId` UNIQUE inséré dans la même transaction que l'effet ; billets `UNIQUE (orderItemId, seq)` |
 | Aucun paiement perdu | Toute somme encaissée sans billets est enregistrée et remboursée automatiquement (log + audit) |
 | Billet présenté deux fois | QR signé Ed25519 + passage atomique `VALID → USED` ; `scanId` idempotent |

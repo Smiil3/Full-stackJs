@@ -107,7 +107,7 @@ export async function tryResettleExpiredOrder(tx: Tx, order: SettlementOrder): P
   }
   for (const item of order.items) {
     const changed = await tx.$executeRaw`
-      UPDATE "ticket_types" SET "sold" = "sold" + ${item.quantity}, "updatedAt" = now()
+      UPDATE "ticket_types" SET "sold" = "sold" + ${item.quantity}, "updatedAt" = ${clock.now()}
       WHERE "id" = ${item.ticketTypeId}::uuid AND "eventId" = ${order.eventId}::uuid AND "sold" + "held" + ${item.quantity} <= "capacity"`;
     if (changed !== 1) return false;
   }

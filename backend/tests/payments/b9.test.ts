@@ -302,3 +302,34 @@ describe('checkout et lecture des commandes (B9 B1 / B3)', () => {
     await api().post(`/api/v1/orders/${o.orderId}/cancel`).set(buyer.auth).expect(200);
   });
 });
+
+describe('paymentInProgress (contrat 1.16)', () => {
+  it('vrai seulement avec une session ouverte, non refusée, non échue ; visible acheteur et back-office', async () => {
+    const o = await newOrder(1);
+    const view = () => api().get(`/api/v1/orders/${o.orderId}`).set(buyer.auth).expect(200);
+    expect((await view()).body.paymentInProgress).toBe(false);
+    const first = await api().post(`/api/v1/orders/${o.orderId}/checkout`).set(buyer.auth).expect(200);
+    expect((await view()).body.paymentInProgress).toBe(true);
+    // Reprendre le paiement : MÊME session.
+    const again = await api().post(`/api/v1/orders/${o.orderId}/checkout`).set(buyer.auth).expect(200);
+    expect(again.body.redirectUrl).toBe(first.body.redirectUrl);
+    const admin = await api().get(`/api/v1/orgs/${org.id}/events/${o.eventId}/orders`).set(org.manager.auth).expect(200);
+    expect(admin.body.items[0].paymentInProgress).toBe(true);
+    const list = await api().get('/api/v1/orders').set(buyer.auth).expect(200);
+    expect(list.body.items[0].paymentInProgress).toBe(true);
+    // Échue.
+    const { expiresAt } = await orderOf(o.orderId);
+    await getDb().order.update({ where: { id: o.orderId }, data: { expiresAt: past() } });
+    expect((await view()).body.paymentInProgress).toBe(false);
+    await getDb().order.update({ where: { id: o.orderId }, data: { expiresAt } });
+    // Refusée : session oubliée.
+    const sessionId = (await orderOf(o.orderId)).pspSessionId!;
+    await postWebhook(paymentEvent(o.orderId, o.total, { type: 'payment.failed', sessionId })).expect(200);
+    expect((await view()).body.paymentInProgress).toBe(false);
+    // Payée.
+    await postWebhook(paymentEvent(o.orderId, o.total, { sessionId })).expect(200);
+    const paid = (await view()).body;
+    expect(paid.status).toBe('PAID');
+    expect(paid.paymentInProgress).toBe(false);
+  });
+});

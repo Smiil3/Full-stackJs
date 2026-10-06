@@ -3,6 +3,7 @@ import type { Request } from 'express';
 import { ipKeyGenerator, rateLimit, type Options } from 'express-rate-limit';
 import { verifyAccessToken } from '../lib/jwt.js';
 import { PgRateLimitStore } from '../lib/rateLimitStore.js';
+import { clock } from '../lib/clock.js';
 
 export interface RateLimitConfig {
   /** Multiplie tous les plafonds (1 en production ; élevé en test pour ne pas gêner les autres scénarios). */
@@ -22,7 +23,7 @@ export function limiter(config: RateLimitConfig, name: string, windowMs: number,
     legacyHeaders: false,
     handler: (req, res) => {
       const reset = (req as { rateLimit?: { resetTime?: Date } }).rateLimit?.resetTime;
-      const retryAfter = reset ? Math.max(1, Math.ceil((reset.getTime() - Date.now()) / 1000)) : Math.ceil(windowMs / 1000);
+      const retryAfter = reset ? Math.max(1, Math.ceil((reset.getTime() - clock.now().getTime()) / 1000)) : Math.ceil(windowMs / 1000);
       res.setHeader('Retry-After', String(retryAfter));
       res.status(429).json({ error: { code: 'RATE_LIMITED', message: 'Trop de requêtes, veuillez patienter.' } });
     },

@@ -74,7 +74,7 @@ export async function distributeWaitlist(tx: Tx, ticketTypeId: string): Promise<
     }
     const offerExpiresAt = new Date(Math.min(addMinutes(now, rules.waitlistOfferMinutes).getTime(), event.startsAt.getTime(), event.salesEndAt.getTime()));
     const held = await tx.$executeRaw`
-      UPDATE "ticket_types" SET "held" = "held" + ${entry.quantity}, "updatedAt" = now()
+      UPDATE "ticket_types" SET "held" = "held" + ${entry.quantity}, "updatedAt" = ${clock.now()}
       WHERE "id" = ${ticketTypeId}::uuid AND "eventId" = ${event.id}::uuid AND "sold" + "held" + ${entry.quantity} <= "capacity"`;
     if (held !== 1) break;
     const { count } = await tx.waitlistEntry.updateMany({
@@ -135,7 +135,7 @@ export async function distributeMany(tx: Tx, ticketTypeIds: Iterable<string>): P
 /** Libère les places d'une offre (refus, expiration, annulation d'événement). */
 export async function releaseOffer(tx: Tx, entry: { ticketTypeId: string; eventId: string; quantity: number }): Promise<void> {
   const changed = await tx.$executeRaw`
-    UPDATE "ticket_types" SET "held" = "held" - ${entry.quantity}, "updatedAt" = now()
+    UPDATE "ticket_types" SET "held" = "held" - ${entry.quantity}, "updatedAt" = ${clock.now()}
     WHERE "id" = ${entry.ticketTypeId}::uuid AND "eventId" = ${entry.eventId}::uuid AND "held" >= ${entry.quantity}`;
   if (changed !== 1) throw new Error('Incohérence de stock : places d’offre introuvables');
 }

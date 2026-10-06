@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { getDb } from '../../src/lib/db.js';
 import { processOutboxBatch, type MailMessage } from '../../src/lib/outbox.js';
 import { api, loggedInUser, type LoggedIn } from '../helpers.js';
-import { createEvent, orgWithStaff, type OrgFixture } from '../fixtures.js';
+import { createEvent, orgWithStaff, soonBody, type OrgFixture } from '../fixtures.js';
 
 let org: OrgFixture;
 let buyer: LoggedIn;
@@ -15,7 +15,7 @@ beforeEach(async () => {
 
 /** Événement publié avec un type gratuit (billets émis immédiatement) et un acheteur qui a 2 billets. */
 async function eventWithTickets(o: OrgFixture = org, who: LoggedIn = buyer, quantity = 2) {
-  const { eventId, ticketTypeIds } = await createEvent(o, { ticketTypes: [{ name: 'Entrée', capacity: 50, priceCents: 0 }], publish: true });
+  const { eventId, ticketTypeIds } = await createEvent(o, { body: soonBody(), ticketTypes: [{ name: 'Entrée', capacity: 50, priceCents: 0 }], publish: true });
   // Mode secours hors-ligne activé (snapshot) pour ces scénarios.
   await getDb().event.update({ where: { id: eventId }, data: { offlineCheckinEnabled: true } });
   await api().post('/api/v1/orders').set(who.auth).set('Idempotency-Key', randomUUID())

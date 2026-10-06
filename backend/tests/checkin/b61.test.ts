@@ -11,7 +11,7 @@ import { createApp } from '../../src/app.js';
 import { resetEnvCache } from '../../src/config/env.js';
 import { loadTicketKeys, resetTicketKeys, TicketKeyError } from '../../src/lib/ticketSigning.js';
 import { api, loggedInUser, type LoggedIn } from '../helpers.js';
-import { createEvent, orgWithStaff, type OrgFixture } from '../fixtures.js';
+import { createEvent, orgWithStaff, soonBody, type OrgFixture } from '../fixtures.js';
 
 let org: OrgFixture;
 let buyer: LoggedIn;
@@ -25,7 +25,7 @@ afterEach(() => {
 });
 
 async function eventWithTickets(quantity = 2) {
-  const { eventId, ticketTypeIds } = await createEvent(org, { ticketTypes: [{ name: 'Entrée', capacity: 50, priceCents: 0 }], publish: true });
+  const { eventId, ticketTypeIds } = await createEvent(org, { body: soonBody(), ticketTypes: [{ name: 'Entrée', capacity: 50, priceCents: 0 }], publish: true });
   await getDb().event.update({ where: { id: eventId }, data: { offlineCheckinEnabled: true } });
   const res = await api().post('/api/v1/orders').set(buyer.auth).set('Idempotency-Key', randomUUID())
     .send({ eventId, paymentMethod: 'CARD', items: [{ ticketTypeId: ticketTypeIds[0]!, quantity }] }).expect(201);
@@ -72,7 +72,7 @@ describe('fenêtre de contrôle (B6.1 H2)', () => {
     await api().get(url(eventId, 'snapshot')).set(org.scanner.auth).expect(404);
     await scan(eventId, tickets[0]!.qrPayload).expect(404);
     testClock.reset();
-    const draft = await createEvent(org, { ticketTypes: [{ name: 'A', capacity: 5, priceCents: 0 }] });
+    const draft = await createEvent(org, { body: soonBody(), ticketTypes: [{ name: 'A', capacity: 5, priceCents: 0 }] });
     await api().get(url(draft.eventId, 'snapshot')).set(org.scanner.auth).expect(404);
     await scan(draft.eventId, tickets[0]!.qrPayload).expect(404);
   });
@@ -204,7 +204,7 @@ describe('clés de signature (B6.1 M4 / B3)', () => {
 
   it('production : clé privée lisible par le groupe ou les autres ⇒ refus de démarrer', () => {
     const loose = writePair(0o644);
-    const prod = { NODE_ENV: 'production', REFRESH_COOKIE_SECURE: 'true', AUTH_RESPONSE_FLOOR_MS: '400' };
+    const prod = { NODE_ENV: 'production', REFRESH_COOKIE_SECURE: 'true', AUTH_RESPONSE_FLOOR_MS: '400', SMTP_REQUIRE_TLS: 'true', FRONT_URL: 'https://billetterie.example', PSP_BASE_URL: 'https://psp.example' };
     expect(() => withKeys({ priv: loose.priv, pub: loose.pub }, prod)).toThrow(/lisible/);
     const tight = writePair(0o400);
     expect(() => withKeys({ priv: tight.priv, pub: tight.pub }, prod)).not.toThrow();
@@ -213,7 +213,7 @@ describe('clés de signature (B6.1 M4 / B3)', () => {
 
 describe('mode secours hors-ligne (contrat 1.13)', () => {
   it('désactivé par défaut : snapshot ⇒ 409 OFFLINE_CHECKIN_DISABLED ; scan et sync restent possibles', async () => {
-    const { eventId, ticketTypeIds } = await createEvent(org, { ticketTypes: [{ name: 'A', capacity: 5, priceCents: 0 }], publish: true });
+    const { eventId, ticketTypeIds } = await createEvent(org, { body: soonBody(), ticketTypes: [{ name: 'A', capacity: 5, priceCents: 0 }], publish: true });
     const res = await api().get(url(eventId, 'snapshot')).set(org.scanner.auth);
     expect(res.status).toBe(409);
     expect(res.body.error.code).toBe('OFFLINE_CHECKIN_DISABLED');
@@ -226,7 +226,7 @@ describe('mode secours hors-ligne (contrat 1.13)', () => {
   });
 
   it('seul un OWNER active le mode secours ; bascule tracée ; visible dans EventAdmin et la liste de contrôle', async () => {
-    const { eventId } = await createEvent(org, { ticketTypes: [{ name: 'A', capacity: 5, priceCents: 0 }], publish: true });
+    const { eventId } = await createEvent(org, { body: soonBody(), ticketTypes: [{ name: 'A', capacity: 5, priceCents: 0 }], publish: true });
     const evUrl = `/api/v1/orgs/${org.id}/events/${eventId}`;
     await api().patch(evUrl).set(org.manager.auth).send({ offlineCheckinEnabled: true }).expect(403);
     expect((await getDb().event.findUniqueOrThrow({ where: { id: eventId } })).offlineCheckinEnabled).toBe(false);

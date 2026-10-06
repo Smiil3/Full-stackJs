@@ -56,6 +56,8 @@ export async function updateSettings(orgId: string, actorId: string, patch: Sett
   // Changement bancaire : ré-authentification (hors transaction : calcul argon2), comptée dans le verrouillage.
   if (patch.bank) await reauthenticate(actorId, patch.currentPassword ?? '');
   const updated = await transaction(async (tx) => {
+    // Rôle revérifié APRÈS la ré-authentification (argon2, lente) : un OWNER rétrogradé entre-temps est refusé.
+    if ((await repo.lockActorRole(tx, orgId, actorId)) !== 'OWNER') throw errors.forbidden();
     await repo.getSettings(tx, orgId);
     await repo.lockSettings(tx, orgId);
     const before = await repo.getSettings(tx, orgId);

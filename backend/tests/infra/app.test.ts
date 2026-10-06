@@ -99,7 +99,7 @@ describe('application', () => {
   it('HSTS activé en production', async () => {
     const saved = { ...process.env };
     try {
-      Object.assign(process.env, { NODE_ENV: 'production', REFRESH_COOKIE_SECURE: 'true', AUTH_RESPONSE_FLOOR_MS: '400' });
+      Object.assign(process.env, { NODE_ENV: 'production', REFRESH_COOKIE_SECURE: 'true', AUTH_RESPONSE_FLOOR_MS: '400', SMTP_REQUIRE_TLS: 'true', FRONT_URL: 'https://billetterie.example', PSP_BASE_URL: 'https://psp.example' });
       resetEnvCache();
       const res = await supertest(createApp()).get('/health');
       expect(res.headers['strict-transport-security']).toMatch(/max-age=31536000/);
@@ -190,7 +190,7 @@ describe('validation des réponses (contrat de sortie)', () => {
   it('en production : les champs non déclarés (passwordHash) sont retirés', () => {
     const saved = { ...process.env };
     try {
-      Object.assign(process.env, { NODE_ENV: 'production', REFRESH_COOKIE_SECURE: 'true', AUTH_RESPONSE_FLOOR_MS: '400' });
+      Object.assign(process.env, { NODE_ENV: 'production', REFRESH_COOKIE_SECURE: 'true', AUTH_RESPONSE_FLOOR_MS: '400', SMTP_REQUIRE_TLS: 'true', FRONT_URL: 'https://billetterie.example', PSP_BASE_URL: 'https://psp.example' });
       resetEnvCache();
       const out: unknown = checkResponse(Joi.object({ id: Joi.string(), email: Joi.string() }), { id: '1', email: 'a@b.fr', passwordHash: '$argon2id$x' });
       expect(out).toEqual({ id: '1', email: 'a@b.fr' });

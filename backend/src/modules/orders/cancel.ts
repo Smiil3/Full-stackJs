@@ -49,7 +49,7 @@ async function refundPaid(
   for (const [i, item] of order.items.entries()) {
     await tx.orderItem.update({ where: { id: item.id }, data: { refundedCents: shares[i] ?? 0 } });
     const changed = await tx.$executeRaw`
-      UPDATE "ticket_types" SET "sold" = "sold" - ${item.quantity}, "updatedAt" = now()
+      UPDATE "ticket_types" SET "sold" = "sold" - ${item.quantity}, "updatedAt" = ${clock.now()}
       WHERE "id" = ${item.ticketTypeId}::uuid AND "eventId" = ${order.eventId}::uuid AND "sold" >= ${item.quantity}`;
     if (changed !== 1) throw new AppError(500, 'INTERNAL_ERROR', 'Incohérence de stock lors de l’annulation.');
   }

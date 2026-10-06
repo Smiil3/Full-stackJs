@@ -30,6 +30,16 @@ export function findMember(tx: Tx, orgId: string, userId: string) {
   });
 }
 
+/**
+ * Rôle de l'acteur relu dans la transaction, adhésion verrouillée en partage (FOR SHARE) : une rétrogradation
+ * ou un retrait concurrent (FOR UPDATE) attend la fin de la transaction, ou a déjà eu lieu et est vu.
+ */
+export async function lockActorRole(tx: Tx, orgId: string, userId: string): Promise<string | null> {
+  const rows = await tx.$queryRaw<{ role: string }[]>`
+    SELECT "role"::text AS "role" FROM "memberships" WHERE "orgId" = ${orgId}::uuid AND "userId" = ${userId}::uuid FOR SHARE`;
+  return rows[0]?.role ?? null;
+}
+
 /** Verrouille les OWNER du collectif : empêche deux rétrogradations simultanées de supprimer le dernier OWNER. */
 export async function lockOwners(tx: Tx, orgId: string): Promise<number> {
   const rows = await tx.$queryRaw<{ id: string }[]>`

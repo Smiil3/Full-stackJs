@@ -384,7 +384,7 @@ export async function updateTicketType(orgId: string, actorId: string, eventId: 
       await lockWaitlistEntries(tx, [ticketTypeId]);
       // Réduction de capacité atomique : jamais sous les places vendues + bloquées, même en concurrence avec une réservation.
       const changed = await tx.$executeRaw`
-        UPDATE "ticket_types" SET "capacity" = ${body.capacity}, "updatedAt" = now()
+        UPDATE "ticket_types" SET "capacity" = ${body.capacity}, "updatedAt" = ${clock.now()}
         WHERE "id" = ${ticketTypeId}::uuid AND "eventId" = ${eventId}::uuid AND "sold" + "held" <= ${body.capacity}`;
       if (changed !== 1) throw errors.conflict('La capacité ne peut pas être inférieure aux places vendues ou réservées.', { sold: current.sold, held: current.held });
       // Hausse de capacité : les nouvelles places vont d'abord à la liste d'attente.

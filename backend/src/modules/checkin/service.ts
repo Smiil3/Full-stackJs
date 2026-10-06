@@ -25,15 +25,19 @@ export async function listCheckinEvents(orgId: string) {
   };
 }
 
+/** Fenêtre de contrôle (contrat 1.15 §7.4) : de startsAt − 12 h à endsAt + 24 h. */
+const CHECKIN_OPENS_BEFORE_MS = 12 * 3600_000;
 const CHECKIN_WINDOW_MS = 24 * 3600_000;
 
 /**
- * Événement contrôlable (contrat 1.12) : du collectif (orgId dans le filtre), PUBLISHED et terminé depuis
- * moins de 24 h ; CANCELLED est signalé à l'appelant (le scan répond alors CANCELLED) ; tout autre cas ⇒ 404.
+ * Événement contrôlable : du collectif (orgId dans le filtre), PUBLISHED et dans la fenêtre de contrôle
+ * (startsAt − 12 h → endsAt + 24 h) ; CANCELLED est signalé à l'appelant (le scan répond alors CANCELLED) ;
+ * tout autre cas ⇒ 404 (un billet ne peut pas être « consommé » des jours avant l'événement).
  */
 async function eventOfOrg(db: Tx, orgId: string, eventId: string, allowCancelled = false) {
-  const event = await db.event.findFirst({ where: { id: eventId, orgId }, select: { id: true, salesStartAt: true, status: true, endsAt: true, offlineCheckinEnabled: true } });
-  if (!event || event.endsAt.getTime() <= clock.now().getTime() - CHECKIN_WINDOW_MS) throw errors.notFound();
+  const event = await db.event.findFirst({ where: { id: eventId, orgId }, select: { id: true, salesStartAt: true, status: true, startsAt: true, endsAt: true, offlineCheckinEnabled: true } });
+  const now = clock.now().getTime();
+  if (!event || now < event.startsAt.getTime() - CHECKIN_OPENS_BEFORE_MS || event.endsAt.getTime() <= now - CHECKIN_WINDOW_MS) throw errors.notFound();
   if (event.status === 'CANCELLED' && allowCancelled) return event;
   if (event.status !== 'PUBLISHED') throw errors.notFound();
   return event;

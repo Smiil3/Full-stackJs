@@ -713,7 +713,7 @@ describe('compléments CSRF et cookie (B2.1)', () => {
     const user = await createUser();
     const saved = { ...process.env };
     try {
-      Object.assign(process.env, { NODE_ENV: 'production', REFRESH_COOKIE_SECURE: 'true', AUTH_RESPONSE_FLOOR_MS: '400' });
+      Object.assign(process.env, { NODE_ENV: 'production', REFRESH_COOKIE_SECURE: 'true', AUTH_RESPONSE_FLOOR_MS: '400', SMTP_REQUIRE_TLS: 'true', FRONT_URL: 'https://billetterie.example', PSP_BASE_URL: 'https://psp.example' });
       resetEnvCache();
       const res = await supertest(createApp({ rateLimitMultiplier: 1000 })).post(`${A}/login`).send({ email: user.email, password: PASSWORD }).expect(200);
       const cookie = (res.headers['set-cookie'] as unknown as string[]).find((c) => c.startsWith('nuits_rt='))!;
