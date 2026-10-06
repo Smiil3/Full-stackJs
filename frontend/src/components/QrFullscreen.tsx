@@ -1,32 +1,46 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { QrCode } from './QrCode';
 
 /**
  * QR plein écran pour le contrôle d'entrée : grand, contrasté, écran maintenu allumé si possible.
  */
 export function QrFullscreen({ value, title, subtitle, onClose }: { value: string; title: string; subtitle: string; onClose: () => void }) {
+  // `onClose` est souvent une fonction inline : on la lit par référence pour ne pas rejouer l'effet.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+
   useEffect(() => {
     let lock: WakeLockSentinel | null = null;
-    let cancelled = false;
-    if ('wakeLock' in navigator) {
+    let disposed = false;
+    const acquire = () => {
+      if (!('wakeLock' in navigator) || document.visibilityState !== 'visible') return;
       navigator.wakeLock
         .request('screen')
         .then((l) => {
-          if (cancelled) void l.release();
+          if (disposed) void l.release();
           else lock = l;
         })
         .catch(() => undefined);
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
     };
+    // Le navigateur libère le verrou quand la page passe en arrière-plan : on le redemande au retour.
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') acquire();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCloseRef.current();
+    };
+    acquire();
+    document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('keydown', onKey);
     return () => {
-      cancelled = true;
+      disposed = true;
+      document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('keydown', onKey);
       void lock?.release();
     };
-  }, [onClose]);
+  }, []);
 
   return (
     <div className="qr-full" role="dialog" aria-modal="true" aria-label={`Billet ${title}`}>

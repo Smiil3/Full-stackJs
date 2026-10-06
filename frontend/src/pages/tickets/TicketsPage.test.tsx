@@ -1,6 +1,6 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { __resetClientForTests, apiRequest, login, logout } from '../../api/client';
 import type { Order } from '../../api/types';
 import { injectFault, mock } from '../../mocks/core';
@@ -31,6 +31,42 @@ describe('mes billets', () => {
     expect(screen.getByRole('dialog', { name: /Billet Garonne/ })).toHaveTextContent('Augmentez la luminosité');
     await user.click(screen.getByRole('button', { name: 'Fermer' }));
     expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('M5 : plein écran fermé si le billet devient utilisé ; focus rendu au bouton d’ouverture', async () => {
+    const user = userEvent.setup();
+    await buy(1);
+    const { queryClient } = await renderApp('/me/tickets');
+    const openBtn = await screen.findByRole('button', { name: 'Afficher en plein écran' });
+    await user.click(openBtn);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    const t = mock.db.tickets[0];
+    if (t) Object.assign(t, { status: 'USED', usedAt: new Date().toISOString() });
+    await queryClient.invalidateQueries({ queryKey: ['tickets'] });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(await screen.findByText(/^Utilisé le/)).toBeInTheDocument();
+  });
+
+  it('M5 : fermeture manuelle ⇒ focus rendu au bouton d’ouverture', async () => {
+    const user = userEvent.setup();
+    await buy(1);
+    await renderApp('/me/tickets');
+    await user.click(await screen.findByRole('button', { name: 'Afficher en plein écran' }));
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Afficher en plein écran' })).toHaveFocus());
+  });
+
+  it('M4 : verrou d’écran redemandé au retour au premier plan', async () => {
+    const user = userEvent.setup();
+    const request = vi.fn(() => Promise.resolve({ release: () => Promise.resolve() }));
+    Object.defineProperty(navigator, 'wakeLock', { configurable: true, value: { request } });
+    await buy(1);
+    await renderApp('/me/tickets');
+    await user.click(await screen.findByRole('button', { name: 'Afficher en plein écran' }));
+    expect(request).toHaveBeenCalledTimes(1);
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(request).toHaveBeenCalledTimes(2);
+    Reflect.deleteProperty(navigator, 'wakeLock');
   });
 
   it('billet utilisé / annulé : pas de QR, statut affiché', async () => {
