@@ -1,7 +1,7 @@
 # Contrat d'API — Billetterie « Les Nuits de la Garonne »
 
 > **Source de vérité commune front / back.** Toute modification passe par le PO (session `fullstack-js`) : demander via une ligne `NEED: changement de contrat …`. Ne jamais diverger silencieusement.
-> Version : 1.6 — 2026-10-06 (voir §11 Historique)
+> Version : 1.7 — 2026-10-06 (voir §11 Historique)
 
 ## 1. Conventions
 
@@ -10,7 +10,7 @@
 - Identifiants : UUID v4 (string).
 - **Montants** : entiers en **centimes** (`priceCents: 1500` = 15,00 €). Devise unique `"EUR"`.
 - **Dates** : chaînes ISO 8601 **UTC** avec `Z` (`"2026-11-14T19:00:00.000Z"`). Les événements portent un `timezone` IANA (`"Europe/Paris"`) pour l'affichage.
-- Pagination : query `page` (≥1, défaut 1), `pageSize` (1–100, défaut 20) → réponse `{ items, page, pageSize, total }`.
+- Pagination : query `page` (1–1000, défaut 1), `pageSize` (1–100, défaut 20) → réponse `{ items, page, pageSize, total }`.
 - Champs inconnus dans un body/query → **400 VALIDATION_ERROR** (pas d'ignorance silencieuse).
 - Les réponses ne contiennent **que** les champs listés ici.
 
@@ -168,12 +168,12 @@ type Member = { userId; email; displayName; role; createdAt }
 |---|---|---|---|
 | `GET /orgs/:orgId` | SCANNER+ | — | 200 `{ id, name, slug, createdAt }` |
 | `GET /orgs/:orgId/settings` | MANAGER+ | — | 200 `OrgSettings` |
-| `PATCH /orgs/:orgId/settings` | OWNER | sous-ensemble de `OrgSettings` (sans `bank`) + optionnel `bank: { beneficiary, iban, bic }` (les 3 ensemble, IBAN complet) | 200 `OrgSettings` · 400 si bornes (voir plan) / IBAN invalide / `maxPerUser < maxPerOrder` |
+| `PATCH /orgs/:orgId/settings` | OWNER | sous-ensemble de `OrgSettings` (sans `bank`) + optionnel `bank: { beneficiary, iban, bic }` (les 3 ensemble, IBAN complet) **+ `currentPassword` obligatoire si `bank` est présent** (ré-authentification ; échec ⇒ 401 `INVALID_CREDENTIALS`, compté dans le verrouillage) ; tout changement bancaire ⇒ mail à tous les OWNER du collectif | 200 `OrgSettings` · 400 si bornes (voir plan) / IBAN invalide / `maxPerUser < maxPerOrder` |
 | `GET /orgs/:orgId/members` | MANAGER+ | — | 200 `{ items: Member[] }` |
-| `POST /orgs/:orgId/members` | OWNER | `{ email, role }` (compte existant et vérifié) | 201 `Member` · 404 · 409 déjà membre |
+| `POST /orgs/:orgId/members` | OWNER | `{ email, role }` (compte existant et vérifié) | 201 `Member` · 404 · 409 déjà membre — la personne ajoutée reçoit un mail l'informant (collectif, rôle, qui l'a ajoutée) |
 | `PATCH /orgs/:orgId/members/:userId` | OWNER | `{ role }` | 200 `Member` · 409 si retire le dernier OWNER |
 | `DELETE /orgs/:orgId/members/:userId` | OWNER | — | 204 · 409 si dernier OWNER |
-| `GET /orgs/:orgId/audit-log` | OWNER | `page, pageSize` | 200 page `{ id, actorEmail, action, target, meta, createdAt }` |
+| `GET /orgs/:orgId/audit-log` | OWNER | `page, pageSize` | 200 page `{ id, actorEmail, action, target, meta, createdAt }` — `actorEmail` vaut `"Administrateur plateforme"` pour une action d'un admin non membre ; `actorEmail` peut être `null` (action système) |
 
 ### 7.2 Événements & types de places
 ```ts
@@ -189,15 +189,19 @@ type EventAdmin = { id; orgId; title; description: string|null; venue: string|nu
 ```
 | Méthode & chemin | Rôle | Body | Réponse |
 |---|---|---|---|
-| `GET /orgs/:orgId/events` | SCANNER+ | `page, pageSize, status?` | 200 page `EventAdmin` |
+| `GET /orgs/:orgId/events` | MANAGER+ | `page, pageSize, status?` | 200 page `EventAdmin` |
 | `POST /orgs/:orgId/events` | MANAGER+ | `{ title (1–150), description? (≤5000), venue?, address?, isOnline, startsAt, endsAt (> startsAt), timezone, salesStartAt, salesEndAt (≤ endsAt), overrides? }` | 201 `EventAdmin` (DRAFT) |
-| `GET /orgs/:orgId/events/:eventId` | SCANNER+ | — | 200 `EventAdmin` |
-| `PATCH /orgs/:orgId/events/:eventId` | MANAGER+ | champs ci-dessus, tous optionnels ; `overrides` partiel | 200 `EventAdmin` · 409 si `CANCELLED` |
+| `GET /orgs/:orgId/events/:eventId` | MANAGER+ | — | 200 `EventAdmin` |
+| `PATCH /orgs/:orgId/events/:eventId` | MANAGER+ | champs ci-dessus, tous optionnels ; `overrides` partiel ; `rescheduleReason` (1–500) requis si report | 200 `EventAdmin` · 409 si `CANCELLED` · 403 si report par un MANAGER · 400 si `rescheduleReason` manquant |
 | `POST /orgs/:orgId/events/:eventId/publish` | MANAGER+ | — | 200 `EventAdmin` · 409 si aucun type de place |
 | `POST /orgs/:orgId/events/:eventId/cancel` | OWNER | `{ reason (1–500) }` | 200 `EventAdmin` — rembourse toutes les commandes payées, annule les autres, prévient par mail |
 | `POST /orgs/:orgId/events/:eventId/ticket-types` | MANAGER+ | `{ name (1–80), description?, capacity (1–100000), priceCents (0–1000000), earlyPriceCents?, earlyUntil?, sortOrder? }` (early : les 2 ou aucun, `earlyPriceCents < priceCents`) | 201 `TicketTypeAdmin` |
 | `PATCH /orgs/:orgId/events/:eventId/ticket-types/:ticketTypeId` | MANAGER+ | mêmes champs optionnels | 200 · 409 `CONFLICT` si `capacity < sold + held` |
 | `DELETE /orgs/:orgId/events/:eventId/ticket-types/:ticketTypeId` | MANAGER+ | — | 204 · 409 si déjà des commandes |
+
+**Report d'un événement** (modification de `startsAt` ou `endsAt` alors qu'il existe des commandes `PENDING_PAYMENT`/`AWAITING_TRANSFER`/`PAID`) : réservé à l'**OWNER**, `rescheduleReason` obligatoire. Effets : chaque commande PAID reçoit un nouveau `cancellableUntil` = max(ancien, nouveau `startsAt` − délai figé) et un `refundPercent` porté à 100 (droit au remboursement intégral, frais compris, suite au report) ; mail à tous les acheteurs ; AuditLog.
+**Prix modifiés après ventes** : autorisé (MANAGER+), n'affecte que les nouvelles commandes (prix figés), tracé dans l'AuditLog.
+**Invariants de dates** revérifiés à la création, à chaque PATCH (valeurs fusionnées) et à la publication : `endsAt > startsAt`, `salesStartAt < salesEndAt ≤ endsAt`, publication impossible si `salesEndAt ≤ maintenant` ; types de places : `earlyUntil ≤ salesEndAt` (revalidé quand les dates de l'événement changent). `GET /events/:eventId` public renvoie 404 pour un événement terminé depuis plus de 30 jours.
 
 ### 7.3 Commandes, virements, stats, export
 ```ts
@@ -219,6 +223,7 @@ type EventStats = { eventId; generatedAt; currency: 'EUR';
 | `GET /orgs/:orgId/events/:eventId/attendees.csv` | MANAGER+ | — | 200 `text/csv; charset=utf-8`, `Content-Disposition: attachment`, séparateur `;`, BOM UTF-8. Colonnes : `billet;type;nom;email;statut;scanne_le` (heure locale de l'événement). Cellules protégées contre l'injection de formules. |
 
 ### 7.4 Contrôle d'accès (scan)
+| `GET /orgs/:orgId/checkin/events` | SCANNER+ | — | 200 `{ items: { id; title; venue; isOnline; startsAt; endsAt; timezone; status }[] }` — événements PUBLISHED dont la fin date de moins de 24 h, sans aucun chiffre de vente |
 | Méthode & chemin | Rôle | Body | Réponse |
 |---|---|---|---|
 | `GET /orgs/:orgId/events/:eventId/checkin/snapshot` | SCANNER+ | — | 200 `{ eventId; generatedAt; publicKeyJwk: { kty:'OKP', crv:'Ed25519', x }; tickets: { publicId; ticketTypeName; holderInitials; status; usedAt }[] }` |
@@ -255,6 +260,7 @@ type EventStats = { eventId; generatedAt; currency: 'EUR';
 - En-têtes de sécurité via helmet ; CORS : origine `FRONT_URL` uniquement, `credentials: true`.
 
 ## 11. Historique
+- **1.7** (2026-10-06) : report d'événement (OWNER, motif, droit au remboursement intégral) ; invariants de dates ; ré-authentification + notification pour changement bancaire ; mail au membre ajouté ; `GET /orgs/:orgId/events*` réservé MANAGER+, nouvel endpoint `GET /orgs/:orgId/checkin/events` pour SCANNER ; `page` ≤ 1000 ; libellé admin dans l'audit.
 - **1.6** (2026-10-06) : `Order.refundPreviewCents` + formule de remboursement explicite.
 - **1.5** (2026-10-06) : login non vérifié ⇒ 403 `EMAIL_NOT_VERIFIED` ; règles d'inscription (ASCII, mots de passe courants refusés, dernière inscription gagne) ; délai de grâce 10 s de rotation ; famille 90 j ; verify-email révoque les sessions.
 - **1.4** (2026-10-06) : `/admin/*` pour non-admin ⇒ 404 ; liste d'attente désactivée ⇒ 409 `WAITLIST_DISABLED`.
