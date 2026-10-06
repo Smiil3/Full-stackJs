@@ -47,7 +47,7 @@ describe('AuthProvider', () => {
 
   it('démarrage anonyme : les requêtes publiques en cours ne sont pas annulées', async () => {
     const { qc } = setup();
-    const pending = qc.fetchQuery({ queryKey: ['public'], queryFn: () => new Promise((r) => setTimeout(() => r('ok'), 30)) });
+    const pending = qc.query({ queryKey: ['public'], queryFn: () => new Promise((r) => setTimeout(() => r('ok'), 30)) });
     await screen.findByText('anonymous:-');
     await expect(pending).resolves.toBe('ok');
     expect(qc.getQueryData(['public'])).toBe('ok');
