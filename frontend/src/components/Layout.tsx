@@ -4,6 +4,7 @@ import { roleAtLeast } from '../auth/roles';
 import { useOnline } from '../lib/hooks/useOnline';
 import styles from './Layout.module.css';
 import { PwaUpdatePrompt } from './PwaUpdatePrompt';
+import { WaitlistOfferBanner } from './WaitlistOfferBanner';
 
 export function Layout() {
   const { status, user, logout } = useAuth();
@@ -73,6 +74,7 @@ export function Layout() {
           Vous êtes hors-ligne : les informations affichées peuvent ne pas être à jour.
         </p>
       ) : null}
+      <WaitlistOfferBanner />
       {/* En dev, le scope « / » est occupé par le worker MSW (mode mock) : pas de service worker applicatif. */}
       {import.meta.env.PROD ? <PwaUpdatePrompt /> : null}
       <main id="contenu" className={styles.main} tabIndex={-1}>

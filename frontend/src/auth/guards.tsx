@@ -5,18 +5,20 @@ import { Forbidden } from '../components/Forbidden';
 import { PageLoader } from '../components/PageLoader';
 import { useAuth } from './AuthContext';
 import { hasOrgRole } from './roles';
-import { loginPathWithNext } from './safeRedirect';
+import { loginPathWithNext, safeRedirectPath } from './safeRedirect';
 
 /**
  * Gardes de routes : CONFORT UX uniquement. La sécurité est assurée par l'API (404/403),
  * ces composants évitent seulement d'afficher un écran inutilisable.
  */
 export function RequireAuth({ children, allowOffline = false }: { children: ReactNode; allowOffline?: boolean }) {
-  const { status } = useAuth();
+  const { status, sessionEndRedirect } = useAuth();
   const location = useLocation();
   if (status === 'loading') return <PageLoader />;
   if (status === 'offline' && allowOffline) return children;
-  if (status !== 'authenticated') return <Navigate to={loginPathWithNext(location.pathname + location.search)} replace />;
+  if (status !== 'authenticated') {
+    return <Navigate to={sessionEndRedirect ? safeRedirectPath(sessionEndRedirect) : loginPathWithNext(location.pathname + location.search)} replace />;
+  }
   return children;
 }
 

@@ -10,6 +10,12 @@ export type AuthContextValue = {
   logout: () => Promise<void>;
   /** Recharge l'utilisateur (adhésions, email vérifié…) via GET /auth/me. */
   reloadUser: () => Promise<void>;
+  /**
+   * Destination (chemin interne) à utiliser si la session se termine pendant une action qui la
+   * révoque volontairement (changement de mot de passe) — au lieu de « /login?next=… ».
+   */
+  sessionEndRedirect: string | null;
+  setSessionEndRedirect: (path: string | null) => void;
 };
 
 export const AuthContext = createContext<AuthContextValue | null>(null);

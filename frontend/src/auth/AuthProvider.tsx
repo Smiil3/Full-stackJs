@@ -11,6 +11,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [status, setStatus] = useState<AuthStatus>('loading');
   const [user, setUser] = useState<User | null>(null);
+  const [sessionEndRedirect, setSessionEndRedirect] = useState<string | null>(null);
   const userIdRef = useRef<string | null>(null);
 
   /**
@@ -31,6 +32,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const previous = userIdRef.current;
         if (previous !== null && previous !== e.session.user.id) wipe(); // changement de compte : purge AVANT le nouvel utilisateur
         userIdRef.current = e.session.user.id;
+        setSessionEndRedirect(null);
         setUser(e.session.user);
         setStatus('authenticated');
       } else {
@@ -64,6 +66,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(me);
   }, []);
 
-  const value = useMemo<AuthContextValue>(() => ({ status, user, login, logout, reloadUser }), [status, user, login, logout, reloadUser]);
+  const value = useMemo<AuthContextValue>(
+    () => ({ status, user, login, logout, reloadUser, sessionEndRedirect, setSessionEndRedirect }),
+    [status, user, login, logout, reloadUser, sessionEndRedirect],
+  );
   return <AuthContext value={value}>{children}</AuthContext>;
 }
