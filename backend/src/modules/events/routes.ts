@@ -7,9 +7,10 @@ import * as s from './schemas.js';
 /** Événements et types de places d'un collectif, montés sous `/orgs/:orgId/events`. */
 export function orgEventsRouter(): Router {
   const r = Router({ mergeParams: true });
-  r.get('/', requireOrgRole('SCANNER'), ...endpoint({ params: s.orgParams, query: s.eventListQuery, response: s.eventAdminPage }, c.list));
+  // Chiffres de vente : MANAGER+ (le SCANNER passe par GET /orgs/:orgId/checkin/events, sans chiffres).
+  r.get('/', requireOrgRole('MANAGER'), ...endpoint({ params: s.orgParams, query: s.eventListQuery, response: s.eventAdminPage }, c.list));
   r.post('/', requireOrgRole('MANAGER'), ...endpoint({ params: s.orgParams, body: s.eventCreateBody, response: s.eventAdminResponse, status: 201 }, c.create));
-  r.get('/:eventId', requireOrgRole('SCANNER'), ...endpoint({ params: s.orgEventParams, response: s.eventAdminResponse }, c.get));
+  r.get('/:eventId', requireOrgRole('MANAGER'), ...endpoint({ params: s.orgEventParams, response: s.eventAdminResponse }, c.get));
   r.patch('/:eventId', requireOrgRole('MANAGER'), ...endpoint({ params: s.orgEventParams, body: s.eventPatchBody, response: s.eventAdminResponse }, c.update));
   r.post('/:eventId/publish', requireOrgRole('MANAGER'), ...endpoint({ params: s.orgEventParams, response: s.eventAdminResponse }, c.publish));
   r.post('/:eventId/ticket-types', requireOrgRole('MANAGER'),

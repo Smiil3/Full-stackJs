@@ -58,6 +58,12 @@ export const errorHandler: ErrorRequestHandler = (err: unknown, req, res, _next)
       res.status(409).json(body('CONFLICT', 'Cette ressource existe déjà.'));
       return;
     }
+    if (err.code === 'P2003') {
+      // Clé étrangère : ressource supprimée ou encore référencée par une opération concurrente.
+      req.log.warn({ prismaCode: err.code }, 'violation de clé étrangère');
+      res.status(409).json(body('CONFLICT', 'Cette ressource est liée à d’autres données ou a été modifiée entre-temps.'));
+      return;
+    }
     if (err.code === 'P2025') {
       res.status(404).json(body('NOT_FOUND', 'Ressource introuvable.'));
       return;

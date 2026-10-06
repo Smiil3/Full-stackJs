@@ -197,7 +197,7 @@ async function reserveAndCreate(tx: Tx, userId: string, idempotencyKey: string, 
   });
 
   if (free) {
-    for (const l of lines) await repo.heldToSold(tx, l.ticketTypeId, l.quantity);
+    for (const l of lines) await repo.heldToSold(tx, event.id, l.ticketTypeId, l.quantity);
     await issueTickets(tx, order.id);
     await enqueueEmail(tx, order.user.email, 'orderConfirmed', {
       displayName: order.user.displayName,

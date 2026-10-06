@@ -15,6 +15,9 @@ export interface TemplatePayloads {
   latePaymentRefunded: { displayName: string; eventTitle: string; amount: string };
   waitlistOffer: { displayName: string; eventTitle: string; ticketTypeName: string; quantity: number; deadline: string; link: string };
   eventCancelled: { displayName: string; eventTitle: string; reason: string; amount: string | null };
+  eventRescheduled: { displayName: string; eventTitle: string; oldDate: string; newDate: string; reason: string };
+  bankDetailsChanged: { displayName: string; orgName: string; changedBy: string; ibanMasked: string };
+  memberAdded: { displayName: string; orgName: string; role: string; addedBy: string };
 }
 
 export type MailTemplate = keyof TemplatePayloads;
@@ -112,6 +115,37 @@ export function renderTemplate<T extends MailTemplate>(template: T, data: Templa
         subject: `Événement annulé — ${s('eventTitle')}`,
         html: layout('Événement annulé', [`Bonjour ${e(s('displayName'))},`, `<strong>${e(s('eventTitle'))}</strong> est annulé : ${e(s('reason'))}.`, d['amount'] ? `Vous êtes remboursé(e) de <strong>${e(s('amount'))}</strong>.` : 'Votre réservation non payée a été annulée.']),
         text: `Bonjour ${s('displayName')},\n${s('eventTitle')} est annulé : ${s('reason')}.${d['amount'] ? ` Remboursement : ${s('amount')}.` : ''}`,
+      };
+    case 'eventRescheduled':
+      return {
+        subject: `Événement reporté — ${s('eventTitle')}`,
+        html: layout('Événement reporté', [
+          `Bonjour ${e(s('displayName'))},`,
+          `<strong>${e(s('eventTitle'))}</strong> est reporté du ${e(s('oldDate'))} au <strong>${e(s('newDate'))}</strong>.`,
+          `Motif : ${e(s('reason'))}`,
+          'Vos billets restent valables. Si la nouvelle date ne vous convient pas, vous pouvez annuler depuis votre espace et être remboursé(e) intégralement, frais compris.',
+        ]),
+        text: `Bonjour ${s('displayName')},\n${s('eventTitle')} est reporté du ${s('oldDate')} au ${s('newDate')}.\nMotif : ${s('reason')}\nVos billets restent valables ; annulation possible avec remboursement intégral.`,
+      };
+    case 'bankDetailsChanged':
+      return {
+        subject: `Coordonnées bancaires modifiées — ${s('orgName')}`,
+        html: layout('Coordonnées bancaires modifiées', [
+          `Bonjour ${e(s('displayName'))},`,
+          `Les coordonnées bancaires du collectif <strong>${e(s('orgName'))}</strong> viennent d’être modifiées par ${e(s('changedBy'))} (nouvel IBAN : ${e(s('ibanMasked'))}).`,
+          'Si ce changement n’est pas légitime, contactez immédiatement les autres propriétaires du collectif.',
+        ]),
+        text: `Bonjour ${s('displayName')},\nLes coordonnées bancaires de ${s('orgName')} ont été modifiées par ${s('changedBy')} (IBAN ${s('ibanMasked')}).`,
+      };
+    case 'memberAdded':
+      return {
+        subject: `Vous avez rejoint ${s('orgName')}`,
+        html: layout('Nouveau collectif', [
+          `Bonjour ${e(s('displayName'))},`,
+          `${e(s('addedBy'))} vous a ajouté(e) au collectif <strong>${e(s('orgName'))}</strong> avec le rôle ${e(s('role'))}.`,
+          'Si vous ne connaissez pas ce collectif, signalez-le à l’équipe de la billetterie.',
+        ]),
+        text: `Bonjour ${s('displayName')},\n${s('addedBy')} vous a ajouté(e) au collectif ${s('orgName')} (rôle : ${s('role')}).`,
       };
     default:
       throw new Error('Gabarit de mail inconnu');

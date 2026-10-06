@@ -1,8 +1,11 @@
-import type { Event, OrganizationSettings, Prisma, TicketType } from '../../generated/prisma/client.js';
-import { writeAudit } from '../../lib/audit.js';
+import type { Event, OrganizationSettings, Prisma, Role, TicketType } from '../../generated/prisma/client.js';
+import { diff, writeAudit } from '../../lib/audit.js';
+import { clock } from '../../lib/clock.js';
 import { transaction, type Tx } from '../../lib/db.js';
 import { errors, type FieldError } from '../../lib/errors.js';
 import { iso } from '../../lib/schemas.js';
+import { enqueueEmail } from '../../lib/outbox.js';
+import { formatWithZone } from '../../lib/time.js';
 import { getSettings } from '../orgs/repo.js';
 import { OVERRIDE_KEYS, overridesOf, resolveEventSettings, toPublicRules, type EventOverrideFields } from '../settings/resolveEventSettings.js';
 import * as repo from './repo.js';
@@ -110,7 +113,7 @@ export async function createEvent(orgId: string, actorId: string, body: EventCre
     salesEndAt: new Date(body.salesEndAt),
   };
   checkDates(dates);
-  if (dates.endsAt.getTime() <= Date.now()) throw errors.validation([{ path: 'endsAt', message: 'L’événement doit se terminer dans le futur.' }]);
+  if (dates.endsAt.getTime() <= clock.now().getTime()) throw errors.validation([{ path: 'endsAt', message: 'L’événement doit se terminer dans le futur.' }]);
   return transaction(async (tx) => {
     const settings = await getSettings(tx, orgId);
     const overrides = overridesData(body.overrides);
@@ -137,7 +140,13 @@ function emptyOverrides(): EventOverrideFields {
   return Object.fromEntries(OVERRIDE_KEYS.map((k) => [k, null])) as unknown as EventOverrideFields;
 }
 
-export async function updateEvent(orgId: string, actorId: string, eventId: string, body: EventPatchBody) {
+/**
+ * Modification d'un événement (MANAGER+), avec invariants de dates revérifiés sur les valeurs FUSIONNÉES.
+ * Report (dates de l'événement modifiées alors qu'il existe des commandes actives) : OWNER seulement,
+ * motif obligatoire ; chaque commande payée obtient le droit au remboursement intégral (100 %, frais compris)
+ * jusqu'à max(ancienne limite, nouveau début − délai figé) ; acheteurs prévenus par mail ; audit.
+ */
+export async function updateEvent(orgId: string, actor: { userId: string; role: Role }, eventId: string, body: EventPatchBody) {
   return transaction(async (tx) => {
     if (!(await repo.lockEvent(tx, orgId, eventId))) throw errors.notFound();
     const current = await repo.findEvent(tx, orgId, eventId);
@@ -150,22 +159,89 @@ export async function updateEvent(orgId: string, actorId: string, eventId: strin
       salesEndAt: body.salesEndAt ? new Date(body.salesEndAt) : current.salesEndAt,
     };
     checkDates(dates);
+    // Les tarifs early existants doivent rester dans la période de vente.
+    const lateEarly = current.ticketTypes.filter((t) => t.earlyUntil !== null && t.earlyUntil.getTime() > dates.salesEndAt.getTime());
+    if (lateEarly.length > 0) {
+      throw errors.conflict('Un tarif early se termine après la fin des ventes : modifiez d’abord les types de places concernés.', {
+        ticketTypeIds: lateEarly.map((t) => t.id),
+      });
+    }
+    const rescheduled = dates.startsAt.getTime() !== current.startsAt.getTime() || dates.endsAt.getTime() !== current.endsAt.getTime();
+    const activeOrders = rescheduled
+      ? await tx.order.count({ where: { eventId, status: { in: ['PENDING_PAYMENT', 'AWAITING_TRANSFER', 'PAID'] } } })
+      : 0;
+    const isReport = rescheduled && activeOrders > 0;
+    if (isReport) {
+      if (actor.role !== 'OWNER') throw errors.forbidden();
+      if (!body.rescheduleReason) throw errors.validation([{ path: 'rescheduleReason', message: 'Le motif du report est obligatoire.' }]);
+    }
     const settings = await getSettings(tx, orgId);
     const overrides = overridesData(body.overrides);
     checkOverrides({ ...overridesOf(current), ...overrides }, settings);
     const data: Prisma.EventUpdateInput = { ...dates, ...overrides };
-    if (body.title !== undefined) data.title = body.title.trim();
+    if (body.title !== undefined) data.title = body.title;
     if (body.description !== undefined) data.description = body.description;
     if (body.venue !== undefined) data.venue = body.venue;
     if (body.address !== undefined) data.address = body.address;
     if (body.isOnline !== undefined) data.isOnline = body.isOnline;
     if (body.timezone !== undefined) data.timezone = body.timezone;
     await tx.event.update({ where: { id: current.id }, data });
-    await writeAudit(tx, {
-      orgId, actorId, action: 'event.update', target: `event:${eventId}`,
-      meta: { fields: Object.keys(body).filter((k) => k !== 'overrides'), overrides: overrides },
-    });
+    if (isReport && body.rescheduleReason) {
+      await applyReschedule(tx, current, dates, body.rescheduleReason, settings, actor.userId);
+    } else {
+      await writeAudit(tx, {
+        orgId, actorId: actor.userId, action: 'event.update', target: `event:${eventId}`,
+        meta: { fields: Object.keys(body).filter((k) => k !== 'overrides'), overrides },
+      });
+    }
     return load(tx, orgId, eventId);
+  });
+}
+
+async function applyReschedule(
+  tx: Tx, before: EventWithTypes, dates: EventDates, reason: string, settings: OrganizationSettings, actorId: string,
+): Promise<void> {
+  const rules = resolveEventSettings(settings, before);
+  const paid = await tx.order.findMany({
+    where: { eventId: before.id, status: 'PAID' },
+    select: { id: true, cancellableUntil: true },
+  });
+  for (const order of paid) {
+    // Délai figé = ancien début − ancienne limite ; à défaut (annulation désactivée), délai effectif actuel.
+    const deadlineMs = order.cancellableUntil
+      ? before.startsAt.getTime() - order.cancellableUntil.getTime()
+      : rules.cancellationDeadlineHours * 3600_000;
+    const candidate = dates.startsAt.getTime() - deadlineMs;
+    const cancellableUntil = new Date(Math.max(order.cancellableUntil?.getTime() ?? candidate, candidate));
+    // Transition gardée : seule une commande toujours PAID est modifiée.
+    await tx.order.updateMany({
+      where: { id: order.id, status: 'PAID' },
+      data: { cancellableUntil, refundPercent: 100, serviceFeeRefundable: true },
+    });
+  }
+  const buyers = await tx.order.findMany({
+    where: { eventId: before.id, status: { in: ['PENDING_PAYMENT', 'AWAITING_TRANSFER', 'PAID'] } },
+    select: { user: { select: { email: true, displayName: true } } },
+    distinct: ['userId'],
+  });
+  for (const { user } of buyers) {
+    await enqueueEmail(tx, user.email, 'eventRescheduled', {
+      displayName: user.displayName,
+      eventTitle: before.title,
+      oldDate: formatWithZone(before.startsAt, before.timezone),
+      newDate: formatWithZone(dates.startsAt, before.timezone),
+      reason,
+    });
+  }
+  await writeAudit(tx, {
+    orgId: before.orgId, actorId, action: 'event.reschedule', target: `event:${before.id}`,
+    meta: {
+      from: { startsAt: before.startsAt, endsAt: before.endsAt },
+      to: { startsAt: dates.startsAt, endsAt: dates.endsAt },
+      reason,
+      paidOrders: paid.length,
+      notifiedBuyers: buyers.length,
+    },
   });
 }
 
@@ -175,6 +251,8 @@ export async function publishEvent(orgId: string, actorId: string, eventId: stri
     const event = await repo.findEvent(tx, orgId, eventId);
     if (!event) throw errors.notFound();
     if (event.status !== 'DRAFT') throw errors.state('INVALID_STATE', 'Seul un brouillon peut être publié.');
+    checkDates(event);
+    if (event.salesEndAt.getTime() <= clock.now().getTime()) throw errors.conflict('La période de vente est déjà terminée : impossible de publier.');
     if (event.ticketTypes.length === 0) throw errors.conflict('Ajoutez au moins un type de place avant de publier.');
     const { count } = await tx.event.updateMany({ where: { id: eventId, orgId, status: 'DRAFT' }, data: { status: 'PUBLISHED' } });
     if (count !== 1) throw errors.state('INVALID_STATE', 'Seul un brouillon peut être publié.');
@@ -193,8 +271,11 @@ interface EarlyState {
   earlyUntil: Date | null;
 }
 
-function checkEarly(s: EarlyState): void {
+function checkEarly(s: EarlyState, salesEndAt: Date): void {
   const fields: FieldError[] = [];
+  if (s.earlyUntil !== null && s.earlyUntil.getTime() > salesEndAt.getTime()) {
+    fields.push({ path: 'earlyUntil', message: 'Le tarif early doit se terminer au plus tard à la fin des ventes.' });
+  }
   if ((s.earlyPriceCents === null) !== (s.earlyUntil === null)) {
     fields.push({ path: 'earlyPriceCents', message: 'Le tarif early exige un prix ET une date de fin (ou aucun des deux).' });
   } else if (s.earlyPriceCents !== null && s.earlyPriceCents >= s.priceCents) {
@@ -217,9 +298,9 @@ export async function createTicketType(orgId: string, actorId: string, eventId: 
     earlyPriceCents: body.earlyPriceCents ?? null,
     earlyUntil: body.earlyUntil ? new Date(body.earlyUntil) : null,
   };
-  checkEarly(early);
   return transaction(async (tx) => {
     const event = await lockActiveEvent(tx, orgId, eventId);
+    checkEarly(early, event.salesEndAt);
     const tt = await tx.ticketType.create({
       data: {
         eventId: event.id,
@@ -237,7 +318,7 @@ export async function createTicketType(orgId: string, actorId: string, eventId: 
 
 export async function updateTicketType(orgId: string, actorId: string, eventId: string, ticketTypeId: string, body: TicketTypePatchBody) {
   return transaction(async (tx) => {
-    await lockActiveEvent(tx, orgId, eventId);
+    const event = await lockActiveEvent(tx, orgId, eventId);
     const current = await repo.findTicketType(tx, orgId, eventId, ticketTypeId);
     if (!current) throw errors.notFound();
     const early: EarlyState = {
@@ -245,12 +326,12 @@ export async function updateTicketType(orgId: string, actorId: string, eventId: 
       earlyPriceCents: body.earlyPriceCents !== undefined ? body.earlyPriceCents : current.earlyPriceCents,
       earlyUntil: body.earlyUntil !== undefined ? (body.earlyUntil === null ? null : new Date(body.earlyUntil)) : current.earlyUntil,
     };
-    checkEarly(early);
+    checkEarly(early, event.salesEndAt);
     if (body.capacity !== undefined) {
       // Réduction de capacité atomique : jamais sous les places vendues + bloquées, même en concurrence avec une réservation.
       const changed = await tx.$executeRaw`
         UPDATE "ticket_types" SET "capacity" = ${body.capacity}, "updatedAt" = now()
-        WHERE "id" = ${ticketTypeId}::uuid AND "sold" + "held" <= ${body.capacity}`;
+        WHERE "id" = ${ticketTypeId}::uuid AND "eventId" = ${eventId}::uuid AND "sold" + "held" <= ${body.capacity}`;
       if (changed !== 1) throw errors.conflict('La capacité ne peut pas être inférieure aux places vendues ou réservées.', { sold: current.sold, held: current.held });
     }
     const data: Prisma.TicketTypeUpdateInput = { ...early };
@@ -258,7 +339,15 @@ export async function updateTicketType(orgId: string, actorId: string, eventId: 
     if (body.description !== undefined) data.description = body.description;
     if (body.sortOrder !== undefined) data.sortOrder = body.sortOrder;
     const tt = await tx.ticketType.update({ where: { id: ticketTypeId }, data });
-    await writeAudit(tx, { orgId, actorId, action: 'ticketType.update', target: `ticketType:${ticketTypeId}`, meta: { fields: Object.keys(body) } });
+    // Prix modifiés après ventes : autorisé, sans effet sur les commandes passées (prix figés) ; tracé avant / après.
+    const snapshot = (t: TicketType) => ({
+      name: t.name, capacity: t.capacity, priceCents: t.priceCents, earlyPriceCents: t.earlyPriceCents,
+      earlyUntil: t.earlyUntil?.toISOString() ?? null, sortOrder: t.sortOrder,
+    });
+    await writeAudit(tx, {
+      orgId, actorId, action: 'ticketType.update', target: `ticketType:${ticketTypeId}`,
+      meta: { eventId, changes: diff(snapshot(current), snapshot(tt)), soldAtChange: current.sold },
+    });
     return toTicketTypeAdmin(tt);
   });
 }
@@ -266,6 +355,8 @@ export async function updateTicketType(orgId: string, actorId: string, eventId: 
 export async function deleteTicketType(orgId: string, actorId: string, eventId: string, ticketTypeId: string): Promise<void> {
   await transaction(async (tx) => {
     const event = await lockActiveEvent(tx, orgId, eventId);
+    // Ligne du type verrouillée AVANT les comptages : une réservation concurrente attend ou a déjà abouti.
+    if (!(await repo.lockTicketType(tx, eventId, ticketTypeId))) throw errors.notFound();
     const current = await repo.findTicketType(tx, orgId, eventId, ticketTypeId);
     if (!current) throw errors.notFound();
     const [orders, waitlist] = await Promise.all([

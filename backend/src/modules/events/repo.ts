@@ -23,6 +23,13 @@ export function listEvents(orgId: string, status: 'DRAFT' | 'PUBLISHED' | 'CANCE
   ]);
 }
 
+/** Verrouille un type de place (clé parente incluse). */
+export async function lockTicketType(tx: Tx, eventId: string, ticketTypeId: string): Promise<boolean> {
+  const rows = await tx.$queryRaw<{ id: string }[]>`
+    SELECT "id" FROM "ticket_types" WHERE "id" = ${ticketTypeId}::uuid AND "eventId" = ${eventId}::uuid FOR UPDATE`;
+  return rows.length === 1;
+}
+
 export function findTicketType(db: Tx, orgId: string, eventId: string, ticketTypeId: string) {
   return db.ticketType.findFirst({ where: { id: ticketTypeId, eventId, event: { orgId } } });
 }

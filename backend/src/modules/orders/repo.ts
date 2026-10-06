@@ -71,17 +71,17 @@ export async function reserve(tx: Tx, eventId: string, ticketTypeId: string, qua
 }
 
 /** Libère des places bloquées (expiration, annulation d'une commande non payée). */
-export async function releaseHeld(tx: Tx, ticketTypeId: string, quantity: number): Promise<void> {
+export async function releaseHeld(tx: Tx, eventId: string, ticketTypeId: string, quantity: number): Promise<void> {
   const changed = await tx.$executeRaw`
     UPDATE "ticket_types" SET "held" = "held" - ${quantity}, "updatedAt" = now()
-    WHERE "id" = ${ticketTypeId}::uuid AND "held" >= ${quantity}`;
+    WHERE "id" = ${ticketTypeId}::uuid AND "eventId" = ${eventId}::uuid AND "held" >= ${quantity}`;
   if (changed !== 1) throw new Error('Incohérence de stock : places bloquées insuffisantes');
 }
 
 /** Bloquées → vendues (paiement confirmé). */
-export async function heldToSold(tx: Tx, ticketTypeId: string, quantity: number): Promise<void> {
+export async function heldToSold(tx: Tx, eventId: string, ticketTypeId: string, quantity: number): Promise<void> {
   const changed = await tx.$executeRaw`
     UPDATE "ticket_types" SET "held" = "held" - ${quantity}, "sold" = "sold" + ${quantity}, "updatedAt" = now()
-    WHERE "id" = ${ticketTypeId}::uuid AND "held" >= ${quantity}`;
+    WHERE "id" = ${ticketTypeId}::uuid AND "eventId" = ${eventId}::uuid AND "held" >= ${quantity}`;
   if (changed !== 1) throw new Error('Incohérence de stock : places bloquées insuffisantes');
 }

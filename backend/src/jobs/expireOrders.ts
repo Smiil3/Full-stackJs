@@ -36,7 +36,7 @@ export async function expireOrders(now: Date = new Date()): Promise<{ expired: n
       });
       // Types triés par id : ordre de verrouillage identique à la réservation.
       for (const item of order.items) {
-        await releaseHeld(tx, item.ticketTypeId, item.quantity);
+        await releaseHeld(tx, order.eventId, item.ticketTypeId, item.quantity);
         released.add(item.ticketTypeId);
       }
       await enqueueEmail(tx, order.user.email, 'orderExpired', { displayName: order.user.displayName, eventTitle: order.event.title });

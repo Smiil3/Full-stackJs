@@ -13,7 +13,7 @@ export interface EventCreateBody {
   title: string; description?: string | null; venue?: string | null; address?: string | null; isOnline: boolean;
   startsAt: string; endsAt: string; timezone: string; salesStartAt: string; salesEndAt: string; overrides?: OverridesInput;
 }
-export type EventPatchBody = Partial<EventCreateBody>;
+export type EventPatchBody = Partial<EventCreateBody> & { rescheduleReason?: string };
 
 const eventFields = {
   title: text().min(1).max(150),
@@ -39,7 +39,12 @@ export const eventCreateBody = Joi.object<EventCreateBody>({
   salesStartAt: eventFields.salesStartAt.required(),
   salesEndAt: eventFields.salesEndAt.required(),
 });
-export const eventPatchBody = Joi.object<EventPatchBody>(eventFields).min(1);
+export const eventPatchBody = Joi.object<EventPatchBody>({
+  ...eventFields,
+  // Surcharges : un objet vide n'a aucun effet ⇒ refusé (pas d'entrée d'audit vide).
+  overrides: overrides.min(1),
+  rescheduleReason: text({ multiline: true }).min(1).max(500),
+}).min(1);
 
 export interface TicketTypeBody {
   name: string; description?: string | null; capacity: number; priceCents: number;
