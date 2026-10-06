@@ -13,19 +13,7 @@ import { errorHandler, notFoundHandler } from './middlewares/errorHandler.js';
 import { buildLimiters } from './middlewares/rateLimit.js';
 import { endpoint } from './middlewares/validate.js';
 import { buildApiRouter, buildWebhookRouter } from './routes.js';
-
-export const JSON_BODY_LIMIT = '10kb';
-export const WEBHOOK_BODY_LIMIT = '64kb';
-export const SYNC_BODY_LIMIT = '256kb';
-const SYNC_ROUTE = /^\/api\/v1\/orgs\/[^/]+\/events\/[^/]+\/checkin\/sync$/;
-
-const FORBIDDEN_JSON_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
-
-/** Refuse dès le parsing toute clé JSON pouvant servir à une pollution de prototype (⇒ 400). */
-function rejectPrototypeKeys(key: string, value: unknown): unknown {
-  if (FORBIDDEN_JSON_KEYS.has(key)) throw new SyntaxError('Clé JSON interdite');
-  return value;
-}
+import { JSON_BODY_LIMIT, jsonReviver, SYNC_ROUTE, WEBHOOK_BODY_LIMIT } from './lib/bodyLimits.js';
 
 export interface AppOptions {
   /** Multiplicateur des plafonds de rate limiting (tests). */
@@ -107,10 +95,15 @@ export function createApp(options: AppOptions = {}): Express {
   // Le limiteur global passe avant tout parsing : une rafale de corps volumineux ou malformés est coupée tôt.
   app.use('/api/v1', limiters.global);
   app.use(requireJsonContentType);
-  // Synchronisation hors-ligne : jusqu'à 500 scans (~130 ko) ⇒ limite dédiée À CETTE SEULE route (authentifiée,
-  // rate-limitée) ; le parseur global (10 ko) ignore ensuite un corps déjà lu.
-  app.use(SYNC_ROUTE, express.json({ limit: SYNC_BODY_LIMIT, strict: true, type: 'application/json', reviver: rejectPrototypeKeys }));
-  app.use(express.json({ limit: JSON_BODY_LIMIT, strict: true, type: 'application/json', reviver: rejectPrototypeKeys }));
+  // Parseur global (10 ko) pour toutes les routes SAUF la synchronisation hors-ligne : celle-ci a son propre
+  // parseur (160 ko) monté dans son routeur APRÈS l'authentification, le contrôle de rôle et le limiteur.
+  app.use(express.json({
+    limit: JSON_BODY_LIMIT,
+    strict: true,
+    type: (req) => typeof req.headers['content-type'] === 'string' && /^application\/json\b/i.test(req.headers['content-type'])
+      && !SYNC_ROUTE.test((req.url ?? '').split('?')[0] ?? ''),
+    reviver: jsonReviver,
+  }));
   app.use(cookieParser());
   app.use('/api/v1', buildApiRouter(limiters));
 

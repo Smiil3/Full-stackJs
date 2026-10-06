@@ -45,7 +45,14 @@ export function buildLimiters(config: RateLimitConfig) {
         return `user:${auth?.userId ?? 'anonyme'}`;
       },
     }),
-    scan: limiter(config, 'scan', 60_000, 240),
+    // Contrôle : wifi de salle partagé ⇒ plafond IP large ; le vrai plafond est par contrôleur.
+    scan: limiter(config, 'scan', 60_000, 2400),
+    scanPerUser: limiter(config, 'scan-user', 60_000, 240, {
+      keyGenerator: (_req, res) => {
+        const auth = (res.locals as { auth?: { userId?: string } }).auth;
+        return `user:${auth?.userId ?? 'anonyme'}`;
+      },
+    }),
   };
 }
 

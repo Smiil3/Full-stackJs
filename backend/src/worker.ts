@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { EnvValidationError, getEnv } from './config/env.js';
+import { loadTicketKeys, TicketKeyError } from './lib/ticketSigning.js';
 import { disconnectDb } from './lib/db.js';
 import { getLogger } from './lib/logger.js';
 import { createSmtpTransport } from './lib/mailer.js';
@@ -16,9 +17,12 @@ import { expireWaitlistOffers, sweepWaitlist } from './modules/waitlist/service.
  */
 function loadEnvOrExit() {
   try {
-    return getEnv();
+    const loaded = getEnv();
+    // Clés de signature des billets chargées et contrôlées au démarrage (fail-fast).
+    loadTicketKeys();
+    return loaded;
   } catch (err) {
-    if (err instanceof EnvValidationError) {
+    if (err instanceof EnvValidationError || err instanceof TicketKeyError) {
       process.stderr.write(`${err.message}\nDémarrage refusé.\n`);
       process.exit(1);
     }

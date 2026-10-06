@@ -1,5 +1,5 @@
 import { createPrivateKey, createPublicKey, sign, verify, type KeyObject } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { getEnv } from '../config/env.js';
 
 const PREFIX = 'NG1';
@@ -14,26 +14,54 @@ interface Keys {
 
 let keys: Keys | null = null;
 
-/** Clés Ed25519 lues une fois (fichiers hors dépôt, générés par `npm run keys:generate`). */
-function getKeys(): Keys {
-  if (!keys) {
-    const env = getEnv();
-    // Chemins fournis par l'opérateur (variables d'environnement validées), jamais par un client HTTP.
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- chemin de configuration
-    const privateKey = createPrivateKey(readFileSync(env.ticketSigningPrivateKeyFile));
-    // eslint-disable-next-line security/detect-non-literal-fs-filename -- chemin de configuration
-    const publicKey = createPublicKey(readFileSync(env.ticketSigningPublicKeyFile));
-    if (privateKey.asymmetricKeyType !== 'ed25519' || publicKey.asymmetricKeyType !== 'ed25519') {
-      throw new Error('Les clés de signature des billets doivent être Ed25519');
-    }
-    keys = { privateKey, publicKey };
+export class TicketKeyError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'TicketKeyError';
   }
+}
+
+/**
+ * Charge et contrôle la paire Ed25519 (appelé au démarrage : refus de démarrer si elle est invalide).
+ * - la clé publique est DÉRIVÉE de la clé privée ; si le fichier public existe, il doit correspondre ;
+ * - en production, la clé privée ne doit être lisible ni par le groupe ni par les autres (mode 0600 / 0400 ;
+ *   secret monté par l'orchestrateur avec defaultMode 0400).
+ */
+export function loadTicketKeys(): Keys {
+  const env = getEnv();
+  // Chemins fournis par l'opérateur (variables d'environnement validées), jamais par un client HTTP.
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- chemin de configuration
+  const mode = statSync(env.ticketSigningPrivateKeyFile).mode;
+  if (env.nodeEnv === 'production' && (mode & 0o077) !== 0) {
+    throw new TicketKeyError('La clé privée de signature des billets est lisible par d’autres utilisateurs (attendu : 0600 ou 0400).');
+  }
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- chemin de configuration
+  const privateKey = createPrivateKey(readFileSync(env.ticketSigningPrivateKeyFile));
+  if (privateKey.asymmetricKeyType !== 'ed25519') throw new TicketKeyError('La clé de signature des billets doit être Ed25519.');
+  const publicKey = createPublicKey(privateKey);
+  // eslint-disable-next-line security/detect-non-literal-fs-filename -- chemin de configuration
+  if (existsSync(env.ticketSigningPublicKeyFile)) {
+    // eslint-disable-next-line security/detect-non-literal-fs-filename -- chemin de configuration
+    const declared = createPublicKey(readFileSync(env.ticketSigningPublicKeyFile));
+    const same = declared.export({ format: 'der', type: 'spki' }).equals(publicKey.export({ format: 'der', type: 'spki' }));
+    if (!same) throw new TicketKeyError('Les clés publique et privée de signature des billets ne forment pas une paire.');
+  }
+  keys = { privateKey, publicKey };
   return keys;
+}
+
+function getKeys(): Keys {
+  return keys ?? loadTicketKeys();
 }
 
 /** Réservé aux tests : relire les clés (changement de fichiers). */
 export function resetTicketKeys(): void {
   keys = null;
+}
+
+/** base64url canonique : refuse les encodages équivalents (bits de remplissage non nuls du dernier caractère). */
+function isCanonicalBase64url(value: string): boolean {
+  return Buffer.from(value, 'base64url').toString('base64url') === value;
 }
 
 /**
@@ -46,19 +74,23 @@ export function qrPayloadFor(eventId: string, publicId: string): string {
   return `${signed}.${signature}`;
 }
 
-export type QrCheck = { ok: true; eventId: string; publicId: string } | { ok: false };
+export type QrCheck = { ok: true; eventId: string; publicId: string } | { ok: false; reason: 'format' | 'signature' };
 
-/** Vérification stricte : 4 parties, préfixe, formats, puis signature. */
+/** Vérification stricte : 4 parties, préfixe, formats (base64url canonique), puis signature. */
 export function verifyQrPayload(payload: string): QrCheck {
-  if (payload.length > 256) return { ok: false };
+  if (payload.length > 256) return { ok: false, reason: 'format' };
   const parts = payload.split('.');
-  if (parts.length !== 4) return { ok: false };
+  if (parts.length !== 4) return { ok: false, reason: 'format' };
   const [prefix, eventId, publicId, signature] = parts;
-  if (prefix !== PREFIX || !eventId || !UUID_RE.test(eventId) || !publicId || !PUBLIC_ID_RE.test(publicId) || !signature || !SIGNATURE_RE.test(signature)) {
-    return { ok: false };
+  if (
+    prefix !== PREFIX || !eventId || !UUID_RE.test(eventId)
+    || !publicId || !PUBLIC_ID_RE.test(publicId) || !isCanonicalBase64url(publicId)
+    || !signature || !SIGNATURE_RE.test(signature) || !isCanonicalBase64url(signature)
+  ) {
+    return { ok: false, reason: 'format' };
   }
   const valid = verify(null, Buffer.from(`${PREFIX}.${eventId}.${publicId}`, 'utf8'), getKeys().publicKey, Buffer.from(signature, 'base64url'));
-  return valid ? { ok: true, eventId, publicId } : { ok: false };
+  return valid ? { ok: true, eventId, publicId } : { ok: false, reason: 'signature' };
 }
 
 /** Clé publique au format JWK (vérification hors-ligne par la PWA de contrôle). */

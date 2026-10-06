@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { EnvValidationError, getEnv } from './config/env.js';
+import { loadTicketKeys, TicketKeyError } from './lib/ticketSigning.js';
 import { getLogger } from './lib/logger.js';
 import { createApp } from './app.js';
 import { disconnectDb } from './lib/db.js';
@@ -7,9 +8,12 @@ import { warmUpAuth } from './modules/auth/service.js';
 
 function loadEnvOrExit() {
   try {
-    return getEnv();
+    const loaded = getEnv();
+    // Clés de signature des billets chargées et contrôlées au démarrage (fail-fast).
+    loadTicketKeys();
+    return loaded;
   } catch (err) {
-    if (err instanceof EnvValidationError) {
+    if (err instanceof EnvValidationError || err instanceof TicketKeyError) {
       process.stderr.write(`${err.message}\nDémarrage refusé.\n`);
       process.exit(1);
     }

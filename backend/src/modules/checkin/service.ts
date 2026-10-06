@@ -2,6 +2,8 @@ import type { CheckInResult, Prisma } from '../../generated/prisma/client.js';
 import { clock } from '../../lib/clock.js';
 import { getDb, transaction, type Tx } from '../../lib/db.js';
 import { errors } from '../../lib/errors.js';
+import { getLogger } from '../../lib/logger.js';
+import { consumeQuota } from '../../lib/rateLimitStore.js';
 import { iso } from '../../lib/schemas.js';
 import { holderInitials, publicKeyJwk, verifyQrPayload } from '../../lib/ticketSigning.js';
 
@@ -22,12 +24,22 @@ export async function listCheckinEvents(orgId: string) {
   };
 }
 
-/** Événement du collectif (orgId dans le filtre) : sinon 404. */
-async function eventOfOrg(db: Tx, orgId: string, eventId: string) {
-  const event = await db.event.findFirst({ where: { id: eventId, orgId }, select: { id: true, salesStartAt: true } });
-  if (!event) throw errors.notFound();
+const CHECKIN_WINDOW_MS = 24 * 3600_000;
+
+/**
+ * Événement contrôlable (contrat 1.12) : du collectif (orgId dans le filtre), PUBLISHED et terminé depuis
+ * moins de 24 h ; CANCELLED est signalé à l'appelant (le scan répond alors CANCELLED) ; tout autre cas ⇒ 404.
+ */
+async function eventOfOrg(db: Tx, orgId: string, eventId: string, allowCancelled = false) {
+  const event = await db.event.findFirst({ where: { id: eventId, orgId }, select: { id: true, salesStartAt: true, status: true, endsAt: true } });
+  if (!event || event.endsAt.getTime() <= clock.now().getTime() - CHECKIN_WINDOW_MS) throw errors.notFound();
+  if (event.status === 'CANCELLED' && allowCancelled) return event;
+  if (event.status !== 'PUBLISHED') throw errors.notFound();
   return event;
 }
+
+/** Compteur agrégé des QR mal formés (aucune ligne CheckIn : la table ne peut pas être gonflée). */
+export const checkinMetrics = { invalidFormat: 0 };
 
 const ticketInclude = {
   orderItem: { select: { ticketType: { select: { name: true } }, order: { select: { user: { select: { displayName: true } } } } } },
@@ -79,6 +91,14 @@ export interface ScanOutcome {
  *    billet ⇒ un seul OK, l'autre ALREADY_USED — même depuis le même appareil.
  */
 export async function scanOne(input: ScanInput): Promise<ScanOutcome> {
+  // QR de FORMAT invalide (pas un billet de la plateforme) : rejet sans écriture, compteur agrégé.
+  // Les signatures invalides d'un format correct sont, elles, journalisées (tentative de fraude).
+  const qr = verifyQrPayload(input.qrPayload);
+  if (!qr.ok && qr.reason === 'format') {
+    checkinMetrics.invalidFormat += 1;
+    if (checkinMetrics.invalidFormat % 100 === 1) getLogger().warn({ total: checkinMetrics.invalidFormat }, 'QR de format invalide présentés au contrôle');
+    return { result: 'INVALID', ticket: null, usedAt: null };
+  }
   return transaction(async (tx) => {
     const reserved = await tx.$queryRaw<{ id: string }[]>`
       INSERT INTO "check_ins" ("id", "scanId", "eventId", "scannerId", "deviceId", "scannedAt", "clientScannedAt", "scannedAtClamped", "result", "offline")
@@ -93,7 +113,6 @@ export async function scanOne(input: ScanInput): Promise<ScanOutcome> {
       await tx.checkIn.update({ where: { id: checkInId }, data: { result, ticketId } });
     };
 
-    const qr = verifyQrPayload(input.qrPayload);
     if (!qr.ok) {
       await record('INVALID', null);
       return { result: 'INVALID', ticket: null, usedAt: null };
@@ -131,21 +150,36 @@ async function replayed(tx: Tx, input: ScanInput): Promise<ScanOutcome> {
   };
 }
 
+/**
+ * Scan en ligne. `deviceId` sert au journal et au diagnostic ; il n'a AUCUNE valeur de preuve (fourni par
+ * l'appareil) : c'est le scannerId issu du jeton authentifié qui fait foi.
+ */
 export async function scan(orgId: string, eventId: string, scannerId: string, body: { qrPayload: string; deviceId: string; scanId: string }) {
-  await eventOfOrg(getDb(), orgId, eventId);
+  const event = await eventOfOrg(getDb(), orgId, eventId, true);
+  if (event.status === 'CANCELLED') return { result: 'CANCELLED' as const, ticket: null, usedAt: null };
   const now = clock.now();
   return scanOne({ orgId, eventId, scannerId, ...body, scannedAt: now, clientScannedAt: null, clamped: false, offline: false });
 }
 
 const FUTURE_TOLERANCE_MS = 5 * 60_000;
+/** Scans synchronisés au plus par minute et par contrôleur. */
+export const SYNC_SCANS_PER_MINUTE = 2000;
 
 /**
- * Synchronisation des scans hors-ligne : traités dans l'ordre `scannedAt` (puis ordre d'arrivée), le premier
- * gagne ; `scannedAt` est borné à [début des ventes, maintenant + 5 min] (le bornage est journalisé) et ne
- * permet jamais de contourner un billet déjà utilisé. Résultats renvoyés dans l'ordre de la requête.
+ * Synchronisation des scans hors-ligne. « Le premier gagne » :
+ * - AU SEIN D'UN LOT : ordre `scannedAt` (horodatage appareil borné), puis ordre dans la requête ;
+ * - ENTRE LOTS / face au scan en ligne : ordre d'ARRIVÉE au serveur — un scan hors-ligne antérieur
+ *   synchronisé après un passage déjà enregistré reçoit ALREADY_USED avec le usedAt de ce passage.
+ * `scannedAt` est borné à [début des ventes, maintenant + 5 min] (bornage journalisé) et ne permet jamais de
+ * contourner un billet déjà utilisé. Résultats renvoyés dans l'ordre de la requête. Quota : nombre de scans
+ * par utilisateur et par minute (un lot de 500 compte pour 500).
  */
 export async function sync(orgId: string, eventId: string, scannerId: string, body: { deviceId: string; scans: { scanId: string; qrPayload: string; scannedAt: string }[] }) {
-  const event = await eventOfOrg(getDb(), orgId, eventId);
+  const event = await eventOfOrg(getDb(), orgId, eventId, true);
+  await consumeQuota('scan-sync-user', scannerId, 60_000, SYNC_SCANS_PER_MINUTE, body.scans.length);
+  if (event.status === 'CANCELLED') {
+    return { results: body.scans.map((s) => ({ scanId: s.scanId, result: 'CANCELLED' as const, usedAt: null })) };
+  }
   const now = clock.now().getTime();
   const min = event.salesStartAt.getTime();
   const max = now + FUTURE_TOLERANCE_MS;

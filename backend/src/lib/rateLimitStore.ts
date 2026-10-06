@@ -10,14 +10,14 @@ function bucketKey(prefix: string, id: string): string {
 }
 
 /** Incrément atomique d'un compteur à fenêtre fixe (réinitialisé à l'expiration). */
-export async function hit(prefix: string, id: string, windowMs: number): Promise<ClientRateLimitInfo & { resetTime: Date }> {
+export async function hit(prefix: string, id: string, windowMs: number, cost = 1): Promise<ClientRateLimitInfo & { resetTime: Date }> {
   const key = bucketKey(prefix, id);
   const seconds = windowMs / 1000;
   const rows = await getDb().$queryRaw<{ hits: number; resetAt: Date }[]>`
     INSERT INTO "rate_limit_buckets" ("key", "hits", "resetAt")
-    VALUES (${key}, 1, now() + make_interval(secs => ${seconds}))
+    VALUES (${key}, ${cost}, now() + make_interval(secs => ${seconds}))
     ON CONFLICT ("key") DO UPDATE SET
-      "hits" = CASE WHEN "rate_limit_buckets"."resetAt" <= now() THEN 1 ELSE "rate_limit_buckets"."hits" + 1 END,
+      "hits" = CASE WHEN "rate_limit_buckets"."resetAt" <= now() THEN ${cost} ELSE "rate_limit_buckets"."hits" + ${cost} END,
       "resetAt" = CASE WHEN "rate_limit_buckets"."resetAt" <= now()
                     THEN now() + make_interval(secs => ${seconds}) ELSE "rate_limit_buckets"."resetAt" END
     RETURNING "hits", "resetAt"`;
@@ -58,8 +58,8 @@ export class PgRateLimitStore implements Store {
  * Quota applicatif (par compte / par adresse email) : même store partagé.
  * Dépassement ⇒ 429 RATE_LIMITED avec Retry-After. Appliqué que l'adresse existe ou non (pas d'énumération).
  */
-export async function consumeQuota(prefix: string, id: string, windowMs: number, max: number): Promise<void> {
-  const { totalHits, resetTime } = await hit(prefix, id, windowMs);
+export async function consumeQuota(prefix: string, id: string, windowMs: number, max: number, cost = 1): Promise<void> {
+  const { totalHits, resetTime } = await hit(prefix, id, windowMs, cost);
   if (totalHits > Math.max(1, Math.floor(max * getEnv().rateLimitMultiplier))) {
     const retryAfter = Math.max(1, Math.ceil((resetTime.getTime() - Date.now()) / 1000));
     throw new AppError(429, 'RATE_LIMITED', 'Trop de requêtes, veuillez patienter.', { retryAfterSeconds: retryAfter });
