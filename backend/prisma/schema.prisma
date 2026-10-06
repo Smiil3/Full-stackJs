@@ -93,6 +93,8 @@ model User {
   isPlatformAdmin  Boolean   @default(false)
   failedLoginCount Int       @default(0)
   lockedUntil      DateTime? @db.Timestamptz(3)
+  /// Dernier échec : le compteur repart de zéro après 15 min sans échec (fenêtre glissante).
+  lastFailedLoginAt DateTime? @db.Timestamptz(3)
   /// Version des access tokens (claim `ver`) : incrémentée à chaque changement / reset de mot de passe,
   /// ce qui invalide immédiatement tous les access tokens en cours.
   tokenVersion     Int       @default(0)

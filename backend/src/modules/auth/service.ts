@@ -54,12 +54,28 @@ export function hashPassword(password: string): Promise<string> {
   return argon2.hash(password, ARGON2_OPTIONS);
 }
 
+/** Compteurs d'observabilité (exposés pour les tests : nombre d'évaluations réelles d'un mot de passe). */
+export const authMetrics = { passwordVerifications: 0 };
+
 async function verifyPassword(hash: string, password: string): Promise<boolean> {
   try {
     return await argon2.verify(hash, password);
   } catch {
     return false;
   }
+}
+
+/** Évalue le mot de passe d'un compte réel, après réservation atomique d'une tentative. */
+async function checkAccountPassword(user: { id: string; passwordHash: string }, password: string): Promise<boolean> {
+  if (!(await repo.reserveLoginAttempt(user.id))) {
+    // Compte verrouillé : aucune évaluation, mais même coût apparent qu'une vérification réelle.
+    await verifyPassword(await getDummyHash(), password);
+    return false;
+  }
+  authMetrics.passwordVerifications += 1;
+  const valid = await verifyPassword(user.passwordHash, password);
+  if (valid) await repo.recordLoginSuccess(user.id);
+  return valid;
 }
 
 async function issueEmailToken(tx: Tx, userId: string, purpose: 'VERIFY_EMAIL' | 'RESET_PASSWORD'): Promise<string> {
@@ -140,7 +156,7 @@ export async function register(input: { email: string; password: string; display
         } else {
           await tx.user.update({
             where: { id: existing.id },
-            data: { passwordHash, displayName, tokenVersion: { increment: 1 }, failedLoginCount: 0, lockedUntil: null },
+            data: { passwordHash, displayName, tokenVersion: { increment: 1 }, failedLoginCount: 0, lockedUntil: null, lastFailedLoginAt: null },
           });
           await repo.revokeAllForUser(tx, existing.id);
           const raw = await issueEmailToken(tx, existing.id, 'VERIFY_EMAIL');
@@ -197,14 +213,7 @@ export async function login(rawEmail: string, password: string): Promise<Session
     await verifyPassword(await getDummyHash(), password);
     throw errors.invalidCredentials();
   }
-  const locked = user.lockedUntil !== null && user.lockedUntil.getTime() > Date.now();
-  const valid = await verifyPassword(user.passwordHash, password);
-  if (locked) throw errors.invalidCredentials();
-  if (!valid) {
-    await repo.recordLoginFailure(user.id);
-    throw errors.invalidCredentials();
-  }
-  if (user.failedLoginCount > 0 || user.lockedUntil) await repo.recordLoginSuccess(user.id);
+  if (!(await checkAccountPassword(user, password))) throw errors.invalidCredentials();
   // Email non vérifié : révélé UNIQUEMENT à qui connaît le mot de passe, et aucune session n'est créée.
   if (!user.emailVerifiedAt) throw errors.emailNotVerified();
   const refresh = await transaction(async (tx) => {
@@ -294,7 +303,7 @@ export async function resetPassword(token: string, password: string): Promise<vo
     const user = await tx.user.update({
       where: { id: userId },
       // Le lien reçu par mail prouve aussi la possession de l'adresse.
-      data: { passwordHash, failedLoginCount: 0, lockedUntil: null, tokenVersion: { increment: 1 }, emailVerifiedAt: new Date() },
+      data: { passwordHash, failedLoginCount: 0, lockedUntil: null, lastFailedLoginAt: null, tokenVersion: { increment: 1 }, emailVerifiedAt: new Date() },
     });
     await repo.revokeAllForUser(tx, userId);
     await repo.invalidateEmailTokens(tx, userId, 'RESET_PASSWORD');
@@ -306,7 +315,8 @@ export async function resetPassword(token: string, password: string): Promise<vo
 
 export async function changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
   const user = await transaction((tx) => tx.user.findUnique({ where: { id: userId } }));
-  if (!user || !(await verifyPassword(user.passwordHash, currentPassword))) throw errors.invalidCredentials();
+  // Même compteur et même verrou que la connexion : pas de force brute via une session volée.
+  if (!user || !(await checkAccountPassword(user, currentPassword))) throw errors.invalidCredentials();
   const passwordHash = await hashPassword(newPassword);
   await transaction(async (tx) => {
     await tx.user.update({ where: { id: userId }, data: { passwordHash, tokenVersion: { increment: 1 } } });

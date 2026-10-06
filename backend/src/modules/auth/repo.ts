@@ -2,7 +2,8 @@ import type { EmailTokenPurpose } from '../../generated/prisma/client.js';
 import { getDb, type Tx } from '../../lib/db.js';
 
 export const LOCK_THRESHOLD = 5;
-export const MAX_LOCK_MINUTES = 60;
+export const MAX_LOCK_MINUTES = 15;
+export const FAILURE_WINDOW_MINUTES = 15;
 
 export function findUserByEmail(email: string) {
   return getDb().user.findUnique({ where: { email } });
@@ -23,24 +24,39 @@ export function findUserWithMemberships(userId: string) {
 }
 
 /**
- * Échec de connexion : incrément atomique et verrouillage progressif
- * (5 échecs ⇒ 1 min, puis 2, 4, 8… plafonné à 60 min).
+ * Réserve une tentative de mot de passe AVANT toute vérification (UPDATE atomique) :
+ * - compte verrouillé ⇒ aucune réservation (null) : la tentative est refusée sans évaluation ;
+ * - le compteur repart à 1 après 15 min sans échec (fenêtre glissante) ;
+ * - dès le seuil (5), le verrou est posé immédiatement (1 min, puis 2, 4… plafonné à 15 min) :
+ *   une rafale parallèle ne peut donc jamais obtenir plus de 5 évaluations.
+ * Une tentative réussie efface ensuite compteur et verrou (recordLoginSuccess).
  */
-export async function recordLoginFailure(userId: string): Promise<void> {
-  await getDb().$executeRaw`
+export async function reserveLoginAttempt(userId: string): Promise<boolean> {
+  // Expressions évaluées sur la version COURANTE de la ligne (re-vérifiée après attente du verrou
+  // de ligne) : aucune lecture préalable susceptible d'être périmée en cas de rafale concurrente.
+  const rows = await getDb().$queryRaw<{ failedLoginCount: number }[]>`
     UPDATE "users"
-    SET "failedLoginCount" = "failedLoginCount" + 1,
-        "lockedUntil" = CASE
-          WHEN "failedLoginCount" + 1 >= ${LOCK_THRESHOLD}
-            THEN now() + make_interval(mins => LEAST(${MAX_LOCK_MINUTES}, power(2, "failedLoginCount" + 1 - ${LOCK_THRESHOLD})::int))
-          ELSE "lockedUntil"
+    SET "failedLoginCount" = CASE
+          WHEN "lastFailedLoginAt" IS NULL OR "lastFailedLoginAt" < now() - make_interval(mins => ${FAILURE_WINDOW_MINUTES}) THEN 1
+          ELSE "failedLoginCount" + 1
         END,
+        "lockedUntil" = CASE
+          WHEN (CASE
+                  WHEN "lastFailedLoginAt" IS NULL OR "lastFailedLoginAt" < now() - make_interval(mins => ${FAILURE_WINDOW_MINUTES}) THEN 1
+                  ELSE "failedLoginCount" + 1
+                END) >= ${LOCK_THRESHOLD}
+            THEN now() + make_interval(mins => LEAST(${MAX_LOCK_MINUTES}, power(2, "failedLoginCount" + 1 - ${LOCK_THRESHOLD})::int))
+          ELSE NULL
+        END,
+        "lastFailedLoginAt" = now(),
         "updatedAt" = now()
-    WHERE "id" = ${userId}::uuid`;
+    WHERE "id" = ${userId}::uuid AND ("lockedUntil" IS NULL OR "lockedUntil" <= now())
+    RETURNING "failedLoginCount"`;
+  return rows.length === 1;
 }
 
 export async function recordLoginSuccess(userId: string): Promise<void> {
-  await getDb().user.update({ where: { id: userId }, data: { failedLoginCount: 0, lockedUntil: null } });
+  await getDb().user.update({ where: { id: userId }, data: { failedLoginCount: 0, lockedUntil: null, lastFailedLoginAt: null } });
 }
 
 /** Invalide les jetons mail encore valides d'un usage donné (un seul lien actif à la fois). */

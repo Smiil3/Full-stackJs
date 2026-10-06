@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { SignJWT, UnsecuredJWT } from 'jose';
 import supertest from 'supertest';
 import { createApp } from '../../src/app.js';
+import { authMetrics } from '../../src/modules/auth/service.js';
 import { getDb } from '../../src/lib/db.js';
 import { api, createUser, csrfHeaders, lastMail, login, loggedInUser, PASSWORD, refreshCookieOf, tokenFromMail } from '../helpers.js';
 
@@ -128,6 +129,49 @@ describe('connexion', () => {
     const reset = await getDb().user.findUniqueOrThrow({ where: { id: user.id } });
     expect(reset.failedLoginCount).toBe(0);
     expect(reset.lockedUntil).toBeNull();
+  });
+
+  it('rafale de 20 logins parallèles faux ⇒ au plus 5 évaluations du mot de passe (B2.1 M4)', async () => {
+    const user = await createUser({ email: 'burst@test.fr' });
+    const before = authMetrics.passwordVerifications;
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () => api().post(`${A}/login`).send({ email: user.email, password: 'mauvais-mot-de-passe' })),
+    );
+    expect(results.every((r) => r.status === 401)).toBe(true);
+    expect(authMetrics.passwordVerifications - before).toBeLessThanOrEqual(5);
+    // Compte verrouillé : même le bon mot de passe est refusé sans évaluation.
+    const mid = authMetrics.passwordVerifications;
+    await api().post(`${A}/login`).send({ email: user.email, password: PASSWORD }).expect(401);
+    expect(authMetrics.passwordVerifications).toBe(mid);
+  });
+
+  it('fenêtre glissante : le compteur repart de zéro après 15 min sans échec (B2.1 M4)', async () => {
+    const user = await createUser({ email: 'window@test.fr' });
+    for (let i = 0; i < 4; i += 1) await api().post(`${A}/login`).send({ email: user.email, password: 'mauvais-mot-de-passe' }).expect(401);
+    await getDb().user.update({ where: { id: user.id }, data: { lastFailedLoginAt: new Date(Date.now() - 16 * 60_000) } });
+    await api().post(`${A}/login`).send({ email: user.email, password: 'mauvais-mot-de-passe' }).expect(401);
+    const after = await getDb().user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(after.failedLoginCount).toBe(1);
+    expect(after.lockedUntil).toBeNull();
+  });
+
+  it('verrou plafonné à 15 minutes (B2.1 M4)', async () => {
+    const user = await createUser({ email: 'cap@test.fr' });
+    await getDb().user.update({ where: { id: user.id }, data: { failedLoginCount: 30, lastFailedLoginAt: new Date(), lockedUntil: new Date(Date.now() - 1000) } });
+    await api().post(`${A}/login`).send({ email: user.email, password: 'mauvais-mot-de-passe' }).expect(401);
+    const after = await getDb().user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(after.lockedUntil!.getTime()).toBeLessThanOrEqual(Date.now() + 15 * 60_000 + 1000);
+    expect(after.lockedUntil!.getTime()).toBeGreaterThan(Date.now() + 14 * 60_000);
+  });
+
+  it('change-password partage compteur et verrou (B2.1 M4)', async () => {
+    const u = await loggedInUser();
+    for (let i = 0; i < 5; i += 1) {
+      await api().post(`${A}/change-password`).set(u.auth).send({ currentPassword: 'faux-mot-de-passe', newPassword: 'nouveau-mot-de-passe-42' }).expect(401);
+    }
+    // Verrouillé : le bon mot de passe actuel est refusé, et la connexion aussi.
+    await api().post(`${A}/change-password`).set(u.auth).send({ currentPassword: PASSWORD, newPassword: 'nouveau-mot-de-passe-42' }).expect(401);
+    await api().post(`${A}/login`).send({ email: u.email, password: PASSWORD }).expect(401);
   });
 
   it('rate limiting sur le login ⇒ 429 RATE_LIMITED avec Retry-After', async () => {
