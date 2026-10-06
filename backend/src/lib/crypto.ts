@@ -62,6 +62,7 @@ export function decryptString(payload: string, keyring: Keyring, aad: string): s
 export const aad = {
   orgBankIban: (orgId: string) => `org:${orgId}:bank_iban`,
   orderTransferIban: (orderId: string) => `order:${orderId}:transfer_iban`,
+  outboxPayload: (outboxId: string) => `outbox:${outboxId}`,
 };
 
 const TRANSFER_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';

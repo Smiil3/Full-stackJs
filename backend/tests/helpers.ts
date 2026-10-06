@@ -3,6 +3,7 @@ import supertest from 'supertest';
 import argon2 from 'argon2';
 import { createApp } from '../src/app.js';
 import { getDb } from '../src/lib/db.js';
+import { decryptOutboxPayload } from '../src/lib/outbox.js';
 import type { Role } from '../src/generated/prisma/client.js';
 
 export const FRONT = 'http://localhost:5173';
@@ -81,9 +82,10 @@ export async function lastMail(to: string, template: string) {
 /** Extrait le jeton d'un lien de mail (?token=…). */
 export async function tokenFromMail(to: string, template: string, field = 'link'): Promise<string> {
   const mail = await lastMail(to, template);
-  const payload = mail?.payload as Record<string, string> | undefined;
-  const url = payload?.[field];
-  if (!url) throw new Error(`mail ${template} absent pour ${to}`);
+  if (!mail) throw new Error(`mail ${template} absent pour ${to}`);
+  const payload = decryptOutboxPayload(mail);
+  const url = payload[field];
+  if (typeof url !== 'string') throw new Error(`champ ${field} absent du mail ${template}`);
   const token = new URL(url).searchParams.get('token');
   if (!token) throw new Error('jeton absent du lien');
   return token;
