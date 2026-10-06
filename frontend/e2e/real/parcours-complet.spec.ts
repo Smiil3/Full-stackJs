@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { API, apiLogin, createVerifiedBuyer, setOfflineCheckin } from './fixtures';
+import { API, apiLogin, createEvent, createVerifiedBuyer, IN_CHECKIN_WINDOW } from './fixtures';
 import { waitForMail } from './mailpit';
 
 /**
@@ -11,8 +11,8 @@ test.skip(!PASSWORD, 'SEED_PASSWORD requis');
 
 test('achat carte ⇒ mail ⇒ billet QR ⇒ scan OK puis DÉJÀ UTILISÉ', async ({ browser, request }) => {
   const account = await createVerifiedBuyer(request);
-  const ev = ((await (await request.get(`${API}/events?pageSize=50`)).json()) as { items: { id: string; title: string; orgId: string }[] }).items.find((e) => e.title === 'Jazz au Hangar');
-  if (ev) await setOfflineCheckin(request, PASSWORD, ev.orgId, ev.id, false); // mode par défaut
+  // Événement propre au test, contrôlable maintenant, mode par défaut (en ligne).
+  const ev = await createEvent(request, PASSWORD, 10, { startsInMs: IN_CHECKIN_WINDOW });
 
   // 1. Achat par carte (prestataire simulé)
   const buyer = await browser.newPage();
@@ -20,8 +20,8 @@ test('achat carte ⇒ mail ⇒ billet QR ⇒ scan OK puis DÉJÀ UTILISÉ', asyn
   await buyer.getByLabel('Adresse email').fill(account.email);
   await buyer.getByLabel('Mot de passe').fill(account.password);
   await buyer.getByRole('button', { name: 'Se connecter' }).click();
-  await buyer.getByRole('main').getByRole('link', { name: 'Jazz au Hangar' }).click();
-  await buyer.getByLabel('Nombre de places « Parterre »').selectOption('1');
+  await buyer.getByRole('main').getByRole('link', { name: ev.title }).click();
+  await buyer.getByLabel('Nombre de places « Unique »').selectOption('1');
   await buyer.getByRole('button', { name: 'Réserver 1 place' }).click();
   await buyer.getByRole('button', { name: /Payer .* par carte/ }).click();
   await buyer.getByRole('button', { name: /^Payer$/ }).click();
@@ -33,7 +33,7 @@ test('achat carte ⇒ mail ⇒ billet QR ⇒ scan OK puis DÉJÀ UTILISÉ', asyn
 
   // 3. Billet dans « Mes billets » : QR affiché, plein écran
   await buyer.getByRole('link', { name: 'Mes billets' }).first().click();
-  await expect(buyer.getByRole('img', { name: /QR code du billet Parterre/ })).toBeVisible();
+  await expect(buyer.getByRole('img', { name: /QR code du billet Unique/ })).toBeVisible();
   await buyer.getByRole('button', { name: 'Afficher en plein écran' }).click();
   await expect(buyer.getByText('Augmentez la luminosité de votre écran')).toBeVisible();
   await buyer.getByRole('button', { name: 'Fermer' }).click();
@@ -51,7 +51,7 @@ test('achat carte ⇒ mail ⇒ billet QR ⇒ scan OK puis DÉJÀ UTILISÉ', asyn
   await scanner.getByLabel('Mot de passe').fill(PASSWORD);
   await scanner.getByRole('button', { name: 'Se connecter' }).click();
   // Mode par défaut : contrôle EN LIGNE, aucune liste téléchargée.
-  const card = scanner.locator('li', { has: scanner.getByRole('heading', { name: 'Jazz au Hangar' }) });
+  const card = scanner.locator('li', { has: scanner.getByRole('heading', { name: ev.title }) });
   await card.getByRole('link', { name: 'Contrôler les entrées' }).click();
   for (const expected of [/^OK/, /DÉJÀ UTILISÉ à \d{2}:\d{2}/]) {
     await scanner.getByLabel('Saisie manuelle du code').fill(qr);

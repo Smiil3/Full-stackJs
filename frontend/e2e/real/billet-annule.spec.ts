@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { API, apiLogin, createVerifiedBuyer, setOfflineCheckin } from './fixtures';
+import { buyByTransfer, createEvent, createVerifiedBuyer, IN_CHECKIN_WINDOW } from './fixtures';
 
 /** Billet d'une commande remboursée (annulation par l'acheteur) ⇒ « BILLET ANNULÉ » à l'entrée. */
 const PASSWORD = process.env.SEED_PASSWORD ?? '';
@@ -8,29 +8,18 @@ test.skip(!PASSWORD, 'SEED_PASSWORD requis');
 test('commande remboursée ⇒ scan « BILLET ANNULÉ » (en ligne et hors-ligne après mise à jour de la liste)', async ({ page, context, request }) => {
   // Achat par virement validé (données propres au test), puis annulation par l'acheteur depuis l'interface.
   const account = await createVerifiedBuyer(request);
-  const buyerToken = await apiLogin(request, account.email, account.password);
-  const events = (await (await request.get(`${API}/events?pageSize=50`)).json()) as { items: { id: string; title: string; orgId: string }[] };
-  const event = events.items.find((e) => e.title === 'Jazz au Hangar');
-  if (!event) throw new Error('événement de seed introuvable');
-  const detail = (await (await request.get(`${API}/events/${event.id}`)).json()) as { ticketTypes: { id: string; name: string }[] };
-  const order = (await (
-    await request.post(`${API}/orders`, {
-      headers: { Authorization: `Bearer ${buyerToken}`, 'Idempotency-Key': crypto.randomUUID() },
-      data: { eventId: event.id, paymentMethod: 'TRANSFER', items: [{ ticketTypeId: detail.ticketTypes.find((t) => t.name === 'Parterre')?.id, quantity: 1 }] },
-    })
-  ).json()) as { id: string; totalCents: number };
-  const manager = await apiLogin(request, 'manager@nuits.test', PASSWORD);
-  expect((await request.post(`${API}/orgs/${event.orgId}/orders/${order.id}/confirm-transfer`, { headers: { Authorization: `Bearer ${manager}` }, data: { receivedAmountCents: order.totalCents } })).ok()).toBe(true);
-  const { items } = (await (await request.get(`${API}/me/tickets`, { headers: { Authorization: `Bearer ${buyerToken}` } })).json()) as { items: { qrPayload: string }[] };
-  const qr = items[0]?.qrPayload ?? '';
-  await setOfflineCheckin(request, PASSWORD, event.orgId, event.id, true);
+  // Événement propre au test, contrôlable maintenant, mode secours activé (pour la partie hors-ligne).
+  const event = await createEvent(request, PASSWORD, 10, { startsInMs: IN_CHECKIN_WINDOW, offlineCheckinEnabled: true });
+  const { orderId, qrs } = await buyByTransfer(request, PASSWORD, account, event.orgId, event.eventId, event.ticketTypeId);
+  const order = { id: orderId };
+  const qr = qrs[0] ?? '';
 
   // Le scanner prépare sa liste AVANT l'annulation (cas réel : liste téléchargée le matin).
   await page.goto('/login?next=%2Fscan');
   await page.getByLabel('Adresse email').fill('scanner@nuits.test');
   await page.getByLabel('Mot de passe').fill(PASSWORD);
   await page.getByRole('button', { name: 'Se connecter' }).click();
-  const card = page.locator('li', { has: page.getByRole('heading', { name: 'Jazz au Hangar' }) });
+  const card = page.locator('li', { has: page.getByRole('heading', { name: event.title }) });
   await card.getByRole('button', { name: /Préparer l’entrée hors-ligne|Mettre à jour la liste hors-ligne/ }).click();
   await card.getByRole('link', { name: 'Contrôler les entrées' }).click();
 

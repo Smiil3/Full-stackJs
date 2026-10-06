@@ -1,5 +1,5 @@
 import { expect, test, type Browser, type Page } from '@playwright/test';
-import { buyByTransfer, createEvent, createVerifiedBuyer } from './fixtures';
+import { buyByTransfer, createEvent, createVerifiedBuyer, IN_CHECKIN_WINDOW } from './fixtures';
 
 /**
  * Parcours B7 contre l'API réelle, sur des événements créés par le test (rejouables) :
@@ -53,7 +53,7 @@ test('liste d’attente : complet ⇒ inscription ⇒ annulation d’un autre ac
 
 test('annulation d’événement : remboursements suivis, billets annulés chez l’acheteur et refusés à l’entrée', async ({ browser, request }) => {
   test.setTimeout(120_000);
-  const ev = await createEvent(request, PASSWORD, 10);
+  const ev = await createEvent(request, PASSWORD, 10, { startsInMs: IN_CHECKIN_WINDOW }); // contrôlable maintenant (v1.15)
   const buyers = [await createVerifiedBuyer(request), await createVerifiedBuyer(request)];
   const bought = [];
   for (const buyer of buyers) bought.push(await buyByTransfer(request, PASSWORD, buyer, ev.orgId, ev.eventId, ev.ticketTypeId));
@@ -76,5 +76,5 @@ test('annulation d’événement : remboursements suivis, billets annulés chez 
   const scanner = await loggedPage(browser, 'scanner@nuits.test', PASSWORD, `/scan/${ev.orgId}/${ev.eventId}`);
   await scanner.getByLabel('Saisie manuelle du code').fill(bought[0]?.qrs[0] ?? '');
   await scanner.getByRole('button', { name: 'Vérifier' }).click();
-  await expect(scanner.getByRole('alertdialog')).toContainText(/BILLET ANNULÉ|non disponible/);
+  await expect(scanner.getByRole('alertdialog')).toContainText('BILLET ANNULÉ');
 });

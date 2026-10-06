@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { API, apiLogin, createVerifiedBuyer, setOfflineCheckin } from '../real/fixtures';
+import { buyByTransfer, createEvent, createVerifiedBuyer, IN_CHECKIN_WINDOW } from '../real/fixtures';
 
 /**
  * Scanner PWA : après une première visite en ligne, l'application se RECHARGE sans réseau (service
@@ -16,28 +16,15 @@ test('rechargement hors-ligne de l’application, contrôle local puis resynchro
 
   // Billet acheté et payé (virement validé) pour un acheteur neuf.
   const account = await createVerifiedBuyer(request);
-  const buyer = await apiLogin(request, account.email, account.password);
-  const events = (await (await request.get(`${API}/events?pageSize=50`)).json()) as { items: { id: string; title: string; orgId: string }[] };
-  const event = events.items.find((e) => e.title === 'Jazz au Hangar');
-  if (!event) throw new Error('événement de seed introuvable');
-  const detail = (await (await request.get(`${API}/events/${event.id}`)).json()) as { ticketTypes: { id: string; name: string }[] };
-  const order = (await (
-    await request.post(`${API}/orders`, {
-      headers: { Authorization: `Bearer ${buyer}`, 'Idempotency-Key': crypto.randomUUID() },
-      data: { eventId: event.id, paymentMethod: 'TRANSFER', items: [{ ticketTypeId: detail.ticketTypes.find((t) => t.name === 'Parterre')?.id, quantity: 1 }] },
-    })
-  ).json()) as { id: string; totalCents: number };
-  const manager = await apiLogin(request, 'manager@nuits.test', PASSWORD);
-  await request.post(`${API}/orgs/${event.orgId}/orders/${order.id}/confirm-transfer`, { headers: { Authorization: `Bearer ${manager}` }, data: { receivedAmountCents: order.totalCents } });
-  await setOfflineCheckin(request, PASSWORD, event.orgId, event.id, true);
-  const qr = ((await (await request.get(`${API}/me/tickets`, { headers: { Authorization: `Bearer ${buyer}` } })).json()) as { items: { qrPayload: string }[] }).items[0]?.qrPayload ?? '';
+  const event = await createEvent(request, PASSWORD, 10, { startsInMs: IN_CHECKIN_WINDOW, offlineCheckinEnabled: true });
+  const qr = (await buyByTransfer(request, PASSWORD, account, event.orgId, event.eventId, event.ticketTypeId)).qrs[0] ?? '';
 
   // 1re visite en ligne : connexion, préparation de la liste, service worker installé.
   await page.goto('/login?next=%2Fscan');
   await page.getByLabel('Adresse email').fill('scanner@nuits.test');
   await page.getByLabel('Mot de passe').fill(PASSWORD);
   await page.getByRole('button', { name: 'Se connecter' }).click();
-  const card = page.locator('li', { has: page.getByRole('heading', { name: 'Jazz au Hangar' }) });
+  const card = page.locator('li', { has: page.getByRole('heading', { name: event.title }) });
   await card.getByRole('button', { name: /Préparer l’entrée hors-ligne|Mettre à jour la liste hors-ligne/ }).click();
   await card.getByRole('link', { name: 'Contrôler les entrées' }).click();
   await expect(page).toHaveURL(/\/scan\/[0-9a-f-]{36}\/[0-9a-f-]{36}$/);

@@ -37,12 +37,19 @@ export async function setOfflineCheckin(request: APIRequestContext, ownerPasswor
  * Crée et publie un événement propre au test (OWNER des Nuits) avec un type de place de capacité donnée :
  * aucune dépendance aux données du seed (rejouable).
  */
-export async function createEvent(request: APIRequestContext, ownerPassword: string, capacity: number, priceCents = 1000): Promise<{ orgId: string; eventId: string; title: string; ticketTypeId: string }> {
+export async function createEvent(
+  request: APIRequestContext,
+  ownerPassword: string,
+  capacity: number,
+  opts: { priceCents?: number; startsInMs?: number; offlineCheckinEnabled?: boolean } = {},
+): Promise<{ orgId: string; eventId: string; title: string; ticketTypeId: string }> {
+  const priceCents = opts.priceCents ?? 1000;
   const owner = await apiLogin(request, 'owner@nuits.test', ownerPassword);
   const me = (await (await request.get(`${API}/auth/me`, { headers: { Authorization: `Bearer ${owner}` } })).json()) as { memberships: { orgId: string; orgSlug: string; role: string }[] };
   const orgId = me.memberships.find((m) => m.orgSlug === 'nuits-garonne')?.orgId ?? me.memberships.find((m) => m.role === 'OWNER')?.orgId ?? '';
   const day = 86_400_000;
-  const startsAt = new Date(Date.now() + 30 * day);
+  // Par défaut dans 30 jours ; pour le contrôle d'accès, dans la fenêtre v1.15 (début − 12 h ⇒ fin + 24 h).
+  const startsAt = new Date(Date.now() + (opts.startsInMs ?? 30 * day));
   const title = `E2E ${Date.now()}`;
   const auth = { Authorization: `Bearer ${owner}` };
   const ev = (await (
@@ -57,11 +64,16 @@ export async function createEvent(request: APIRequestContext, ownerPassword: str
         timezone: 'Europe/Paris',
         salesStartAt: new Date(Date.now() - 3_600_000).toISOString(),
         salesEndAt: startsAt.toISOString(),
+        // Annulation par l'acheteur possible jusqu'au début (événements de test proches).
+        overrides: { cancellationDeadlineHours: 0 },
       },
     })
   ).json()) as { id: string };
   const tt = (await (await request.post(`${API}/orgs/${orgId}/events/${ev.id}/ticket-types`, { headers: auth, data: { name: 'Unique', capacity, priceCents } })).json()) as { id: string };
   expect((await request.post(`${API}/orgs/${orgId}/events/${ev.id}/publish`, { headers: auth })).ok()).toBe(true);
+  if (opts.offlineCheckinEnabled) {
+    expect((await request.patch(`${API}/orgs/${orgId}/events/${ev.id}`, { headers: auth, data: { offlineCheckinEnabled: true } })).ok()).toBe(true);
+  }
   return { orgId, eventId: ev.id, title, ticketTypeId: tt.id };
 }
 
@@ -76,3 +88,6 @@ export async function buyByTransfer(request: APIRequestContext, managerPassword:
   const tickets = (await (await request.get(`${API}/me/tickets`, { headers: { Authorization: `Bearer ${token}` } })).json()) as { items: { orderId: string; qrPayload: string }[] };
   return { orderId: order.id, qrs: tickets.items.filter((t) => t.orderId === order.id).map((t) => t.qrPayload) };
 }
+
+/** Événement de test contrôlable maintenant (début dans 2 h). */
+export const IN_CHECKIN_WINDOW = 2 * 3_600_000;
