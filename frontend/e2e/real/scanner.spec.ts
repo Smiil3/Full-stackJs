@@ -29,10 +29,12 @@ async function buyTickets(request: APIRequestContext, qty: number): Promise<{ ev
 }
 
 async function scan(page: Page, code: string) {
+  // Le résultat précédent (OK : fermeture auto) rend le formulaire inerte tant qu'il est affiché.
+  await expect(page.getByRole('alertdialog')).toHaveCount(0, { timeout: 10_000 });
   await page.getByLabel('Saisie manuelle du code').fill(code);
   await page.getByRole('button', { name: 'Vérifier' }).click();
   const result = page.getByRole('alertdialog');
-  await expect(result).toBeVisible();
+  await expect(result).toBeVisible({ timeout: 15_000 }); // réessais en ligne puis éventuelle bascule locale
   return result;
 }
 

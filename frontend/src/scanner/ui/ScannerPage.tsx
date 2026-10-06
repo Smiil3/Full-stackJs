@@ -117,10 +117,10 @@ export function ScannerPage() {
     setFailure(null);
     void (async () => {
       try {
+        setChecking('first');
         if (rescue && owner) {
           show(await scanWithFallback({ orgId, eventId, qrPayload, online, owner }));
         } else {
-          setChecking('first');
           show(await scanOnline({ orgId, eventId, qrPayload, scanId, onRetry: () => setChecking('retry') }));
         }
       } catch (e) {
