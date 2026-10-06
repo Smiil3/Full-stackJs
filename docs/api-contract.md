@@ -1,7 +1,7 @@
 # Contrat d'API — Billetterie « Les Nuits de la Garonne »
 
 > **Source de vérité commune front / back.** Toute modification passe par le PO (session `fullstack-js`) : demander via une ligne `NEED: changement de contrat …`. Ne jamais diverger silencieusement.
-> Version : 1.14 — 2026-10-06 (voir §11 Historique)
+> Version : 1.15 — 2026-10-06 (voir §11 Historique)
 
 ## 1. Conventions
 
@@ -121,6 +121,7 @@ type Order = { id; eventId; eventTitle; eventStartsAt; eventTimezone; status: Or
 | `POST /orders/:orderId/cancel` | Bearer | — | 200 `Order`. Non payée ⇒ `CANCELLED`. Payée ⇒ `REFUNDED` avec `refundAmountCents` · 409 `CANCELLATION_CLOSED`/`INVALID_STATE` |
 
 Prix, tarif early, frais et total sont **toujours calculés par le serveur** ; le client n'envoie jamais de prix.
+**Paiement tardif** (reçu après l'échéance d'une commande) : la commande n'est reprise que si **toutes** les règles de vente sont encore respectées à cet instant (ventes ouvertes, événement non commencé ni annulé, places libres sans priorité de liste d'attente, plafond par personne) ; sinon remboursement automatique intégral (`LATE_PAYMENT`). Le prix reste celui figé à la réservation.
 **Idempotency-Key** : une clé = une commande, pour toujours (portée : l'acheteur). Rejouer une clé dont la commande a expiré renvoie cette commande `EXPIRED` : toute nouvelle tentative d'achat utilise une **nouvelle** clé. L'empreinte du body ignore l'ordre des `items`.
 Après paiement, le PSP redirige vers `${FRONT_URL}/orders/:orderId?payment=success|failed` ; le front **poll** `GET /orders/:orderId` (toutes les 2 s, max 60 s) jusqu'à `PAID` — la redirection ne prouve rien, seul le webhook fait foi.
 
@@ -207,6 +208,7 @@ type EventAdmin = { id; orgId; title; description: string|null; venue: string|nu
 
 **Report d'un événement** (modification de `startsAt` ou `endsAt` alors qu'il existe des commandes `PENDING_PAYMENT`/`AWAITING_TRANSFER`/`PAID`) : réservé à l'**OWNER**, `rescheduleReason` obligatoire. Effets : chaque commande PAID reçoit un nouveau `cancellableUntil` = max(ancien, nouveau `startsAt` − délai figé) et un `refundPercent` porté à 100 (droit au remboursement intégral, frais compris, suite au report) ; mail à tous les acheteurs ; AuditLog.
 **Mode secours hors-ligne du contrôle d'accès** : champ `offlineCheckinEnabled` (défaut `false`). Modifiable **uniquement par un OWNER** via `PATCH /orgs/:orgId/events/:eventId` (MANAGER ⇒ 403 sur ce champ) ; chaque bascule est tracée dans l'AuditLog.
+**Report et commandes non encore payées** : une commande `PENDING_PAYMENT`/`AWAITING_TRANSFER` existante lors d'un report reçoit les mêmes droits (100 %, nouveau `cancellableUntil`) au moment où elle est payée ; son `expiresAt` est ramené au nouveau `startsAt` s'il le dépasse.
 **Prix modifiés après ventes** : autorisé (MANAGER+), n'affecte que les nouvelles commandes (prix figés), tracé dans l'AuditLog.
 **Invariants de dates** revérifiés à la création, à chaque PATCH (valeurs fusionnées) et à la publication : `endsAt > startsAt`, `salesStartAt < salesEndAt ≤ endsAt`, publication impossible si `salesEndAt ≤ maintenant` ; types de places : `earlyUntil ≤ salesEndAt` (revalidé quand les dates de l'événement changent). `GET /events/:eventId` public renvoie 404 pour un événement terminé depuis plus de 30 jours.
 
@@ -251,6 +253,8 @@ Un remboursement de commande payée par virement est toujours `MANUAL_REQUIRED` 
 
 **Fonctionnement par défaut : en ligne.** Le scanner exige une réponse du serveur. En cas de réseau lent ou d'erreur 429/5xx, il réessaie avec le **même `scanId`** (backoff, budget total ≈ 10 s) ; sans réponse, il affiche « Vérification impossible — réessayez » et **ne laisse pas entrer**. La validation locale (signature + liste téléchargée) n'existe **que si `offlineCheckinEnabled` est vrai** pour l'événement ; sinon aucune liste n'est téléchargée. `POST …/checkin/sync` reste accepté dans tous les cas (il ne fait qu'enregistrer des passages déjà décidés, avec les mêmes règles « premier gagne »).
 
+**Fenêtre de contrôle** : de `startsAt − 12 h` à `endsAt + 24 h` (hors fenêtre ⇒ 404 « événement non disponible au contrôle »).
+
 **Idempotence du scan par `scanId`** : `CheckIn.scanId` est UNIQUE. Si un `scanId` déjà enregistré est rejoué (scan en ligne dont la réponse s'est perdue, puis sync), le serveur renvoie le **résultat d'origine** (`OK` ⇒ `ACCEPTED` en sync) sans nouvel effet. Un **nouveau** `scanId` sur un billet déjà utilisé ⇒ `ALREADY_USED`, **même depuis le même appareil** (capture d'écran présentée deux fois à la même porte).
 `scannedAt` fourni par l'appareil : sert à l'ordre et au journal, borné à [début des ventes, maintenant + 5 min], jamais pour contourner un `USED` existant.
 
@@ -267,12 +271,16 @@ Un remboursement de commande payée par virement est toujours `MANUAL_REQUIRED` 
 - Le back crée une session chez le mock : `POST http://localhost:4001/v1/checkout-sessions` (en-tête `Authorization: Bearer <PSP_API_KEY>`) `{ orderId, amountCents, currency, successUrl, cancelUrl }` → `{ id, url }`.
 - Page hébergée `GET http://localhost:4001/checkout/:sessionId` avec boutons : **Payer**, **Refuser**, **Payer + envoyer le webhook 2 fois**, **Payer + webhook retardé 30 s**.
 - Remboursement : `POST /v1/refunds` `{ paymentId, amountCents }` → `{ id, status: 'succeeded' }` + webhook `refund.succeeded`.
+- Les sessions ont une échéance : `POST /v1/checkout-sessions` reçoit `expiresAt` (= échéance de la commande) ; une session échue refuse le paiement.
+- Consultation : `GET /v1/checkout-sessions/:id` → `{ id, status: 'open'|'paid'|'failed'|'expired', paymentId, amountCents, currency }` — utilisée par le back pour **rapprocher** une commande avant de l'expirer (filet si un webhook a été perdu).
+- Le PSP **réessaie** la livraison d'un webhook non acquitté (2xx) avec backoff (ex. 1 s, 5 s, 30 s, 2 min, 10 min).
 - **Webhook** vers le back : `POST /api/v1/webhooks/psp`, body brut JSON
   ```json
   { "id": "evt_…", "type": "payment.succeeded" | "payment.failed" | "refund.succeeded", "created": 1760000000,
     "data": { "paymentId": "pay_…", "sessionId": "cs_…", "orderId": "…", "amountCents": 3000, "currency": "EUR", "refundId": "re_… (refund.succeeded uniquement)" } }
   ```
   En-tête `Psp-Signature: t=<unix>,v1=<hex HMAC-SHA256(PSP_WEBHOOK_SECRET, t + "." + rawBody)>`.
+  Limitation de débit du webhook : seules les requêtes à **signature invalide** sont comptées (une notification signée n'est jamais refusée pour cause de débit).
   Réponses : 400 **uniquement** si la signature est invalide, l'horodatage hors tolérance (5 min) ou le corps n'est pas du JSON. **Une fois la signature valide, réponse 200 `{ received: true }` dans tous les cas métier** (doublon, type inconnu, champ inconnu dans `data`, commande inconnue, montant/devise/session incohérents, stock incohérent) : un paiement authentifié n'est **jamais perdu**. Toute somme encaissée qui ne donne pas de billets est enregistrée (`Payment`) puis remboursée automatiquement (`Refund` motif `UNEXPECTED_PAYMENT`, `LATE_PAYMENT` ou `DUPLICATE_PAYMENT`) avec log `error` et AuditLog. 5xx uniquement sur panne réelle (le PSP réessaie).
 - Le mock n'est **jamais** démarré quand `NODE_ENV=production`.
 
@@ -282,6 +290,7 @@ Un remboursement de commande payée par virement est toujours `MANUAL_REQUIRED` 
 - En-têtes de sécurité via helmet ; CORS : origine `FRONT_URL` uniquement, `credentials: true`.
 
 ## 11. Historique
+- **1.15** (2026-10-06) : PSP — échéance des sessions, consultation de session (rapprochement), réessais de webhook, débit limité sur signatures invalides seulement ; paiement tardif soumis à toutes les règles ; droits du report étendus aux commandes non payées ; fenêtre de contrôle `startsAt − 12 h` → `endsAt + 24 h`.
 - **1.14** (2026-10-06) : annulation d'événement asynchrone par lots (`cancellationPendingOrders`), refusée après le début ; règles d'équité de la liste d'attente ; plafond revérifié à l'acceptation ; mail de remboursement de virement « à venir ».
 - **1.13** (2026-10-06) : contrôle d'accès en ligne par défaut ; validation hors-ligne = mode secours `offlineCheckinEnabled` (défaut false, OWNER seulement, audité) ; snapshot ⇒ 409 `OFFLINE_CHECKIN_DISABLED` si désactivé.
 - **1.12** (2026-10-06) : sync ≤ 160 ko après authentification ; check-in limité aux événements PUBLISHED terminés depuis < 24 h (CANCELLED ⇒ résultat `CANCELLED`) ; tout billet d'une commande annulée/remboursée/expirée est `CANCELLED`.
