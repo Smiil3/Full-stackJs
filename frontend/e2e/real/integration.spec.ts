@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { createVerifiedBuyer } from './fixtures';
 import { waitForLink } from './mailpit';
 
 /**
@@ -7,10 +8,10 @@ import { waitForLink } from './mailpit';
  */
 const PASSWORD = process.env.SEED_PASSWORD ?? '';
 
-async function login(page: Page, email: string, next = '/') {
+async function login(page: Page, email: string, next = '/', password = PASSWORD) {
   await page.goto(`/login?next=${encodeURIComponent(next)}`);
   await page.getByLabel('Adresse email').fill(email);
-  await page.getByLabel('Mot de passe').fill(PASSWORD);
+  await page.getByLabel('Mot de passe').fill(password);
   await page.getByRole('button', { name: 'Se connecter' }).click();
 }
 
@@ -83,9 +84,10 @@ test('acheteur : inscription, vérification email (Mailpit), réservation par ca
 test.describe('comptes du seed', () => {
   test.skip(!PASSWORD, 'SEED_PASSWORD requis');
 
-test('paiement carte réel : PSP simulé ⇒ retour ⇒ attente du webhook ⇒ billets', async ({ page }) => {
+test('paiement carte réel : PSP simulé ⇒ retour ⇒ attente du webhook ⇒ billets', async ({ page, request }) => {
   const errors = collectErrors(page);
-  await login(page, 'acheteur@nuits-garonne.test');
+  const buyer = await createVerifiedBuyer(request);
+  await login(page, buyer.email, '/', buyer.password);
   await page.getByRole('main').getByRole('link', { name: 'Jazz au Hangar' }).click();
   await page.getByLabel('Nombre de places « Parterre »').selectOption('1');
   await page.getByRole('button', { name: /Réserver 1 place/ }).click();
@@ -97,9 +99,10 @@ test('paiement carte réel : PSP simulé ⇒ retour ⇒ attente du webhook ⇒ b
   expect(errors).toEqual([]);
 });
 
-test('virement réel : réservation acheteur puis validation par le gestionnaire', async ({ browser }) => {
+test('virement réel : réservation acheteur puis validation par le gestionnaire', async ({ browser, request }) => {
+  const account = await createVerifiedBuyer(request);
   const buyer = await browser.newPage();
-  await login(buyer, 'acheteur@nuits-garonne.test');
+  await login(buyer, account.email, '/', account.password);
   await buyer.getByRole('main').getByRole('link', { name: 'Jazz au Hangar' }).click();
   await buyer.getByLabel('Nombre de places « Parterre »').selectOption('1');
   await buyer.getByRole('radio', { name: /Virement bancaire/ }).check();

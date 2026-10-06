@@ -1,22 +1,15 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { API, apiLogin, createVerifiedBuyer } from './fixtures';
 
 /**
  * Contrôle d'accès contre l'API RÉELLE : billets obtenus par virement validé (données créées par le
  * test, pas dépendantes de l'état), scan en ligne OK puis DÉJÀ UTILISÉ, puis hors-ligne et resynchro.
  */
 const PASSWORD = process.env.SEED_PASSWORD ?? '';
-const API = 'http://localhost:4000/api/v1';
-test.skip(!PASSWORD, 'SEED_PASSWORD requis');
-
-async function apiLogin(request: APIRequestContext, email: string): Promise<string> {
-  const res = await request.post(`${API}/auth/login`, { data: { email, password: PASSWORD }, headers: { Origin: 'http://localhost:5173' } });
-  expect(res.ok()).toBe(true);
-  return ((await res.json()) as { accessToken: string }).accessToken;
-}
-
 /** Achète `qty` places « Parterre » de « Jazz au Hangar » par virement, validé par le gestionnaire. */
 async function buyTickets(request: APIRequestContext, qty: number): Promise<{ eventId: string; orgId: string; qrs: string[] }> {
-  const buyer = await apiLogin(request, 'acheteur@nuits-garonne.test');
+  const fresh = await createVerifiedBuyer(request);
+  const buyer = await apiLogin(request, fresh.email, fresh.password);
   const events = (await (await request.get(`${API}/events?pageSize=50`)).json()) as { items: { id: string; title: string; orgId: string }[] };
   const event = events.items.find((e) => e.title === 'Jazz au Hangar');
   if (!event) throw new Error('événement de seed introuvable');
@@ -28,7 +21,7 @@ async function buyTickets(request: APIRequestContext, qty: number): Promise<{ ev
       data: { eventId: event.id, paymentMethod: 'TRANSFER', items: [{ ticketTypeId: tt?.id, quantity: qty }] },
     })
   ).json()) as { id: string; totalCents: number };
-  const manager = await apiLogin(request, 'manager@nuits.test');
+  const manager = await apiLogin(request, 'manager@nuits.test', PASSWORD);
   const confirm = await request.post(`${API}/orgs/${event.orgId}/orders/${order.id}/confirm-transfer`, { headers: { Authorization: `Bearer ${manager}` }, data: { receivedAmountCents: order.totalCents } });
   expect(confirm.ok()).toBe(true);
   const tickets = (await (await request.get(`${API}/me/tickets`, { headers: { Authorization: `Bearer ${buyer}` } })).json()) as { items: { orderId: string; qrPayload: string }[] };
