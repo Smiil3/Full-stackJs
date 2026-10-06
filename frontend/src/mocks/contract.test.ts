@@ -261,6 +261,49 @@ describe('MSW — couverture du contrat', () => {
     expect(sync.results.find((r) => r.scanId === scanId)?.result).toBe('ACCEPTED');
   });
 
+  it('v1.7 : scanner limité à checkin/events (sans chiffres) ; pagination ≤ 1000', async () => {
+    await login('scanner@nuits.test', DEMO_PASSWORD);
+    await expect(apiRequest(apiPath`/orgs/${IDS.orgNuits}/events`)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(apiRequest(apiPath`/orgs/${IDS.orgNuits}/events/${IDS.eventConcert}`)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    const { items } = await apiRequest<{ items: Record<string, unknown>[] }>(apiPath`/orgs/${IDS.orgNuits}/checkin/events`);
+    expect(items.map((e) => e.id)).toContain(IDS.eventConcert);
+    expect(items.map((e) => e.id)).not.toContain(IDS.eventDraft);
+    expect(Object.keys(items[0] ?? {}).sort()).toEqual(['endsAt', 'id', 'isOnline', 'startsAt', 'status', 'timezone', 'title', 'venue']);
+    await expect(apiRequest('/events', { auth: false, query: { page: 1001 } })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+  });
+
+  it('v1.7 : coordonnées bancaires ⇒ mot de passe actuel obligatoire', async () => {
+    await login('owner@nuits.test', DEMO_PASSWORD);
+    const bank = { beneficiary: 'Nuits', iban: 'FR7630006000011234567890189', bic: 'AGRIFRPPXXX' };
+    const path = apiPath`/orgs/${IDS.orgNuits}/settings`;
+    await expect(apiRequest(path, { method: 'PATCH', body: { bank } })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    await expect(apiRequest(path, { method: 'PATCH', body: { bank, currentPassword: 'faux' } })).rejects.toMatchObject({ status: 401, code: 'INVALID_CREDENTIALS' });
+    expect(mock.db.calls.get('POST /auth/refresh') ?? 0).toBe(0);
+    await apiRequest(path, { method: 'PATCH', body: { bank, currentPassword: DEMO_PASSWORD } });
+  });
+
+  it('v1.7 : report d’un événement vendu ⇒ OWNER + motif ; acheteurs remboursables à 100 %', async () => {
+    await login('acheteur@example.test', DEMO_PASSWORD);
+    const order = await post<Order>('/orders', { eventId: IDS.eventConcert, paymentMethod: 'CARD', items: [{ ticketTypeId: IDS.ttFosse, quantity: 1 }] }, { 'Idempotency-Key': crypto.randomUUID() });
+    await logout();
+    const evPath = apiPath`/orgs/${IDS.orgNuits}/events/${IDS.eventConcert}`;
+    const ev = mock.db.events.find((e) => e.id === IDS.eventConcert);
+    const later = new Date(Date.parse(ev?.startsAt ?? '') + 86_400_000).toISOString();
+    const laterEnd = new Date(Date.parse(ev?.endsAt ?? '') + 86_400_000).toISOString();
+    const salesEnd = later;
+    await login('manager@nuits.test', DEMO_PASSWORD);
+    await expect(apiRequest(evPath, { method: 'PATCH', body: { startsAt: later, endsAt: laterEnd, salesEndAt: salesEnd, rescheduleReason: 'Météo' } })).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await logout();
+    await login('owner@nuits.test', DEMO_PASSWORD);
+    await expect(apiRequest(evPath, { method: 'PATCH', body: { startsAt: later, endsAt: laterEnd } })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    await apiRequest(evPath, { method: 'PATCH', body: { startsAt: later, endsAt: laterEnd, salesEndAt: salesEnd, rescheduleReason: 'Météo' } });
+    expect(mock.db.orders.find((o) => o.id === order.id)?.refundPercent).toBe(order.refundPercent); // non payée : inchangée
+    const audit = await apiRequest<Page<{ action: string; actorEmail: string | null }>>(apiPath`/orgs/${IDS.orgNuits}/audit-log`);
+    expect(audit.items[0]?.action).toBe('event.update');
+    expect(audit.items.map((a) => a.action)).toContain('event.reschedule');
+    expect(audit.items.some((a) => a.actorEmail === null)).toBe(true);
+  });
+
   it('admin plateforme : réservé, création de collectif', async () => {
     await login('owner@nuits.test', DEMO_PASSWORD);
     await expect(apiRequest('/admin/orgs')).rejects.toMatchObject({ code: 'NOT_FOUND' });

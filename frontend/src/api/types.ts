@@ -234,11 +234,14 @@ export type OrgSettings = {
 };
 export type OrgSettingsPatch = Partial<Omit<OrgSettings, 'bank'>> & {
   bank?: { beneficiary: string; iban: string; bic: string };
+  /** Ré-authentification obligatoire si `bank` est présent (contrat v1.7). */
+  currentPassword?: string;
 };
 export type Member = { userId: Uuid; email: string; displayName: string; role: OrgRole; createdAt: IsoDateTime };
 export type AuditLogEntry = {
   id: Uuid;
-  actorEmail: string;
+  /** « Administrateur plateforme » pour un admin non membre ; null pour une action système (v1.7). */
+  actorEmail: string | null;
   action: string;
   target: string;
   meta: unknown;
@@ -307,7 +310,11 @@ export type EventCreateBody = {
   salesEndAt: IsoDateTime;
   overrides?: Partial<EventOverrides>;
 };
-export type EventPatchBody = Partial<Omit<EventCreateBody, 'overrides'>> & { overrides?: Partial<EventOverrides> };
+export type EventPatchBody = Partial<Omit<EventCreateBody, 'overrides'>> & {
+  overrides?: Partial<EventOverrides>;
+  /** Obligatoire en cas de report (dates modifiées alors qu'il existe des commandes) — OWNER seulement (v1.7). */
+  rescheduleReason?: string;
+};
 export type TicketTypeBody = {
   name: string;
   description?: string | null;
@@ -356,6 +363,17 @@ export type EventStats = {
 };
 
 // ---------- Contrôle d'accès ----------
+/** GET /orgs/:orgId/checkin/events (SCANNER+) : sans aucun chiffre de vente (v1.7). */
+export type CheckinEvent = {
+  id: Uuid;
+  title: string;
+  venue: string | null;
+  isOnline: boolean;
+  startsAt: IsoDateTime;
+  endsAt: IsoDateTime;
+  timezone: IanaTimeZone;
+  status: EventStatus;
+};
 export type PublicKeyJwk = { kty: 'OKP'; crv: 'Ed25519'; x: string };
 export type SnapshotTicket = {
   publicId: string;

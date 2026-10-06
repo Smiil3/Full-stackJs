@@ -320,6 +320,8 @@ export function createSeed(now: number = Date.now()): MockDb {
   const audit: MockDb['audit'] = [
     { id: crypto.randomUUID(), orgId: IDS.orgNuits, actorEmail: 'owner@nuits.test', action: 'settings.update', target: 'organization', meta: { serviceFeeBasisPoints: { before: 0, after: 250 } }, createdAt: iso(now - 2 * DAY) },
     { id: crypto.randomUUID(), orgId: IDS.orgNuits, actorEmail: 'manager@nuits.test', action: 'event.publish', target: `event:${IDS.eventConcert}`, meta: null, createdAt: iso(now - 10 * DAY) },
+    { id: crypto.randomUUID(), orgId: IDS.orgNuits, actorEmail: null, action: 'order.expire', target: 'order:—', meta: { count: 3 }, createdAt: iso(now - 11 * DAY) },
+    { id: crypto.randomUUID(), orgId: IDS.orgNuits, actorEmail: 'Administrateur plateforme', action: 'org.create', target: 'organization', meta: null, createdAt: iso(now - 30 * DAY) },
   ];
 
   return {

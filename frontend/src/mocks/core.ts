@@ -257,7 +257,7 @@ export function readQuery(url: URL, allowed: readonly string[]): { page: number;
     if (!Number.isInteger(n) || n < min || n > max) fail(400, 'VALIDATION_ERROR', 'Pagination invalide', { fields: [{ path: k, message: `Entre ${min} et ${max}` }] });
     return n;
   };
-  return { page: num('page', 1, 1, 100_000), pageSize: num('pageSize', 20, 1, 100), get: (k) => url.searchParams.get(k) ?? undefined };
+  return { page: num('page', 1, 1, 1000), pageSize: num('pageSize', 20, 1, 100), get: (k) => url.searchParams.get(k) ?? undefined };
 }
 
 export function paginate<T>(items: T[], page: number, pageSize: number) {
@@ -269,6 +269,8 @@ export function param(params: PathParams, key: string): string {
   return typeof v === 'string' ? v : notFound();
 }
 
-export function audit(orgId: string, actor: MockUser, action: string, target: string, meta: unknown = null): void {
-  mock.db.audit.unshift({ id: crypto.randomUUID(), orgId, actorEmail: actor.email, action, target, meta, createdAt: new Date().toISOString() });
+export function audit(orgId: string, actor: MockUser | null, action: string, target: string, meta: unknown = null): void {
+  const member = actor && mock.db.memberships.some((m) => m.orgId === orgId && m.userId === actor.id);
+  const actorEmail = !actor ? null : member ? actor.email : actor.isPlatformAdmin ? 'Administrateur plateforme' : actor.email;
+  mock.db.audit.unshift({ id: crypto.randomUUID(), orgId, actorEmail, action, target, meta, createdAt: new Date().toISOString() });
 }

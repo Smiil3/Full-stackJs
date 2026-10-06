@@ -103,8 +103,9 @@ function validateTicketType(v: Validator, partial: boolean) {
   return d;
 }
 
-function checkEarly(v: Validator, price: number, earlyPrice: number | null, earlyUntil: string | null) {
+function checkEarly(v: Validator, price: number, earlyPrice: number | null, earlyUntil: string | null, salesEndAt: string) {
   if ((earlyPrice === null) !== (earlyUntil === null)) v.custom('earlyPriceCents', 'Tarif early : prix et date ensemble ou aucun');
+  if (earlyUntil && earlyUntil > salesEndAt) v.custom('earlyUntil', 'Doit précéder la fin des ventes');
   if (earlyPrice !== null && earlyPrice >= price) v.custom('earlyPriceCents', 'Le tarif early doit être inférieur au prix normal');
 }
 
@@ -168,7 +169,7 @@ export const orgHandlers = [
     const orgId = param(params, 'orgId');
     const actor = requireOrgRole(request, orgId, 'OWNER');
     const current = mock.db.settings.get(orgId) ?? notFound();
-    const v = await readBody(request, [...Object.keys(BOUNDS), ...BOOLS, 'serviceFeeRefundable', 'defaultTimezone', 'contactEmail', 'bank']);
+    const v = await readBody(request, [...Object.keys(BOUNDS), ...BOOLS, 'serviceFeeRefundable', 'defaultTimezone', 'contactEmail', 'bank', 'currentPassword']);
     const next: MockSettings = { ...current, bank: { ...current.bank } };
     for (const [k, [min, max]] of Object.entries(BOUNDS)) {
       const n = v.int(k, { optional: true, min, max });
@@ -196,7 +197,10 @@ export const orgHandlers = [
       }
     }
     if (next.maxPerUser < next.maxPerOrder) v.custom('maxPerUser', 'Doit être ≥ au plafond par commande');
+    const currentPassword = v.str('currentPassword', { optional: true, min: 1, max: 128 });
+    if (v.has('bank') && currentPassword === undefined) v.custom('currentPassword', 'Mot de passe requis pour modifier les coordonnées bancaires');
     v.done();
+    if (v.has('bank') && currentPassword !== actor.password) fail(401, 'INVALID_CREDENTIALS', 'Identifiants invalides');
     mock.db.settings.set(orgId, next);
     audit(orgId, actor, 'settings.update', 'organization', { ibanMasked: maskIban(next.bank.iban) });
     return json(toSettings(next));
@@ -260,7 +264,7 @@ export const orgHandlers = [
   // ---------------- Événements ----------------
   route('get', '/orgs/:orgId/events', ({ request, params, url }) => {
     const orgId = param(params, 'orgId');
-    requireOrgRole(request, orgId, 'SCANNER');
+    requireOrgRole(request, orgId, 'MANAGER');
     const q = readQuery(url, ['status']);
     const status = q.get('status');
     if (status && !['DRAFT', 'PUBLISHED', 'CANCELLED'].includes(status)) fail(400, 'VALIDATION_ERROR', 'Statut invalide', { fields: [{ path: 'status', message: 'Statut invalide' }] });
@@ -306,7 +310,7 @@ export const orgHandlers = [
 
   route('get', '/orgs/:orgId/events/:eventId', ({ request, params }) => {
     const orgId = param(params, 'orgId');
-    requireOrgRole(request, orgId, 'SCANNER');
+    requireOrgRole(request, orgId, 'MANAGER');
     expireDueOrders();
     return json(toEventAdmin(orgEvent(orgId, param(params, 'eventId'))));
   }),
@@ -315,13 +319,26 @@ export const orgHandlers = [
     const orgId = param(params, 'orgId');
     const actor = requireOrgRole(request, orgId, 'MANAGER');
     const e = orgEvent(orgId, param(params, 'eventId'));
-    const v = await readBody(request, EVENT_FIELDS);
+    const v = await readBody(request, [...EVENT_FIELDS, 'rescheduleReason']);
     const d = validateEventBody(v, true);
+    const rescheduleReason = v.str('rescheduleReason', { optional: true, min: 1, max: 500 });
     const merged = { ...e, ...Object.fromEntries(Object.entries(d).filter(([k, val]) => val !== undefined && k !== 'overrides')) };
+    const datesChanged = merged.startsAt !== e.startsAt || merged.endsAt !== e.endsAt;
+    const hasOrders = mock.db.orders.some((o) => o.eventId === e.id && ['PENDING_PAYMENT', 'AWAITING_TRANSFER', 'PAID'].includes(o.status));
+    const isReschedule = datesChanged && hasOrders;
+    if (isReschedule && !rescheduleReason) v.custom('rescheduleReason', 'Motif du report obligatoire');
     if (merged.endsAt <= merged.startsAt) v.custom('endsAt', 'Doit être après le début');
     if (merged.salesEndAt > merged.endsAt) v.custom('salesEndAt', 'Doit être avant la fin de l’événement');
     v.done();
     if (e.status === 'CANCELLED') fail(409, 'CONFLICT', 'Événement annulé');
+    if (isReschedule && mock.db.memberships.find((m) => m.orgId === orgId && m.userId === actor.id)?.role !== 'OWNER') fail(403, 'FORBIDDEN', 'Report réservé au propriétaire');
+    if (isReschedule) {
+      for (const o of mock.db.orders.filter((x) => x.eventId === e.id && x.status === 'PAID')) {
+        o.refundPercent = 100;
+        o.serviceFeeRefundable = true;
+      }
+      audit(orgId, actor, 'event.reschedule', `event:${e.id}`, { reason: rescheduleReason });
+    }
     Object.assign(e, merged, { overrides: { ...e.overrides, ...(d.overrides as object | undefined) }, updatedAt: new Date().toISOString() });
     audit(orgId, actor, 'event.update', `event:${e.id}`);
     return json(toEventAdmin(e));
@@ -333,6 +350,7 @@ export const orgHandlers = [
     const e = orgEvent(orgId, param(params, 'eventId'));
     if (e.status === 'CANCELLED') fail(409, 'INVALID_STATE', 'Événement annulé');
     if (typesOf(e.id).length === 0) fail(409, 'CONFLICT', 'Aucun type de place');
+    if (Date.parse(e.salesEndAt) <= Date.now()) fail(409, 'CONFLICT', 'Fin des ventes passée');
     e.status = 'PUBLISHED';
     e.updatedAt = new Date().toISOString();
     audit(orgId, actor, 'event.publish', `event:${e.id}`);
@@ -366,7 +384,7 @@ export const orgHandlers = [
     const e = orgEvent(orgId, param(params, 'eventId'));
     const v = await readBody(request, ['name', 'description', 'capacity', 'priceCents', 'earlyPriceCents', 'earlyUntil', 'sortOrder']);
     const d = validateTicketType(v, false);
-    checkEarly(v, d.priceCents ?? 0, d.earlyPriceCents ?? null, d.earlyUntil ?? null);
+    checkEarly(v, d.priceCents ?? 0, d.earlyPriceCents ?? null, d.earlyUntil ?? null, e.salesEndAt);
     v.done();
     const tt = {
       id: crypto.randomUUID(),
@@ -394,7 +412,7 @@ export const orgHandlers = [
     const v = await readBody(request, ['name', 'description', 'capacity', 'priceCents', 'earlyPriceCents', 'earlyUntil', 'sortOrder']);
     const d = validateTicketType(v, true);
     const next = { ...tt, ...Object.fromEntries(Object.entries(d).filter(([, val]) => val !== undefined)) };
-    checkEarly(v, next.priceCents, next.earlyPriceCents, next.earlyUntil);
+    checkEarly(v, next.priceCents, next.earlyPriceCents, next.earlyUntil, e.salesEndAt);
     v.done();
     if (next.capacity < tt.sold + tt.held) fail(409, 'CONFLICT', 'Capacité inférieure aux places vendues ou réservées');
     Object.assign(tt, next);
@@ -513,6 +531,17 @@ export const orgHandlers = [
   }),
 
   // ---------------- Contrôle d'accès ----------------
+  route('get', '/orgs/:orgId/checkin/events', ({ request, params }) => {
+    const orgId = param(params, 'orgId');
+    requireOrgRole(request, orgId, 'SCANNER');
+    const limit = Date.now() - 24 * 3_600_000;
+    const items = mock.db.events
+      .filter((e) => e.orgId === orgId && e.status === 'PUBLISHED' && Date.parse(e.endsAt) > limit)
+      .sort((a, b) => a.startsAt.localeCompare(b.startsAt))
+      .map((e) => ({ id: e.id, title: e.title, venue: e.venue, isOnline: e.isOnline, startsAt: e.startsAt, endsAt: e.endsAt, timezone: e.timezone, status: e.status }));
+    return json({ items });
+  }),
+
   route('get', '/orgs/:orgId/events/:eventId/checkin/snapshot', async ({ request, params }) => {
     const orgId = param(params, 'orgId');
     requireOrgRole(request, orgId, 'SCANNER');
