@@ -272,7 +272,8 @@ async function withAuthLock<T>(fn: () => Promise<T>): Promise<T> {
  */
 type AuthBroadcast = { type: 'login' | 'logout' };
 const channel: BroadcastChannel | null = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('nuits-auth');
-(channel)?.unref?.();
+// Node (tests) : ne pas maintenir le processus en vie pour ce canal. Absent des navigateurs.
+(channel as unknown as { unref?: () => void } | null)?.unref?.();
 if (channel) {
   channel.onmessage = (e: MessageEvent<unknown>) => {
     const data = e.data;
