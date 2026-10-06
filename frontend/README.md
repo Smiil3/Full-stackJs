@@ -85,6 +85,17 @@ et virement validé, mail des billets, QR, scan OK puis « déjà utilisé », s
 puis resynchronisation, billet remboursé refusé à l'entrée, liste d'attente jusqu'au billet, annulation
 d'événement, back-office et administration.
 
+## Direction visuelle « Miroir d'eau »
+
+Source de vérité : [`../docs/design-kit/HANDOFF.md`](../docs/design-kit/HANDOFF.md) (maquettes de référence,
+rapport de contrastes, licences des polices). Polices auto-hébergées (`src/assets/fonts`), variables Nuit / Jour
+posées par `data-theme` (`src/styles/tokens.css`), classes du kit (`src/styles/components.css`), icônes en sprite
+local (`public/icons.svg`, composant `Icon`). Aucun style en ligne : une valeur dynamique passe par un attribut
+SVG, un élément natif ou une classe. Thème Nuit par défaut, Jour pour le paiement et le back-office, choix du
+visiteur mémorisé (seule clé localStorage autorisée : `ndg-theme`), scanner toujours sombre.
+Captures de revue : [`../docs/design-kit/captures`](../docs/design-kit/captures/README.md)
+(`npx playwright test -c playwright.captures.config.ts`, API simulée).
+
 ## Architecture
 
 ```
