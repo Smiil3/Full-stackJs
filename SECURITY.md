@@ -38,6 +38,7 @@ Ne pas ouvrir de ticket public. Écrire aux mainteneurs du dépôt en décrivant
 - Joi en sortie : seuls les champs du contrat sortent (en test, un champ en trop fait échouer).
 - Aucun objet client passé tel quel à la base (mapping explicite) ; SQL uniquement paramétré (`$queryRaw` tagué ; `$queryRawUnsafe` interdit par lint).
 - Prix, tarif early, frais, totaux et remboursements calculés côté serveur en entiers (BigInt), figés sur la commande.
+- Export CSV des participants (OWNER / MANAGER, audité, `no-store`) : injection de formules neutralisée (cellule commençant par `= + - @`, tabulation, retour chariot, saut de ligne, après espaces de tête ⇒ préfixe `'`, guillemets échappés) ; seuls les identifiants de billets (alphabet base64url, aucune formule exploitable) sont exportés tels quels pour rester identiques partout ; streaming interrompu proprement si le client se déconnecte.
 - Corps limités à 10 ko (64 ko webhook, 160 ko pour la synchronisation, lue seulement après authentification) ; Content-Type JSON exigé (415).
 - helmet (CSP `default-src 'none'`, `frame-ancestors 'none'`, HSTS en production), CORS limité à l'origine du front, `Cache-Control: no-store`, pas d'`X-Powered-By`, nombre de proxys de confiance borné (0–3).
 - Erreurs centralisées : jamais de stack ni de message SQL ; erreurs transitoires (interblocage) ⇒ 409, jamais 500.
