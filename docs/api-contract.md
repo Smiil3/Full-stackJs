@@ -1,7 +1,7 @@
 # Contrat d'API — Billetterie « Les Nuits de la Garonne »
 
 > **Source de vérité commune front / back.** Toute modification passe par le PO (session `fullstack-js`) : demander via une ligne `NEED: changement de contrat …`. Ne jamais diverger silencieusement.
-> Version : 1.1 — 2026-10-06 (voir §11 Historique)
+> Version : 1.2 — 2026-10-06 (voir §11 Historique)
 
 ## 1. Conventions
 
@@ -24,7 +24,7 @@
 |---|---|---|
 | 400 | `VALIDATION_ERROR` | Entrée invalide (Joi) |
 | 401 | `UNAUTHENTICATED` | Access token absent / invalide / expiré → le front tente un refresh |
-| 401 | `INVALID_CREDENTIALS` | Login échoué (message générique) |
+| 401 | `INVALID_CREDENTIALS` | Login échoué, compte verrouillé, ou `currentPassword` faux sur change-password (message générique ; **ne déclenche pas de refresh**) |
 | 401 | `INVALID_REFRESH_TOKEN` | Refresh absent / expiré / révoqué / réutilisé → déconnexion |
 | 403 | `FORBIDDEN` | Authentifié mais rôle insuffisant **dans un collectif dont on est membre** |
 | 403 | `EMAIL_NOT_VERIFIED` | Action nécessitant un email vérifié |
@@ -193,7 +193,7 @@ type EventAdmin = { id; orgId; title; description: string|null; venue: string|nu
 
 ### 7.3 Commandes, virements, stats, export
 ```ts
-type OrderAdmin = Order & { buyer: { id; email; displayName } }     // sans transferInstructions.iban
+type OrderAdmin = Order & { buyer: { id; email; displayName } }     // transferInstructions renseigné si AWAITING_TRANSFER, avec iban MASQUÉ (référence utile au rapprochement)
 type EventStats = { eventId; generatedAt; currency: 'EUR';
   ticketTypes: { ticketTypeId; name; capacity; sold; held; remaining; checkedIn; revenueCents; refundedCents }[];
   totals: { capacity; sold; held; remaining; checkedIn; revenueCents; refundedCents; serviceFeeCents };
@@ -247,4 +247,5 @@ type EventStats = { eventId; generatedAt; currency: 'EUR';
 - En-têtes de sécurité via helmet ; CORS : origine `FRONT_URL` uniquement, `credentials: true`.
 
 ## 11. Historique
+- **1.2** (2026-10-06) : `OrderAdmin.transferInstructions` avec IBAN masqué ; `INVALID_CREDENTIALS` couvre compte verrouillé et mauvais mot de passe actuel ; commande à 0 € ⇒ `PAID` directement à la création (pas de checkout) ; annulation d'événement ⇒ remboursement 100 % frais compris.
 - **1.1** (2026-10-06) : format QR `NG1.<eventId>.<publicId>.<sig>` et octets signés précisés ; `scanId` ajouté au scan et à la sync (idempotence) ; `serviceFeePercent` remplacé par `serviceFeeBasisPoints` (entier) + formule ; types `string|null` explicités ; cas « billet signé absent du snapshot ».
