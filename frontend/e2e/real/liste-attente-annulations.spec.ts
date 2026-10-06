@@ -77,5 +77,5 @@ test('annulation d’événement : remboursements suivis, billets annulés chez 
   const scanner = await loggedPage(browser, 'scanner@nuits.test', PASSWORD, `/scan/${ev.orgId}/${ev.eventId}`);
   await scanner.getByLabel('Saisie manuelle du code').fill(bought[0]?.qrs[0] ?? '');
   await scanner.getByRole('button', { name: 'Vérifier' }).click();
-  await expect(scanner.getByRole('alertdialog')).toContainText('BILLET ANNULÉ');
+  await expect(scanner.locator('.scan-result:not(.scan-result--pending)')).toContainText('Billet annulé');
 });

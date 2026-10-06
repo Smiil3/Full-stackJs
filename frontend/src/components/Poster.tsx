@@ -15,11 +15,22 @@ function dateParts(iso: string, timeZone: string): { month: string; day: string 
   return { month, day };
 }
 
-export function Poster({ id, iso, timeZone, hero, title }: { id: string; iso: string; timeZone: string; hero?: boolean; title?: string }) {
+export function Poster({ id, iso, timeZone, hero, title, eyebrow }: { id: string; iso: string; timeZone: string; hero?: boolean; title?: string; eyebrow?: string }) {
   const { month, day } = dateParts(iso, timeZone);
+  if (hero && title) {
+    // Grande affiche : bandeau (collectif · date), titre, horizon et dernier mot reflété.
+    const last = title.trim().split(/\s+/).pop() ?? title;
+    return (
+      <div className={`poster poster--hero poster--tone-${posterTone(id)}`} aria-hidden="true">
+        {eyebrow ? <span className="poster__month">{eyebrow.toUpperCase()}</span> : null}
+        <span className="poster__title">{title}</span>
+        <span className="poster__horizon" />
+        <span className="poster__reflect">{last}</span>
+      </div>
+    );
+  }
   return (
-    <div className={`poster poster--tone-${posterTone(id)}${hero ? ' poster--hero' : ''}`} aria-hidden="true">
-      {hero && title ? <span className="poster__title">{title}</span> : null}
+    <div className={`poster poster--tone-${posterTone(id)}`} aria-hidden="true">
       <span className="poster__month">{month}</span>
       <span className="poster__day">{day}</span>
       <span className="poster__horizon" />

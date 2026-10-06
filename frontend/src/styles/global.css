@@ -90,3 +90,7 @@ legend { font-family: var(--font-display); font-weight: 700; padding: 0 var(--sp
 ol.stack { margin: 0; padding-left: 1.25rem; }
 .choice__text { font-weight: 700; }
 .choice__text .choice__hint { font-weight: 400; }
+/* Grande affiche : titre adapté aux longs intitulés, fond du kit conservé pour toutes les teintes */
+.poster--hero { background: radial-gradient(120% 60% at 50% 58%, #4A3D86 0%, #2B2560 45%, #191538 100%); }
+.poster--hero .poster__title { font-size: clamp(2.25rem, 10vw, 3.5rem); overflow-wrap: anywhere; }
+.poster--hero .poster__month { margin-bottom: var(--space-2); }

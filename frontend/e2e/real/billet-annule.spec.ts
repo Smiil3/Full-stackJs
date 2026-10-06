@@ -42,8 +42,8 @@ test('commande remboursée ⇒ scan « BILLET ANNULÉ » (en ligne et hors-ligne
   // En ligne : le serveur répond « annulé ».
   await page.getByLabel('Saisie manuelle du code').fill(qr);
   await page.getByRole('button', { name: 'Vérifier' }).click();
-  await expect(page.getByRole('alertdialog')).toContainText('BILLET ANNULÉ');
-  await page.getByRole('alertdialog').getByRole('button', { name: 'Scanner le suivant' }).click();
+  await expect(page.locator('.scan-result:not(.scan-result--pending)')).toContainText('Billet annulé');
+  await page.locator('.scan-result:not(.scan-result--pending)').getByRole('button', { name: 'Scanner le suivant' }).click();
 
   // Hors-ligne avec la liste mise à jour : le statut local est « annulé » aussi.
   await page.getByRole('button', { name: 'Mettre à jour la liste' }).click();
@@ -51,7 +51,7 @@ test('commande remboursée ⇒ scan « BILLET ANNULÉ » (en ligne et hors-ligne
   await context.setOffline(true);
   await page.getByLabel('Saisie manuelle du code').fill(qr);
   await page.getByRole('button', { name: 'Vérifier' }).click();
-  await expect(page.getByRole('alertdialog')).toContainText('BILLET ANNULÉ');
-  await expect(page.getByRole('alertdialog')).toContainText('Vérifié hors-ligne');
+  await expect(page.locator('.scan-result:not(.scan-result--pending)')).toContainText('Billet annulé');
+  await expect(page.locator('.scan-result:not(.scan-result--pending)')).toContainText('Vérifié hors-ligne');
   await context.setOffline(false);
 });

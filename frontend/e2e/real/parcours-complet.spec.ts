@@ -53,10 +53,10 @@ test('achat carte ⇒ mail ⇒ billet QR ⇒ scan OK puis DÉJÀ UTILISÉ', asyn
   // Mode par défaut : contrôle EN LIGNE, aucune liste téléchargée.
   const card = scanner.locator('li', { has: scanner.getByRole('heading', { name: ev.title }) });
   await card.getByRole('link', { name: 'Contrôler les entrées' }).click();
-  for (const expected of [/^OK/, /DÉJÀ UTILISÉ à \d{2}:\d{2}/]) {
+  for (const expected of [/OK — entrée/, /Déjà utilisé.*à \d{2}:\d{2}/]) {
     await scanner.getByLabel('Saisie manuelle du code').fill(qr);
     await scanner.getByRole('button', { name: 'Vérifier' }).click();
-    const result = scanner.getByRole('alertdialog');
+    const result = scanner.locator('.scan-result:not(.scan-result--pending)');
     await expect(result).toContainText(expected);
     await result.getByRole('button', { name: 'Scanner le suivant' }).click();
   }

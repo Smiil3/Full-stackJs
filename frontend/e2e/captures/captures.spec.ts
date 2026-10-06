@@ -80,7 +80,7 @@ test('scanner : résultat de contrôle', async ({ page }) => {
   await go(page, `/scan/${ORG}/${CONCERT}`);
   await page.getByLabel(/Saisi(e|r) (manuelle du|le) code/).fill('NG1.faux');
   await page.getByLabel(/Saisi(e|r) (manuelle du|le) code/).press('Enter');
-  await expect(page.getByRole('alertdialog').or(page.getByRole('alert')).first()).toBeVisible();
+  await expect(page.locator('.scan-result:not(.scan-result--pending)')).toBeVisible();
   await shot(page, '08-scanner-refus');
 });
 

@@ -39,11 +39,11 @@ test('rechargement hors-ligne de l’application, contrôle local puis resynchro
   // Plus aucun réseau : l'application se recharge depuis le cache et reste utilisable.
   await context.setOffline(true);
   await page.goto(scanUrl);
-  await expect(page.getByText('Vous êtes hors-ligne')).toBeVisible();
+  await expect(page.getByText(/Pas de réseau\. Vos billets restent disponibles/)).toBeVisible();
   await page.getByLabel('Saisie manuelle du code').fill(qr);
   await page.getByRole('button', { name: 'Vérifier' }).click();
-  await expect(page.getByRole('alertdialog')).toContainText('OK');
-  await expect(page.getByRole('alertdialog')).toContainText('Vérifié hors-ligne');
+  await expect(page.locator('.scan-result:not(.scan-result--pending)')).toContainText('OK — entrée');
+  await expect(page.locator('.scan-result:not(.scan-result--pending)')).toContainText('Vérifié hors-ligne');
   await expect(page.getByText(/1 scan en attente de synchro/)).toBeVisible();
 
   // Retour du réseau : session restaurée, synchro automatique.

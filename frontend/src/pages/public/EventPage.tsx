@@ -6,7 +6,7 @@ import { EventTime } from '../../components/EventTime';
 import { Icon } from '../../components/Icon';
 import { PageLoader } from '../../components/PageLoader';
 import { Poster } from '../../components/Poster';
-import { formatTime } from '../../lib/time';
+import { formatDate, formatTime } from '../../lib/time';
 import { OrderForm } from './OrderForm';
 
 export function EventPage() {
@@ -18,7 +18,7 @@ export function EventPage() {
 
   return (
     <article className="page">
-      <Poster hero id={event.id} iso={event.startsAt} timeZone={event.timezone} title={event.title} />
+      <Poster hero id={event.id} iso={event.startsAt} timeZone={event.timezone} title={event.title} eyebrow={`${event.orgName} · ${formatDate(event.startsAt, event.timezone)}`} />
       <div className="stack stack--sm">
         <AvailabilityBadge value={event.coverAvailability} waitlist={event.rules.waitlistEnabled} />
         <h1>{event.title}</h1>

@@ -26,6 +26,18 @@ afterEach(async () => {
   await __wipeScannerForTests();
 });
 
+/** Résultat de scan affiché (rôle selon le résultat : status = entrée, alert = refus, alertdialog = décision). */
+const result = () => document.querySelector<HTMLElement>('.scan-result:not(.scan-result--pending)');
+const mustResult = () => {
+  const el = result();
+  if (!el) throw new Error('aucun résultat de scan affiché');
+  return el;
+};
+async function findResult(timeout = 3000): Promise<HTMLElement> {
+  await waitFor(() => expect(result()).not.toBeNull(), { timeout });
+  return mustResult();
+}
+
 async function buy(eventId: string, ticketTypeId: string, qty = 1): Promise<string[]> {
   await login('acheteur@example.test', DEMO_PASSWORD);
   const tt = mock.db.ticketTypes.find((t) => t.id === ticketTypeId);
@@ -76,16 +88,16 @@ describe('scanner — mode par défaut EN LIGNE', () => {
     await renderApp(ONLINE_ONLY, { as: 'scanner@nuits.test' });
     await screen.findByLabelText('Saisie manuelle du code');
     await scanManually(user, qr ?? '');
-    const ok = await screen.findByRole('alertdialog');
+    const ok = await findResult();
     expect(ok).toHaveClass('scan-result--ok');
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull(), { timeout: 4000 });
+    await waitFor(() => expect(result()).toBeNull(), { timeout: 4000 });
     await scanManually(user, qr ?? '');
-    const ko = await screen.findByRole('alertdialog');
-    expect(ko).toHaveTextContent(/DÉJÀ UTILISÉ à \d{2}:\d{2}/);
+    const ko = await findResult();
+    expect(ko).toHaveTextContent(/Déjà utilisé.*à \d{2}:\d{2}/);
     await new Promise((r) => setTimeout(r, 3000));
-    expect(screen.getByRole('alertdialog')).toHaveTextContent('DÉJÀ UTILISÉ'); // toujours là
+    expect(mustResult()).toHaveTextContent('Déjà utilisé'); // toujours là
     await clickNext(user, ko);
-    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(result()).toBeNull();
     expect(await pendingCount()).toBe(0); // rien en file en mode en ligne
   });
 
@@ -94,9 +106,9 @@ describe('scanner — mode par défaut EN LIGNE', () => {
     await renderApp(ONLINE_ONLY, { as: 'scanner@nuits.test' });
     await screen.findByLabelText('Saisie manuelle du code');
     await scanManually(user, 'NG1.faux');
-    expect(await screen.findByRole('alertdialog')).toHaveTextContent('INVALIDE');
+    expect(await findResult()).toHaveTextContent('Billet invalide');
     await new Promise((r) => setTimeout(r, 3000));
-    expect(screen.getByRole('alertdialog')).toHaveTextContent('INVALIDE');
+    expect(mustResult()).toHaveTextContent('Billet invalide');
   });
 
   it('réseau coupé ⇒ « Vérification impossible — réessayez », personne n’entre ; « Réessayer » ⇒ OK', async () => {
@@ -107,14 +119,14 @@ describe('scanner — mode par défaut EN LIGNE', () => {
     injectFault({ route: SCAN_ROUTE, status: 0, code: 'INTERNAL_ERROR', network: true, times: 99 });
     await scanManually(user, qr ?? '');
     expect(await screen.findByText('Vérification en cours…')).toBeInTheDocument();
-    const fail = await screen.findByRole('alertdialog', {}, { timeout: 15_000 });
+    const fail = await findResult(15_000);
     expect(fail).toHaveTextContent('Vérification impossible — réessayez');
     expect(fail).toHaveTextContent('ne laissez pas entrer');
     expect(mock.db.tickets.find((t) => t.qrPayload === qr)?.status).toBe('VALID');
     const { clearFaults } = await import('../../mocks/core');
     clearFaults();
     await user.click(within(fail).getByRole('button', { name: 'Réessayer' }));
-    expect(await screen.findByRole('alertdialog')).toHaveTextContent('OK');
+    expect(await findResult()).toHaveTextContent('OK — entrée');
   });
 
   it('hors-ligne sans mode secours ⇒ message « pas de réseau, ne laissez entrer personne »', async () => {
@@ -133,16 +145,16 @@ describe('scanner — mode SECOURS hors-ligne', () => {
     expect(screen.getByText(/risque de double entrée si plusieurs appareils/)).toBeInTheDocument();
     setOnline(false);
     await scanManually(user, qr1 ?? '');
-    let r = await screen.findByRole('alertdialog');
+    let r = await findResult();
     expect(r).toHaveTextContent('Vérifié hors-ligne');
     expect((await screen.findByText(/Vérification locale/)).closest('p')).toHaveTextContent('pas de réseau');
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull(), { timeout: 4000 });
+    await waitFor(() => expect(result()).toBeNull(), { timeout: 4000 });
     await scanManually(user, qr1 ?? '');
-    r = await screen.findByRole('alertdialog');
-    expect(r).toHaveTextContent('DÉJÀ UTILISÉ');
+    r = await findResult();
+    expect(r).toHaveTextContent('Déjà utilisé');
     await clickNext(user, r);
     await scanManually(user, qr2 ?? '');
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull(), { timeout: 4000 });
+    await waitFor(() => expect(result()).toBeNull(), { timeout: 4000 });
     expect(await screen.findByText(/scans en attente de synchro/)).toHaveTextContent('2 scans');
     setOnline(true);
     await waitFor(async () => expect(await pendingCount()).toBe(0), { timeout: 10_000 });
@@ -157,12 +169,12 @@ describe('scanner — mode SECOURS hors-ligne', () => {
     const late = await signQr(IDS.eventConcert, randomPublicId());
     setOnline(false);
     await scanManually(user, late);
-    const r = await screen.findByRole('alertdialog');
+    const r = await findResult();
     expect(r).toHaveClass('scan-result--warn');
-    expect(r).toHaveTextContent('Billet authentique non présent dans la liste — vérifier en ligne si possible');
+    expect(r).toHaveTextContent('Billet authentique, absent de la liste');
     const admit = within(r).getByRole('button', { name: 'Laisser entrer' });
     await user.dblClick(admit);
-    expect(await screen.findByRole('alertdialog')).toHaveTextContent('OK');
+    expect(await findResult()).toHaveTextContent('OK — entrée');
     expect(await pendingCount()).toBe(1);
   });
 
@@ -175,7 +187,7 @@ describe('scanner — mode SECOURS hors-ligne', () => {
     setOnline(false);
     await user.click(screen.getByLabelText('Saisie manuelle du code'));
     await user.keyboard(`${late}{Enter}`);
-    const r = await screen.findByRole('alertdialog');
+    const r = await findResult();
     expect(r).toHaveClass('scan-result--warn');
     expect(document.activeElement?.id).toBe('scan-result-title'); // focus sur le titre, pas sur le bouton
     // La douchette continue d'envoyer des codes suivis d'Entrée, pendant puis après le délai de garde.
@@ -186,10 +198,10 @@ describe('scanner — mode SECOURS hors-ligne', () => {
     within(r).getByRole('button', { name: 'Laisser entrer' }).focus();
     await user.keyboard('{Enter}');
     await user.keyboard(' ');
-    expect(screen.getByRole('alertdialog')).toHaveClass('scan-result--warn'); // toujours en attente de décision
+    expect(mustResult()).toHaveClass('scan-result--warn'); // toujours en attente de décision
     expect(await pendingCount()).toBe(0); // personne n'est entré
     await user.click(within(r).getByRole('button', { name: 'Laisser entrer' })); // un vrai tap
-    expect(await screen.findByRole('alertdialog')).toHaveTextContent('OK');
+    expect(await findResult()).toHaveTextContent('OK — entrée');
     expect(await pendingCount()).toBe(1);
   });
 
@@ -198,15 +210,38 @@ describe('scanner — mode SECOURS hors-ligne', () => {
     await renderApp(ONLINE_ONLY, { as: 'scanner@nuits.test' });
     await user.click(await screen.findByLabelText('Saisie manuelle du code'));
     await user.keyboard('NG1.faux{Enter}');
-    const r = await screen.findByRole('alertdialog');
-    expect(r).toHaveTextContent('INVALIDE');
+    const r = await findResult();
+    expect(r).toHaveTextContent('Billet invalide');
     await user.keyboard('NG1.autre{Enter}');
     await user.keyboard('{Enter}');
-    expect(screen.getByRole('alertdialog')).toHaveTextContent('INVALIDE'); // pas fermé
+    expect(mustResult()).toHaveTextContent('Billet invalide'); // pas fermé
     expect(within(r).getByRole('button', { name: 'Scanner le suivant' })).toBeDisabled();
     await new Promise((res) => setTimeout(res, 1700));
     await user.keyboard('{Enter}');
-    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(result()).toBeNull();
+  });
+
+  it('D1 : rôles du handoff (entrée = status, refus = alert, décision = alertdialog) ; bandeau hors-ligne permanent', async () => {
+    const user = userEvent.setup();
+    const [qr] = await buyConcert(1);
+    await openRescue(user);
+    setOnline(false);
+    expect(await screen.findByText(/Mode secours hors-ligne · liste mise à jour à \d{2}:\d{2}/)).toBeInTheDocument();
+    await scanManually(user, qr ?? '');
+    const ok = await findResult();
+    expect(ok).toHaveAttribute('role', 'status');
+    expect(ok).toHaveTextContent(/Mode secours hors-ligne/); // le bandeau reste sur le résultat
+    await waitFor(() => expect(result()).toBeNull(), { timeout: 4000 });
+    await scanManually(user, qr ?? '');
+    expect(await findResult()).toHaveAttribute('role', 'alert');
+    await waitFor(() => expect(within(mustResult()).getByRole('button', { name: 'Scanner le suivant' })).toBeEnabled(), { timeout: 3000 });
+    await user.click(within(mustResult()).getByRole('button', { name: 'Scanner le suivant' }));
+    const { signQr, randomPublicId } = await import('../../mocks/crypto');
+    await scanManually(user, await signQr(IDS.eventConcert, randomPublicId()));
+    const decision = await findResult();
+    expect(decision).toHaveAttribute('role', 'alertdialog');
+    expect(decision).toHaveTextContent('À vous de décider');
+    expect(screen.getAllByText(/Mode secours hors-ligne · liste/).length).toBeGreaterThan(0); // toujours affiché
   });
 
   it('conflit affiché, à valider par « J’ai pris connaissance »', async () => {
@@ -215,7 +250,7 @@ describe('scanner — mode SECOURS hors-ligne', () => {
     await openRescue(user);
     setOnline(false);
     await scanManually(user, qr ?? '');
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull(), { timeout: 4000 });
+    await waitFor(() => expect(result()).toBeNull(), { timeout: 4000 });
     const t = mock.db.tickets.find((x) => x.qrPayload === qr);
     if (t) Object.assign(t, { status: 'USED', usedAt: '2026-11-14T20:04:00.000Z' });
     setOnline(true);
@@ -231,7 +266,7 @@ describe('scanner — mode SECOURS hors-ligne', () => {
     await openRescue(user);
     setOnline(false);
     await scanManually(user, qr ?? '');
-    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull(), { timeout: 4000 });
+    await waitFor(() => expect(result()).toBeNull(), { timeout: 4000 });
     await openMenu(user);
     await user.click(screen.getByRole('button', { name: 'Se déconnecter' }));
     const d1 = await screen.findByRole('dialog', { name: 'Passages non transmis' });

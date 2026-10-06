@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import type { ScanOutcome } from '../engine';
+import { Icon } from '../../components/Icon';
 import { describeOutcome } from './describeOutcome';
 
 /**
@@ -10,7 +11,17 @@ import { describeOutcome } from './describeOutcome';
 export const KEY_GUARD_MS = 1500;
 
 /** Résultat plein écran, très lisible ; annoncé immédiatement aux lecteurs d'écran. */
-export function ResultOverlay(props: { outcome: ScanOutcome; timezone: string; onClose: () => void; onAdmit: () => void; busy: boolean }) {
+export function ResultOverlay(props: {
+  outcome: ScanOutcome;
+  timezone: string;
+  eventTitle: string;
+  /** Bandeau hors-ligne PERMANENT tant que le réseau n'est pas revenu. */
+  banner?: string | null;
+  autoCloseSeconds?: number;
+  onClose: () => void;
+  onAdmit: () => void;
+  busy: boolean;
+}) {
   const v = describeOutcome(props.outcome, props.timezone);
   const decision = props.outcome.kind === 'UNKNOWN_AUTHENTIC';
   const titleRef = useRef<HTMLParagraphElement>(null);
@@ -66,41 +77,74 @@ export function ResultOverlay(props: { outcome: ScanOutcome; timezone: string; o
     props.onAdmit();
   };
 
+  // Rôles (HANDOFF § 6.3) : entrée = status, refus = alert, décision humaine = dialogue modal.
+  const role = decision ? 'alertdialog' : v.tone === 'ok' ? 'status' : 'alert';
   return (
-    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- raccourci Entrée de la douchette sur le dialogue
-    <div className={`scan-result scan-result--${v.tone}`} role="alertdialog" aria-modal="true" aria-labelledby="scan-result-title" aria-describedby={v.detail ? 'scan-result-detail' : undefined} onKeyDown={onKeyDown}>
-      <p id="scan-result-title" ref={titleRef} tabIndex={-1} className="scan-result__title">
-        {v.title}
-      </p>
-      {v.detail ? (
-        <p id="scan-result-detail" className="scan-result__detail">
-          {v.detail}
-        </p>
-      ) : null}
-      {props.outcome.offline ? <p className="scan-result__mode">Vérifié hors-ligne</p> : null}
-      {decision ? (
-        <div className="scan-result__actions">
-          <button
-            type="button"
-            className="btn btn--block scan-result__btn"
-            disabled={props.busy}
-            onPointerDown={() => {
-              pointerOnAdmit.current = true;
-            }}
-            onClick={admit}
-          >
-            Laisser entrer
-          </button>
-          <p className="scan-result__mode">Appuyez sur l’écran pour laisser entrer.</p>
-          <button type="button" className="btn btn--block btn--secondary scan-result__btn" onClick={props.onClose}>
-            Refuser
-          </button>
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- raccourci Entrée de la douchette sur le résultat
+    <section
+      className={`scan-result scan-result--${v.tone}`}
+      role={role}
+      aria-modal={decision ? true : undefined}
+      aria-labelledby="scan-result-title"
+      aria-describedby="scan-result-line"
+      onKeyDown={onKeyDown}
+    >
+      <header className="scan-topbar">
+        <span>{props.eventTitle}</span>
+        {props.outcome.offline ? <span>Vérifié hors-ligne</span> : null}
+      </header>
+      {props.banner ? (
+        <div className="scan-banner" role="status">
+          <Icon name="wifi-off" />
+          <span>{props.banner}</span>
         </div>
-      ) : (
-        <button type="button" className="btn btn--block scan-result__btn" disabled={!armed} onClick={close}>
-          Scanner le suivant
-        </button>
-      )}
-    </div>
+      ) : null}
+      <div className="scan-result__view">
+        <div className="scan-result__frame">
+          <span className="scan-result__icon">
+            <Icon name={v.icon} />
+          </span>
+        </div>
+      </div>
+      <div className="scan-result__sheet">
+        <p id="scan-result-title" ref={titleRef} tabIndex={-1} className="scan-result__title">
+          {v.title}
+        </p>
+        <p id="scan-result-line" className="scan-result__line">
+          {v.line}
+        </p>
+        {v.detail ? <p className="scan-result__detail">{v.detail}</p> : null}
+        {decision ? (
+          <>
+            <div className="scan-result__actions">
+              <button
+                type="button"
+                className="btn"
+                disabled={props.busy}
+                onPointerDown={() => {
+                  pointerOnAdmit.current = true;
+                }}
+                onClick={admit}
+              >
+                Laisser entrer
+              </button>
+              <button type="button" className="btn btn--secondary" onClick={props.onClose}>
+                Refuser
+              </button>
+            </div>
+            <p className="scan-result__foot">Appuyez sur l’écran pour laisser entrer.</p>
+          </>
+        ) : (
+          <>
+            <div className="scan-result__actions">
+              <button type="button" className="btn btn--secondary" disabled={!armed} onClick={close}>
+                Scanner le suivant
+              </button>
+            </div>
+            {v.tone === 'ok' && props.autoCloseSeconds ? <p className="scan-result__foot">Retour à la caméra dans {props.autoCloseSeconds} s</p> : null}
+          </>
+        )}
+      </div>
+    </section>
   );
 }
