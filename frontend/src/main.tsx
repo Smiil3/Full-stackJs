@@ -4,9 +4,9 @@ import { App } from './App';
 import './styles/global.css';
 
 async function bootstrap() {
-  // `import.meta.env.MODE` est remplacé à la compilation : en build de production, cette branche
-  // et tout le code de mock sont éliminés du bundle.
-  if (import.meta.env.MODE === 'mock') {
+  // `import.meta.env.DEV` / `MODE` sont remplacés à la compilation : en build, cette branche et tout le
+  // code de mock sont éliminés du bundle (et vite.config.ts refuse de construire en mode mock).
+  if (import.meta.env.DEV && import.meta.env.MODE === 'mock') {
     const { startMockWorker } = await import('./mocks/browser');
     await startMockWorker();
   }

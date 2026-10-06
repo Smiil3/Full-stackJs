@@ -1,0 +1,42 @@
+# Exemple de configuration nginx pour servir le build (dist/) en production.
+# En-têtes de sécurité : deploy/nuits-security-headers.conf (identiques à security-headers.ts, + HSTS).
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name billetterie.example.org;
+
+    # ssl_certificate     /etc/ssl/certs/billetterie.pem;
+    # ssl_certificate_key /etc/ssl/private/billetterie.key;
+
+    root /var/www/nuits-frontend/dist;
+    index index.html;
+    server_tokens off;
+
+    # nginx n'hérite pas des add_header d'un bloc parent dans un bloc location qui en définit :
+    # le snippet est donc inclus au niveau serveur ET dans chaque location qui ajoute un en-tête.
+    include /etc/nginx/snippets/nuits-security-headers.conf;
+
+
+    # API servie sur la même origine (cookies SameSite=Strict, CSP connect-src 'self').
+    location /api/ {
+        proxy_pass http://127.0.0.1:4000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Le service worker et le manifeste ne doivent jamais être mis en cache longtemps.
+    location = /sw.js { add_header Cache-Control "no-cache" always; include /etc/nginx/snippets/nuits-security-headers.conf; try_files $uri =404; }
+    location = /index.html { add_header Cache-Control "no-cache" always; include /etc/nginx/snippets/nuits-security-headers.conf; }
+
+    location /assets/ { add_header Cache-Control "public, max-age=31536000, immutable" always; include /etc/nginx/snippets/nuits-security-headers.conf; }
+
+    # Application monopage : toute route inconnue renvoie index.html.
+    location / { try_files $uri /index.html; }
+}
+
+server {
+    listen 80;
+    server_name billetterie.example.org;
+    return 301 https://$host$request_uri;
+}

@@ -5,6 +5,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { Plugin } from 'vite';
+import { securityHeaders } from './security-headers';
 
 /**
  * Sert le service worker de MSW UNIQUEMENT en serveur de dev (`apply: 'serve'`) : il n'est jamais
@@ -24,7 +25,12 @@ function mswWorkerDevOnly(): Plugin {
   };
 }
 
-export default defineConfig(({ mode }) => ({
+export default defineConfig(({ mode, command }) => {
+  // Le mode mock (API simulée par MSW) n'a aucun sens en production : on refuse de le construire.
+  if (mode === 'mock' && command === 'build') {
+    throw new Error('Build refusé : le mode « mock » est réservé au serveur de développement.');
+  }
+  return {
   plugins: [
     react(),
     mode === 'mock' ? mswWorkerDevOnly() : null,
@@ -62,17 +68,19 @@ export default defineConfig(({ mode }) => ({
     }),
   ],
   server: {
+    headers: securityHeaders(true),
     port: 5173,
     strictPort: true,
     proxy: mode === 'mock' ? undefined : { '/api': { target: 'http://localhost:4000', changeOrigin: false } },
   },
-  preview: { port: 4173, strictPort: true },
+  preview: { port: 4173, strictPort: true, headers: securityHeaders(false) },
   build: { sourcemap: false, target: 'es2022' },
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
-    include: ['src/**/*.test.{ts,tsx}'],
+    include: ['src/**/*.test.{ts,tsx}', 'vite.config.test.ts'],
     restoreMocks: true,
     css: { modules: { classNameStrategy: 'non-scoped' } },
   },
-}));
+  };
+});
