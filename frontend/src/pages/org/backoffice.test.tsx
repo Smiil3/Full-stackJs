@@ -281,6 +281,33 @@ describe('back-office : événements', () => {
     expect(await screen.findByText('Annulé')).toBeInTheDocument();
   });
 
+  it('M4 : titre recopié avec espaces superflus / autre composition Unicode accepté ; champs vidés à la fermeture', async () => {
+    const user = userEvent.setup();
+    await renderApp(EVENT, { as: OWNER });
+    await user.click(await screen.findByRole('button', { name: 'Annuler l’événement…' }));
+    let dialog = screen.getByRole('dialog', { name: 'Annuler définitivement l’événement ?' });
+    await user.type(within(dialog).getByLabelText(/Motif/), 'Météo');
+    const decomposed = '  Garonne E\u0301lectrique   —  soirée d’ouverture '; // « É » décomposé
+    await user.type(within(dialog).getByLabelText(/recopiez le titre/), decomposed);
+    expect(within(dialog).getByRole('button', { name: 'Annuler l’événement' })).toBeEnabled();
+    await user.click(within(dialog).getByRole('button', { name: 'Ne rien faire' }));
+    await user.click(screen.getByRole('button', { name: 'Annuler l’événement…' }));
+    dialog = screen.getByRole('dialog', { name: 'Annuler définitivement l’événement ?' });
+    expect(within(dialog).getByLabelText(/recopiez le titre/)).toHaveValue('');
+    expect(within(dialog).getByLabelText(/Motif/)).toHaveValue('');
+  });
+
+  it('M3 : après publication, catalogue public et données dépendantes invalidés', async () => {
+    const user = userEvent.setup();
+    const { queryClient } = await renderApp(`${ORG}/events/${IDS.eventDraft}`, { as: MANAGER });
+    queryClient.setQueryData(['events', { page: 1 }], { items: [], page: 1, pageSize: 20, total: 0 });
+    queryClient.setQueryData(['org', IDS.orgNuits, 'event', IDS.eventDraft, 'stats'], { x: 1 });
+    await user.click(await screen.findByRole('button', { name: 'Publier l’événement' }));
+    await screen.findByText('Publié');
+    expect(queryClient.getQueryState(['events', { page: 1 }])?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(['org', IDS.orgNuits, 'event', IDS.eventDraft, 'stats'])?.isInvalidated).toBe(true);
+  });
+
   it('MANAGER : pas de bouton d’annulation d’événement', async () => {
     await renderApp(EVENT, { as: MANAGER });
     await screen.findByRole('heading', { name: /Garonne Électrique/ });
@@ -316,21 +343,45 @@ describe('back-office : ventes, commandes, export', () => {
     vi.useRealTimers();
   });
 
+  it('M6 : polling arrêté sur 403 / 404', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    injectFault({ route: 'GET /orgs/:orgId/events/:eventId/stats', status: 403, code: 'FORBIDDEN' });
+    await renderApp(`${EVENT}/dashboard`, { as: MANAGER });
+    expect(await screen.findByText('Vous n’avez pas les droits nécessaires pour cette action.')).toBeInTheDocument();
+    const calls = mock.db.calls.get('GET /orgs/:orgId/events/:eventId/stats') ?? 0;
+    await act(() => vi.advanceTimersByTimeAsync(20_000));
+    expect(mock.db.calls.get('GET /orgs/:orgId/events/:eventId/stats') ?? 0).toBe(calls);
+    vi.useRealTimers();
+  });
+
   it('virement : AMOUNT_MISMATCH expliqué, puis validation avec le bon montant', async () => {
     const user = userEvent.setup();
     await login('acheteur@example.test', DEMO_PASSWORD);
     const order = await apiRequest<Order>('/orders', { method: 'POST', body: { eventId: IDS.eventConcert, paymentMethod: 'TRANSFER', items: [{ ticketTypeId: IDS.ttFosse, quantity: 1 }] }, headers: { 'Idempotency-Key': crypto.randomUUID() } });
     await logout();
     await renderApp(`${EVENT}/orders`, { as: MANAGER });
-    expect(await screen.findByText(order.transferInstructions?.reference ?? 'x')).toBeInTheDocument();
+    expect((await screen.findAllByText(order.transferInstructions?.reference ?? 'x')).length).toBeGreaterThan(0);
     expect(screen.getByText('FR76 •••• •••• 0189')).toBeInTheDocument();
     const input = screen.getByLabelText('Montant reçu sur le compte (€)');
     await user.type(input, '10');
     await user.click(screen.getByRole('button', { name: 'Valider le virement' }));
+    // M5 : récapitulatif avant validation (montant dû, saisi, référence)
+    let dialog = screen.getByRole('dialog', { name: 'Valider ce virement ?' });
+    expect(dialog).toHaveTextContent(/Montant dû\s*18,95\s€/);
+    expect(dialog).toHaveTextContent(/Montant reçu saisi\s*10,00\s€/);
+    expect(dialog).toHaveTextContent(order.transferInstructions?.reference ?? 'x');
+    await user.click(within(dialog).getByRole('button', { name: 'Valider le virement' }));
     expect(await screen.findByText(/ne correspond pas au montant dû \(18,95\s€\)/)).toBeInTheDocument();
+    await user.clear(input);
+    await user.type(input, '0');
+    await user.click(screen.getByRole('button', { name: 'Valider le virement' }));
+    expect(screen.getByText('Saisissez le montant reçu (supérieur à 0).')).toBeInTheDocument();
     await user.clear(input);
     await user.type(input, '18,95');
     await user.click(screen.getByRole('button', { name: 'Valider le virement' }));
+    dialog = screen.getByRole('dialog', { name: 'Valider ce virement ?' });
+    expect(mock.db.orders.find((o) => o.id === order.id)?.status).toBe('AWAITING_TRANSFER'); // rien avant confirmation
+    await user.click(within(dialog).getByRole('button', { name: 'Valider le virement' }));
     await waitFor(() => expect(mock.db.orders.find((o) => o.id === order.id)?.status).toBe('PAID'));
   });
 

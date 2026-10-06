@@ -14,6 +14,10 @@ import { lookup } from '../../lib/lookup';
 import { EventEditor } from './EventEditor';
 import { TicketTypesEditor } from './TicketTypesEditor';
 
+/** Titre recopié : tolère composition Unicode (NFC), espaces multiples et bords. */
+const normalizeTitle = (s: string) => s.normalize('NFC').replace(/\s+/g, ' ').trim();
+const sameTitle = (typed: string, title: string) => normalizeTitle(typed) !== '' && normalizeTitle(typed) === normalizeTitle(title);
+
 export function EventAdminPage() {
   const { orgId = '', eventId = '' } = useParams();
   const { user } = useAuth();
@@ -26,6 +30,20 @@ export function EventAdminPage() {
   const [confirmTitle, setConfirmTitle] = useState('');
   const [reason, setReason] = useState('');
   const [editing, setEditing] = useState(false);
+  // Réinitialisé à chaque changement d'événement.
+  const [stateFor, setStateFor] = useState(eventId);
+  if (stateFor !== eventId) {
+    setStateFor(eventId);
+    setConfirmTitle('');
+    setReason('');
+    setCancelOpen(false);
+    setEditing(false);
+  }
+  const closeCancel = () => {
+    setCancelOpen(false);
+    setConfirmTitle('');
+    setReason('');
+  };
 
   if (isPending) return <PageLoader />;
   if (!event) return <ErrorAlert error={error} />;
@@ -119,9 +137,9 @@ export function EventAdminPage() {
         cancelLabel="Ne rien faire"
         danger
         busy={m.cancel.isPending}
-        confirmDisabled={confirmTitle !== event.title || reason.trim().length < 1 || reason.length > 500}
-        onCancel={() => setCancelOpen(false)}
-        onConfirm={() => m.cancel.mutate(reason.trim(), { onSuccess: () => setCancelOpen(false) })}
+        confirmDisabled={!sameTitle(confirmTitle, event.title) || reason.trim().length < 1 || reason.length > 500}
+        onCancel={closeCancel}
+        onConfirm={() => m.cancel.mutate(reason.trim(), { onSuccess: closeCancel })}
       >
         <p>
           Les <strong>commandes payées seront remboursées intégralement</strong>, les autres annulées, et tous les acheteurs prévenus. Cette action est <strong>irréversible</strong>.

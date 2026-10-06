@@ -4,6 +4,7 @@ import { apiPath } from '../../api/client';
 import { errorMessage, isApiError } from '../../api/errors';
 import { useConfirmTransfer, useEventOrders, useOrgEvent } from '../../api/hooks/org';
 import { ORDER_STATUSES, type OrderAdmin, type OrderStatus } from '../../api/types';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { ErrorAlert } from '../../components/ErrorAlert';
 import { Field } from '../../components/Field';
 import { OrderStatusBadge } from '../../components/OrderStatusBadge';
@@ -16,15 +17,20 @@ function ConfirmTransfer({ orgId, eventId, order }: { orgId: string; eventId: st
   const confirm = useConfirmTransfer(orgId, eventId);
   const [amount, setAmount] = useState('');
   const [local, setLocal] = useState<string | undefined>();
+  const [toConfirm, setToConfirm] = useState<number | null>(null);
   const submit = (e: SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
     const r = eurosToCents(amount, 100_000_000);
-    if (!r.ok) {
-      setLocal('Montant invalide.');
+    if (!r.ok || r.value <= 0) {
+      setLocal('Saisissez le montant reçu (supérieur à 0).');
       return;
     }
     setLocal(undefined);
-    if (!confirm.isPending) confirm.mutate({ orderId: order.id, receivedAmountCents: r.value });
+    setToConfirm(r.value); // récapitulatif avant validation définitive
+  };
+  const validate = () => {
+    if (toConfirm === null || confirm.isPending) return;
+    confirm.mutate({ orderId: order.id, receivedAmountCents: toConfirm }, { onSettled: () => setToConfirm(null) });
   };
   const mismatch = isApiError(confirm.error) && confirm.error.code === 'AMOUNT_MISMATCH';
   return (
@@ -45,6 +51,28 @@ function ConfirmTransfer({ orgId, eventId, order }: { orgId: string; eventId: st
           {mismatch ? `Le montant saisi ne correspond pas au montant dû (${formatCents(order.totalCents)}). Vérifiez le relevé bancaire.` : errorMessage(confirm.error)}
         </p>
       ) : null}
+      <ConfirmDialog
+        open={toConfirm !== null}
+        title="Valider ce virement ?"
+        confirmLabel="Valider le virement"
+        busy={confirm.isPending}
+        onCancel={() => setToConfirm(null)}
+        onConfirm={validate}
+      >
+        <dl className="kv">
+          <dt>Acheteur</dt>
+          <dd>{order.buyer.email}</dd>
+          <dt>Référence</dt>
+          <dd className="mono">{order.transferInstructions?.reference ?? '—'}</dd>
+          <dt>Montant dû</dt>
+          <dd>{formatCents(order.totalCents)}</dd>
+          <dt>Montant reçu saisi</dt>
+          <dd>
+            <strong>{toConfirm !== null ? formatCents(toConfirm) : '—'}</strong>
+          </dd>
+        </dl>
+        <p>Les billets seront émis et envoyés à l’acheteur. Vérifiez la référence sur le relevé bancaire.</p>
+      </ConfirmDialog>
     </form>
   );
 }

@@ -1,5 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiPath, apiRequest } from '../client';
+import { isApiError } from '../errors';
 import { qk } from '../queryKeys';
 import type {
   AdminOrdersQuery,
@@ -100,9 +101,12 @@ export const useOrgEvent = (orgId: string, eventId: string) =>
 
 function useEventCache(orgId: string) {
   const qc = useQueryClient();
+  /** Après création / modification / publication / report / annulation : tout ce qui en dépend est périmé. */
   return (e: EventAdmin) => {
     qc.setQueryData(qk.orgEvent(orgId, e.id), e);
     void qc.invalidateQueries({ queryKey: ['org', orgId, 'events'] });
+    void qc.invalidateQueries({ queryKey: ['org', orgId, 'event', e.id], predicate: (q) => q.queryKey.length > 4 }); // commandes, statistiques
+    void qc.invalidateQueries({ queryKey: ['events'] }); // catalogue public
     void qc.invalidateQueries({ queryKey: qk.event(e.id) });
   };
 }
@@ -155,7 +159,8 @@ export const useEventStats = (orgId: string, eventId: string) =>
   useQuery({
     queryKey: qk.orgEventStats(orgId, eventId),
     queryFn: ({ signal }) => apiRequest<EventStats>(`${ev(orgId, eventId)}/stats`, { signal }),
-    refetchInterval: STATS_POLL_MS,
+    // Arrêt définitif sur 403 / 404 (droits retirés, événement inexistant) : inutile d'insister.
+    refetchInterval: (q) => (isApiError(q.state.error) && (q.state.error.status === 403 || q.state.error.status === 404) ? false : STATS_POLL_MS),
     refetchIntervalInBackground: false,
     retry: false,
   });

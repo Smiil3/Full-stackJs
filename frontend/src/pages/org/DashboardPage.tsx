@@ -25,8 +25,8 @@ export function DashboardPage() {
   const { data: stats, error, isPending, dataUpdatedAt, isError } = useEventStats(orgId, eventId);
   const online = useOnline();
   // Fraîcheur mesurée sur l'horloge LOCALE (dataUpdatedAt est local) : pas de décalage serveur ici.
-  const now = useLocalNow(1000);
-  const stale = !online || isError || (dataUpdatedAt > 0 && now - dataUpdatedAt > 15_000);
+  const now = useLocalNow(5000);
+  const stale = !online || isError || (dataUpdatedAt > 0 && now - dataUpdatedAt > 20_000);
 
   return (
     <section className="page">
