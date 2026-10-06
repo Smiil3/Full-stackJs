@@ -1,14 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { SignJWT, jwtVerify } from 'jose';
+import { SignJWT, jwtVerify, type JWTHeaderParameters } from 'jose';
 import { getEnv } from '../config/env.js';
 
 export const ACCESS_TOKEN_TTL_SECONDS = 600;
 const ALGORITHM = 'HS256';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-function key(): Uint8Array {
-  return new TextEncoder().encode(getEnv().jwtAccessSecret);
-}
 
 /**
  * Access token : payload minimal (`sub`, `jti`, `ver` + claims standard), aucun rôle ni donnée personnelle.
@@ -16,15 +13,16 @@ function key(): Uint8Array {
  */
 export async function signAccessToken(userId: string, tokenVersion: number): Promise<string> {
   const env = getEnv();
+  const { current } = env.jwtKeyring;
   return new SignJWT({ ver: tokenVersion })
-    .setProtectedHeader({ alg: ALGORITHM, typ: 'JWT' })
+    .setProtectedHeader({ alg: ALGORITHM, typ: 'JWT', kid: current.id })
     .setSubject(userId)
     .setJti(randomUUID())
     .setIssuedAt()
     .setIssuer(env.jwtIssuer)
     .setAudience(env.jwtAudience)
     .setExpirationTime(`${ACCESS_TOKEN_TTL_SECONDS}s`)
-    .sign(key());
+    .sign(current.key);
 }
 
 export interface AccessClaims {
@@ -39,7 +37,13 @@ export interface AccessClaims {
 export async function verifyAccessToken(token: string): Promise<AccessClaims | null> {
   const env = getEnv();
   try {
-    const { payload } = await jwtVerify(token, key(), {
+    // Clé choisie par le `kid` de l'en-tête, uniquement dans le trousseau (kid absent ou inconnu ⇒ refus).
+    const resolveKey = (header: JWTHeaderParameters): Uint8Array => {
+      const k = typeof header.kid === 'string' ? env.jwtKeyring.byId.get(header.kid) : undefined;
+      if (!k) throw new Error('kid inconnu');
+      return k;
+    };
+    const { payload } = await jwtVerify(token, resolveKey, {
       algorithms: [ALGORITHM],
       issuer: env.jwtIssuer,
       audience: env.jwtAudience,

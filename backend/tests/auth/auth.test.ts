@@ -317,17 +317,20 @@ describe('refresh token rotatif', () => {
 });
 
 describe('access token JWT', () => {
-  const secret = () => new TextEncoder().encode(process.env['JWT_ACCESS_SECRET']);
-  const forge = (sub: string, opts: { alg?: string; aud?: string; iss?: string; exp?: string | number; ver?: unknown } = {}) =>
+  const secret = () => Buffer.from(process.env['JWT_ACCESS_SECRET']!, 'base64url');
+  const forge = (
+    sub: string,
+    opts: { alg?: string; aud?: string; iss?: string; exp?: string | number; ver?: unknown; kid?: string | null; key?: Uint8Array } = {},
+  ) =>
     new SignJWT(opts.ver === undefined ? { ver: 0 } : { ver: opts.ver })
-      .setProtectedHeader({ alg: opts.alg ?? 'HS256' })
+      .setProtectedHeader(opts.kid === null ? { alg: opts.alg ?? 'HS256' } : { alg: opts.alg ?? 'HS256', kid: opts.kid ?? 'k1' })
       .setSubject(sub)
       .setJti('11111111-1111-4111-8111-111111111111')
       .setIssuedAt()
       .setIssuer(opts.iss ?? 'nuits-api')
       .setAudience(opts.aud ?? 'nuits-web')
       .setExpirationTime(opts.exp ?? '10m')
-      .sign(secret());
+      .sign(opts.key ?? secret());
 
   it('jeton valide accepté ; payload limité à sub, jti et claims standard', async () => {
     const u = await loggedInUser();
@@ -335,6 +338,7 @@ describe('access token JWT', () => {
     expect(Object.keys(payload).sort()).toEqual(['aud', 'exp', 'iat', 'iss', 'jti', 'sub', 'ver']);
     const header = JSON.parse(Buffer.from(u.token.split('.')[0]!, 'base64url').toString()) as Record<string, unknown>;
     expect(header['alg']).toBe('HS256');
+    expect(header['kid']).toBe('k1');
     const me = await api().get(`${A}/me`).set(u.auth).expect(200);
     expect(me.body.id).toBe(u.id);
     expectNoSecrets(me.body);
@@ -353,6 +357,10 @@ describe('access token JWT', () => {
       await forge(u.id, { ver: 1 }),
       await forge(u.id, { ver: '0' }),
       await forge(u.id, { ver: null }),
+      // B2.1 B1 : kid absent ou inconnu, clé = chaîne UTF-8 au lieu des octets décodés.
+      await forge(u.id, { kid: null }),
+      await forge(u.id, { kid: 'k9' }),
+      await forge(u.id, { key: new TextEncoder().encode(process.env['JWT_ACCESS_SECRET']) }),
       'pas-un-jwt',
     ];
     for (const token of cases) {
@@ -362,6 +370,30 @@ describe('access token JWT', () => {
     }
     // Contrôle : le même forgeur avec les bons paramètres est accepté.
     await api().get(`${A}/me`).set('Authorization', `Bearer ${await forge(u.id)}`).expect(200);
+  });
+
+  it('rotation de clé : un jeton signé avec une ancienne clé du trousseau reste valide (B2.1 B1)', async () => {
+    const { randomBytes } = await import('node:crypto');
+    const { resetEnvCache } = await import('../../src/config/env.js');
+    const u = await createUser();
+    const oldSecret = process.env['JWT_ACCESS_SECRET']!;
+    const oldToken = await forge(u.id, { kid: 'k1' });
+    const saved = { ...process.env };
+    try {
+      Object.assign(process.env, { JWT_ACCESS_SECRET: randomBytes(32).toString('base64url'), JWT_KEY_ID: 'k2', JWT_PREVIOUS_SECRETS: `k1:${oldSecret}` });
+      resetEnvCache();
+      await api().get(`${A}/me`).set('Authorization', `Bearer ${oldToken}`).expect(200);
+      const fresh = await login(u);
+      const header = JSON.parse(Buffer.from(fresh.token.split('.')[0]!, 'base64url').toString()) as Record<string, unknown>;
+      expect(header['kid']).toBe('k2');
+      // Ancienne clé retirée du trousseau ⇒ refus.
+      process.env['JWT_PREVIOUS_SECRETS'] = '';
+      resetEnvCache();
+      await api().get(`${A}/me`).set('Authorization', `Bearer ${oldToken}`).expect(401);
+    } finally {
+      process.env = saved;
+      resetEnvCache();
+    }
   });
 
   it('jeton d’un utilisateur supprimé ⇒ 401', async () => {

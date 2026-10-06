@@ -13,7 +13,8 @@ export interface Env {
   frontUrl: string;
   apiPublicUrl: string;
   trustProxyHops: number;
-  jwtAccessSecret: string;
+  /** Trousseau HMAC du JWT : clé courante (signature) + anciennes clés (vérification seulement). */
+  jwtKeyring: Keyring;
   jwtIssuer: string;
   jwtAudience: string;
   refreshCookieSecure: boolean;
@@ -58,6 +59,21 @@ const schema = Joi.object({
   // Nombre EXACT de proxys de confiance (0–3) : au-delà, un client peut forger son IP via X-Forwarded-For.
   TRUST_PROXY_HOPS: Joi.number().integer().min(0).max(3).default(0),
   JWT_ACCESS_SECRET: secret256.required(),
+  JWT_KEY_ID: Joi.string().pattern(/^[a-z0-9]{1,16}$/).default('k1'),
+  // Rotation : anciens secrets encore acceptés en vérification, "kid:secret_base64url,…".
+  JWT_PREVIOUS_SECRETS: Joi.string().allow('').max(2000).default('')
+    .custom((value: string, helpers) => {
+      if (value === '') return value;
+      for (const entry of value.split(',')) {
+        const [kid, secret, ...rest] = entry.split(':');
+        if (rest.length > 0 || !kid || !/^[a-z0-9]{1,16}$/.test(kid) || !secret || !/^[A-Za-z0-9_-]+$/.test(secret)
+          || Buffer.from(secret, 'base64url').length < 32) {
+          return helpers.error('keys.format');
+        }
+      }
+      return value;
+    })
+    .messages({ 'keys.format': 'JWT_PREVIOUS_SECRETS doit être de la forme kid:secret_base64url(≥ 32 octets),…' }),
   JWT_ISSUER: Joi.string().min(1).max(100).required(),
   JWT_AUDIENCE: Joi.string().min(1).max(100).required(),
   REFRESH_COOKIE_SECURE: Joi.boolean().truthy('true').falsy('false').required()
@@ -127,6 +143,8 @@ interface RawEnv {
   API_PUBLIC_URL: string;
   TRUST_PROXY_HOPS: number;
   JWT_ACCESS_SECRET: string;
+  JWT_KEY_ID: string;
+  JWT_PREVIOUS_SECRETS: string;
   JWT_ISSUER: string;
   JWT_AUDIENCE: string;
   REFRESH_COOKIE_SECURE: boolean;
@@ -172,7 +190,7 @@ export function parseEnv(source: NodeJS.ProcessEnv): Env {
     frontUrl: new URL(raw.FRONT_URL).origin,
     apiPublicUrl: raw.API_PUBLIC_URL.replace(/\/+$/, ''),
     trustProxyHops: raw.TRUST_PROXY_HOPS,
-    jwtAccessSecret: raw.JWT_ACCESS_SECRET,
+    jwtKeyring: buildJwtKeyring(raw),
     jwtIssuer: raw.JWT_ISSUER,
     jwtAudience: raw.JWT_AUDIENCE,
     refreshCookieSecure: raw.REFRESH_COOKIE_SECURE,
@@ -209,6 +227,21 @@ function buildKeyring(raw: RawEnv): Keyring {
     }
   }
   if (byId.has(current.id)) throw new EnvValidationError([`DATA_ENCRYPTION_PREVIOUS_KEYS réutilise l’identifiant courant ${current.id}`]);
+  byId.set(current.id, current.key);
+  return { current, byId };
+}
+
+function buildJwtKeyring(raw: RawEnv): Keyring {
+  // Clé HMAC = octets décodés du secret base64url (et non la chaîne UTF-8).
+  const current = { id: raw.JWT_KEY_ID, key: Buffer.from(raw.JWT_ACCESS_SECRET, 'base64url') };
+  const byId = new Map<string, Buffer>();
+  if (raw.JWT_PREVIOUS_SECRETS !== '') {
+    for (const entry of raw.JWT_PREVIOUS_SECRETS.split(',')) {
+      const [id, secret] = entry.split(':');
+      if (id && secret) byId.set(id, Buffer.from(secret, 'base64url'));
+    }
+  }
+  if (byId.has(current.id)) throw new EnvValidationError([`JWT_PREVIOUS_SECRETS réutilise l’identifiant courant ${current.id}`]);
   byId.set(current.id, current.key);
   return { current, byId };
 }
