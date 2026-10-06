@@ -4,7 +4,8 @@ import tseslint from 'typescript-eslint';
 import security from 'eslint-plugin-security';
 
 export default defineConfig(
-  { ignores: ['dist/**', 'coverage/**', 'src/generated/**', 'node_modules/**'] },
+  // src/lib/data : données embarquées générées (liste de mots de passe), pas du code.
+  { ignores: ['dist/**', 'coverage/**', 'src/generated/**', 'node_modules/**', 'src/lib/data/**'] },
   js.configs.recommended,
   ...tseslint.configs.strictTypeChecked,
   security.configs.recommended,

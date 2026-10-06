@@ -9,6 +9,7 @@ import { addMinutes } from '../../lib/time.js';
 import { withResponseFloor } from '../../lib/timing.js';
 import { consumeQuota } from '../../lib/rateLimitStore.js';
 import { getDummyHash, hashPassword, verifyPasswordHash } from '../../lib/password.js';
+import { normalizePassword } from '../../lib/passwordPolicy.js';
 import { normalizeEmail } from '../../lib/email.js';
 import * as repo from './repo.js';
 
@@ -353,6 +354,9 @@ export async function resetPassword(token: string, password: string): Promise<vo
 }
 
 export async function changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {
+  if (normalizePassword(newPassword) === normalizePassword(currentPassword)) {
+    throw errors.validation([{ path: 'newPassword', message: 'Le nouveau mot de passe doit être différent de l’actuel.' }]);
+  }
   const user = await transaction((tx) => tx.user.findUnique({ where: { id: userId } }));
   // Même compteur et même verrou que la connexion : pas de force brute via une session volée.
   if (!user || !(await checkAccountPassword(user, currentPassword))) throw errors.invalidCredentials();

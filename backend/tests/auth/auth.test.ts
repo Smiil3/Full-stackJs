@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { SignJWT, UnsecuredJWT } from 'jose';
 import supertest from 'supertest';
@@ -484,10 +485,19 @@ describe('unicité de l’email insensible à la casse (B1.1 M6)', () => {
     await expect(createUser({ email: ' autre@exemple.com' })).rejects.toThrow();
   });
 
-  it('connexion avec une casse ou une forme Unicode différente', async () => {
-    // « é » composé (NFC) en base, saisi décomposé (NFD) à la connexion.
-    await createUser({ email: 'andré@exemple.com' });
-    await api().post(`${A}/login`).send({ email: 'ANDRÉ@exemple.com'.normalize('NFD'), password: PASSWORD }).expect(200);
+  it('connexion avec une casse différente', async () => {
+    await createUser({ email: 'andre@exemple.com' });
+    await api().post(`${A}/login`).send({ email: 'ANDRE@Exemple.COM', password: PASSWORD }).expect(200);
+  });
+
+  it('emails non ASCII refusés (B2.1 B3)', async () => {
+    for (const email of ['andr\u00e9@exemple.com', 'jos\u00e9@ex.fr', 'user@\u00e9xemple.com']) {
+      const res = await api().post(`${A}/register`).send({ email, password: PASSWORD, displayName: 'U' });
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    }
+    const long = `${'a'.repeat(250)}@x.fr`;
+    expect((await api().post(`${A}/login`).send({ email: long, password: 'x' })).status).toBe(400);
   });
 });
 
@@ -651,5 +661,41 @@ describe('coût argon2 maîtrisé (B2.1 M9)', () => {
     const before = passwordMetrics.hashes;
     await api().post(`${A}/reset-password`).send({ token: 'a'.repeat(43), password: 'nouveau-mot-de-passe-42' }).expect(400);
     expect(passwordMetrics.hashes).toBe(before);
+  });
+});
+
+describe('politique de mot de passe (B2.1 B2)', () => {
+  const reg = (password: string) =>
+    api().post(`${A}/register`).send({ email: `p${randomUUID()}@test.fr`, password, displayName: 'P' });
+
+  it('refuse les mots de passe courants, quelle que soit la casse', async () => {
+    for (const pwd of ['123qweasdzxc', '1QAZ2WSX3EDC']) {
+      const res = await reg(pwd);
+      expect(res.status).toBe(400);
+      expect(res.body.error.details.fields[0].path).toBe('password');
+    }
+  });
+
+  it('longueur en points de code (12–128) et ≤ 256 octets UTF-8', async () => {
+    expect((await reg('\u{1F3B6}'.repeat(12))).status).toBe(202); // 12 points de code, 48 octets
+    expect((await reg('\u{1F3B6}'.repeat(11))).status).toBe(400); // 11 points de code (22 unités UTF-16)
+    expect((await reg('\u00e9'.repeat(128))).status).toBe(202); // 128 points de code, 256 octets
+    expect((await reg('a'.repeat(129))).status).toBe(400);
+    expect((await reg('\u{1F3B6}'.repeat(65))).status).toBe(400); // 65 points de code, 260 octets
+  });
+
+  it('normalisation NFC : un mot de passe saisi en NFD fonctionne en NFC', async () => {
+    const { hashPassword } = await import('../../src/lib/password.js');
+    const nfd = 'mot-de-passe-\u0065\u0301t\u0065\u0301-42';
+    const user = await createUser({ email: 'nfc@test.fr' });
+    await getDb().user.update({ where: { id: user.id }, data: { passwordHash: await hashPassword(nfd) } });
+    await api().post(`${A}/login`).send({ email: user.email, password: nfd.normalize('NFC') }).expect(200);
+  });
+
+  it('nouveau mot de passe identique à l’actuel ⇒ 400', async () => {
+    const u = await loggedInUser();
+    const res = await api().post(`${A}/change-password`).set(u.auth).send({ currentPassword: PASSWORD, newPassword: PASSWORD });
+    expect(res.status).toBe(400);
+    expect(res.body.error.details.fields[0].path).toBe('newPassword');
   });
 });

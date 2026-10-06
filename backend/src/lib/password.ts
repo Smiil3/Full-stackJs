@@ -1,6 +1,7 @@
 import argon2 from 'argon2';
 import { randomToken } from './crypto.js';
 import { Semaphore } from './semaphore.js';
+import { normalizePassword } from './passwordPolicy.js';
 
 /** Paramètres épinglés (recommandation OWASP) : argon2id, 19 Mio, 2 itérations, parallélisme 1. */
 export const ARGON2_PARAMS = { type: argon2.argon2id, memoryCost: 19_456, timeCost: 2, parallelism: 1 } as const;
@@ -11,10 +12,11 @@ export const argon2Semaphore = new Semaphore(4, 64);
 /** Compteurs d'observabilité (tests) : nombre réel de hashs et de vérifications. */
 export const passwordMetrics = { hashes: 0, verifications: 0 };
 
+/** Hash argon2id du mot de passe normalisé NFC. */
 export function hashPassword(password: string): Promise<string> {
   return argon2Semaphore.run(() => {
     passwordMetrics.hashes += 1;
-    return argon2.hash(password, ARGON2_PARAMS);
+    return argon2.hash(normalizePassword(password), ARGON2_PARAMS);
   });
 }
 
@@ -22,7 +24,7 @@ export function verifyPasswordHash(hash: string, password: string): Promise<bool
   return argon2Semaphore.run(async () => {
     passwordMetrics.verifications += 1;
     try {
-      return await argon2.verify(hash, password);
+      return await argon2.verify(hash, normalizePassword(password));
     } catch {
       return false;
     }

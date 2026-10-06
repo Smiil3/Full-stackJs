@@ -1,8 +1,23 @@
 import Joi from 'joi';
 import { email, roleSchema, text, uuidStrict } from '../../lib/schemas.js';
+import { checkPasswordPolicy, PASSWORD_MAX_BYTES } from '../../lib/passwordPolicy.js';
 
-/** Mot de passe : 12 à 128 caractères (pas de règle de composition, cf. recommandations ANSSI / NIST). */
-export const password = text().min(12).max(128);
+/**
+ * Mot de passe d'un NOUVEAU secret : 12 à 128 points de code, ≤ 256 octets, pas un mot de passe courant
+ * (pas de règle de composition, cf. recommandations ANSSI / NIST).
+ */
+export const password = text()
+  .max(PASSWORD_MAX_BYTES)
+  .custom((value: string, helpers) => {
+    const problem = checkPasswordPolicy(value);
+    return problem === null ? value : helpers.error(`password.${problem}`);
+  })
+  .messages({
+    'password.too_short': '{{#label}} doit contenir au moins 12 caractères',
+    'password.too_long': '{{#label}} doit contenir au plus 128 caractères',
+    'password.too_many_bytes': '{{#label}} est trop long',
+    'password.common': '{{#label}} fait partie des mots de passe les plus courants, choisissez-en un autre',
+  });
 /** Nom affiché : pas de caractères de contrôle. */
 export const displayName = text().min(1).max(80);
 /** Jeton reçu par mail : 32 octets base64url. */
@@ -17,12 +32,12 @@ export interface ChangePasswordBody { currentPassword: string; newPassword: stri
 
 export const registerBody = Joi.object<RegisterBody>({ email: email.required(), password: password.required(), displayName: displayName.required() });
 // Au login, aucune règle de longueur fine : on ne révèle pas la politique, on borne seulement la taille.
-export const loginBody = Joi.object<LoginBody>({ email: email.required(), password: text().min(1).max(128).required() });
+export const loginBody = Joi.object<LoginBody>({ email: email.required(), password: text().min(1).max(PASSWORD_MAX_BYTES).required() });
 export const emailBody = Joi.object<EmailBody>({ email: email.required() });
 export const tokenBody = Joi.object<TokenBody>({ token: mailToken.required() });
 export const resetBody = Joi.object<ResetBody>({ token: mailToken.required(), password: password.required() });
 export const changePasswordBody = Joi.object<ChangePasswordBody>({
-  currentPassword: text().min(1).max(128).required(),
+  currentPassword: text().min(1).max(PASSWORD_MAX_BYTES).required(),
   newPassword: password.required(),
 });
 

@@ -34,7 +34,12 @@ export const isoDateOutput = Joi.string().pattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2
 
 export const nullable = <T extends Joi.Schema>(schema: T): T => schema.allow(null) as T;
 
-export const email = text().max(254).email({ tlds: { allow: false } });
+/** Email : ASCII imprimable uniquement (même normalisation côté JS et SQL), 254 caractères max. */
+export const email = text()
+  .max(254)
+  .pattern(/^[\x21-\x7E]+$/, 'ascii')
+  .email({ tlds: { allow: false } })
+  .messages({ 'string.pattern.name': '{{#label}} doit être une adresse email ASCII' });
 
 export const pageQuery = {
   page: Joi.number().integer().min(1).max(100_000).default(1),
