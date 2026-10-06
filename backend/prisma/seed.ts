@@ -1,7 +1,7 @@
 /**
  * Données de démonstration.
- * - Refuse de s'exécuter en production et sur une base déjà peuplée.
- * - Mot de passe des comptes : SEED_PASSWORD (≥ 12 caractères) ou mot de passe aléatoire affiché UNE fois.
+ * - Refuse de s'exécuter en production, sur une base non locale et sur une base déjà peuplée.
+ * - Mot de passe des comptes : SEED_PASSWORD (≥ 16 caractères) ou mot de passe aléatoire affiché UNE fois.
  */
 import 'dotenv/config';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -12,6 +12,7 @@ import { aad, encryptString, randomToken, transferReference } from '../src/lib/c
 import { isValidIban, maskIban, normalizeIban } from '../src/lib/iban.js';
 import { addHours, HOUR_MS } from '../src/lib/time.js';
 import type { Role } from '../src/generated/prisma/client.js';
+import { assertSeedAllowed } from './seedGuard.js';
 
 const out = (line: string): void => {
   process.stdout.write(`${line}\n`);
@@ -21,16 +22,15 @@ const DAY_MS = 24 * HOUR_MS;
 
 async function main(): Promise<void> {
   const env = getEnv();
-  if (env.nodeEnv === 'production') throw new Error('Le seed est interdit en production.');
+  const provided = process.env['SEED_PASSWORD'] ?? '';
+  assertSeedAllowed({ nodeEnv: env.nodeEnv, databaseUrl: env.databaseUrl, seedPassword: provided });
   const db = getDb();
   if ((await db.user.count()) > 0) {
     out('Base déjà peuplée : seed ignoré (videz la base pour le rejouer : npx prisma migrate reset).');
     return;
   }
 
-  const provided = process.env['SEED_PASSWORD'] ?? '';
-  if (provided !== '' && provided.length < 12) throw new Error('SEED_PASSWORD doit faire au moins 12 caractères.');
-  const password = provided === '' ? randomToken(15) : provided;
+  const password = provided === '' ? randomToken(18) : provided;
   const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
   const now = new Date();
 

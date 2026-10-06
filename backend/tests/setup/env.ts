@@ -4,14 +4,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { config } from 'dotenv';
 import { resetEnvCache } from '../../src/config/env.js';
+import { assertTestDatabaseUrl } from './guard.js';
 
 /**
  * Environnement de test : secrets aléatoires générés à chaque exécution (aucun secret en dur),
  * base de test dédiée, clés Ed25519 éphémères.
  */
 config({ quiet: true });
-const testDbUrl = process.env['TEST_DATABASE_URL'];
-if (!testDbUrl) throw new Error('TEST_DATABASE_URL manquant');
+const testDbUrl = assertTestDatabaseUrl(process.env['TEST_DATABASE_URL'], process.env['DATABASE_URL']);
 
 const keyDir = mkdtempSync(join(tmpdir(), 'nuits-keys-'));
 const { privateKey, publicKey } = generateKeyPairSync('ed25519');
