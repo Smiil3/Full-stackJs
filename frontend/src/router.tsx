@@ -1,5 +1,5 @@
 import { createBrowserRouter, type RouteObject } from 'react-router';
-import { RequireAuth } from './auth/guards';
+import { RequireAuth, RequireOrgRole, RequirePlatformAdmin } from './auth/guards';
 import { Layout } from './components/Layout';
 import { RouteError } from './components/RouteError';
 import { NotFoundPage } from './pages/NotFoundPage';
@@ -14,6 +14,17 @@ import { OrdersPage } from './pages/orders/OrdersPage';
 import { EventPage } from './pages/public/EventPage';
 import { EventsPage } from './pages/public/EventsPage';
 import { TicketsPage } from './pages/tickets/TicketsPage';
+import { AdminOrgsPage } from './pages/admin/AdminOrgsPage';
+import { AuditPage } from './pages/org/AuditPage';
+import { DashboardPage } from './pages/org/DashboardPage';
+import { EventAdminPage } from './pages/org/EventAdminPage';
+import { EventCreatePage } from './pages/org/EventCreatePage';
+import { MembersPage } from './pages/org/MembersPage';
+import { OrdersAdminPage } from './pages/org/OrdersAdminPage';
+import { OrgEventsPage } from './pages/org/OrgEventsPage';
+import { OrgHomePage } from './pages/org/OrgHomePage';
+import { OrgLayout } from './pages/org/OrgLayout';
+import { SettingsPage } from './pages/org/SettingsPage';
 
 /** Page de paiement simulée : uniquement serveur de dev en mode mock (branche éliminée du build). */
 const mockRoutes: RouteObject[] =
@@ -38,6 +49,29 @@ export const routes: RouteObject[] = [
       { path: 'me/orders', element: <RequireAuth><OrdersPage /></RequireAuth> },
       { path: 'orders/:orderId', element: <RequireAuth><OrderPage /></RequireAuth> },
       { path: 'me/tickets', element: <RequireAuth allowOffline><TicketsPage /></RequireAuth> },
+      // Back-office : gardes = confort d'affichage, l'API vérifie le rôle à chaque requête.
+      { path: 'org', element: <RequireAuth><OrgHomePage /></RequireAuth> },
+      {
+        path: 'org/:orgId',
+        element: (
+          <RequireAuth>
+            <RequireOrgRole min="MANAGER">
+              <OrgLayout />
+            </RequireOrgRole>
+          </RequireAuth>
+        ),
+        children: [
+          { index: true, element: <OrgEventsPage /> },
+          { path: 'events/new', element: <EventCreatePage /> },
+          { path: 'events/:eventId', element: <EventAdminPage /> },
+          { path: 'events/:eventId/dashboard', element: <DashboardPage /> },
+          { path: 'events/:eventId/orders', element: <OrdersAdminPage /> },
+          { path: 'settings', element: <SettingsPage /> },
+          { path: 'members', element: <MembersPage /> },
+          { path: 'audit', element: <RequireOrgRole min="OWNER"><AuditPage /></RequireOrgRole> },
+        ],
+      },
+      { path: 'admin', element: <RequireAuth><RequirePlatformAdmin><AdminOrgsPage /></RequirePlatformAdmin></RequireAuth> },
       ...mockRoutes,
       { path: '*', element: <NotFoundPage /> },
     ],
