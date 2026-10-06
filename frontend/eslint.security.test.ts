@@ -32,6 +32,14 @@ describe('règles ESLint de sécurité (revue F1.1 — B5)', () => {
     ['document.write(x)', 'no-restricted-syntax'],
     ['eval(x)', 'no-eval'],
     ['new Function(x)', 'no-new-func'],
+    // F6-B2 : autres canaux réseau / stockage
+    ['new XMLHttpRequest()', 'no-restricted-globals'],
+    ['new WebSocket("wss://x")', 'no-restricted-globals'],
+    ['new window.WebSocket("wss://x")', 'no-restricted-properties'],
+    ['new EventSource("/x")', 'no-restricted-globals'],
+    ['void caches.open("x")', 'no-restricted-globals'],
+    ['void self.caches.open("x")', 'no-restricted-properties'],
+    ['navigator.sendBeacon("/x", x)', 'no-restricted-properties'],
   ])('interdit « %s » dans un fichier applicatif', async (code, rule) => {
     expect(await ruleIds(`declare const x: string; declare const el: HTMLElement; ${code};\n`, 'src/pages/Page.tsx')).toContain(rule);
   });
@@ -51,5 +59,14 @@ describe('règles ESLint de sécurité (revue F1.1 — B5)', () => {
     expect(await ruleIds('indexedDB.open("x");\n', 'src/scanner/db.ts')).toEqual([]);
     expect(await ruleIds('indexedDB.open("x");\n', 'src/scanner/ScanPage.tsx')).toContain('no-restricted-globals');
     expect(await ruleIds('fetch("/x");\n', 'src/offline/tickets.ts')).toContain('no-restricted-globals');
+  });
+
+  it('F6-B2 : import de idb autorisé uniquement dans src/offline/ et src/scanner/db.ts', async () => {
+    const code = 'import { openDB } from "idb";\nexport const o = openDB;\n';
+    expect(await ruleIds(code, 'src/offline/tickets.ts')).toEqual([]);
+    expect(await ruleIds(code, 'src/scanner/db.ts')).toEqual([]);
+    expect(await ruleIds(code, 'src/scanner/engine.ts')).toContain('no-restricted-imports');
+    expect(await ruleIds(code, 'src/pages/Page.tsx')).toContain('no-restricted-imports');
+    expect(await ruleIds('import { openDB } from "idb/with-async-ittr";\nexport const o = openDB;\n', 'src/api/hooks/x.ts')).toContain('no-restricted-imports');
   });
 });

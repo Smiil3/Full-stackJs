@@ -8,19 +8,28 @@ const GLOBALS = {
   sessionStorage: 'sessionStorage interdit (aucun token en storage).',
   indexedDB: 'IndexedDB uniquement dans src/offline/ et src/scanner/db.ts.',
   fetch: 'Appels réseau uniquement via src/api/client.ts (apiRequest).',
+  // Autres canaux réseau / stockage : aucun usage justifié dans l'application à ce jour.
+  XMLHttpRequest: 'Appels réseau uniquement via src/api/client.ts (apiRequest).',
+  WebSocket: 'Canal réseau non prévu : appels uniquement via src/api/client.ts.',
+  EventSource: 'Canal réseau non prévu : appels uniquement via src/api/client.ts.',
+  caches: 'Cache Storage interdit : aucune réponse d’API mise en cache (le service worker ne précache que l’application).',
 };
+const IDB_MESSAGE = 'idb uniquement dans src/offline/ et src/scanner/db.ts (stockage local maîtrisé).';
 const HOLDERS = ['window', 'globalThis', 'self'];
 
 /** Configuration des règles, en retirant éventuellement des API autorisées pour un fichier précis. */
 export function restrictedApiRules(allow = []) {
   const names = Object.keys(GLOBALS).filter((n) => !allow.includes(n));
+  const idbAllowed = allow.includes('indexedDB');
   return {
     'no-restricted-globals': ['error', ...names.map((name) => ({ name, message: GLOBALS[name] }))],
     'no-restricted-properties': [
       'error',
       ...HOLDERS.flatMap((object) => names.map((property) => ({ object, property, message: GLOBALS[property] }))),
       { object: 'document', property: 'cookie', message: 'document.cookie interdit : le refresh token est un cookie HttpOnly.' },
+      { object: 'navigator', property: 'sendBeacon', message: 'navigator.sendBeacon interdit : appels uniquement via src/api/client.ts.' },
     ],
+    'no-restricted-imports': idbAllowed ? 'off' : ['error', { paths: [{ name: 'idb', message: IDB_MESSAGE }], patterns: [{ group: ['idb/*'], message: IDB_MESSAGE }] }],
     'no-restricted-syntax': [
       'error',
       { selector: "JSXAttribute[name.name='dangerouslySetInnerHTML']", message: 'dangerouslySetInnerHTML interdit.' },
