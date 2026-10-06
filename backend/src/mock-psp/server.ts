@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { EnvValidationError, getEnv } from '../config/env.js';
 import { getLogger } from '../lib/logger.js';
 import { createMockPsp } from './app.js';
+import { MOCK_PSP_DELIVERY_TIMEOUT_MS } from '../config/mockPsp.js';
 
 /** Serveur du PSP simulé : refuse de démarrer en production. */
 function main(): void {
@@ -31,7 +32,7 @@ function main(): void {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Psp-Signature': signature },
         body: rawBody,
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(MOCK_PSP_DELIVERY_TIMEOUT_MS),
       });
       logger.info({ status: res.status }, 'webhook livré');
       return res.status;

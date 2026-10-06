@@ -10,6 +10,7 @@ import { distributeMany, lockWaitlistEntries } from '../waitlist/distribute.js';
 import { canSelfCancelPaid, eventCancellationRefund, selfCancellationRefund } from './refund.js';
 import { releaseHeld } from './repo.js';
 import { viewOwnOrder } from './service.js';
+import { HTTP_STATUS } from '../../config/http.js';
 
 type LockedOrder = NonNullable<Awaited<ReturnType<typeof loadOrderForUpdate>>>;
 
@@ -51,7 +52,7 @@ async function refundPaid(
     const changed = await tx.$executeRaw`
       UPDATE "ticket_types" SET "sold" = "sold" - ${item.quantity}, "updatedAt" = ${clock.now()}
       WHERE "id" = ${item.ticketTypeId}::uuid AND "eventId" = ${order.eventId}::uuid AND "sold" >= ${item.quantity}`;
-    if (changed !== 1) throw new AppError(500, 'INTERNAL_ERROR', 'Incohérence de stock lors de l’annulation.');
+    if (changed !== 1) throw new AppError(HTTP_STATUS.INTERNAL_SERVER_ERROR, 'INTERNAL_ERROR', 'Incohérence de stock lors de l’annulation.');
   }
   let remaining = input.total;
   let manual = false;

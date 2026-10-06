@@ -1,13 +1,11 @@
+import { BASIS_POINTS_SCALE, HALF_UP_DOUBLING, LINE_QUANTITY_MAX, PERCENT_MAX, PERCENT_SCALE } from '../config/money.js';
+import { SETTINGS_BOUNDS } from '../config/settingsBounds.js';
+
 /**
  * Calculs monétaires en entiers uniquement (centimes), arithmétique BigInt pour éviter toute
  * imprécision flottante. Les entrées hors bornes (négatives, non entières, trop grandes) sont
  * des bugs : elles lèvent une erreur interne explicite plutôt que de produire un montant faux.
  */
-
-/** Plafond métier d'un montant unitaire saisi (100 000 €). */
-export const MAX_AMOUNT_CENTS = 10_000_000;
-export const MAX_SERVICE_FEE_FIXED_CENTS = 1000;
-export const MAX_SERVICE_FEE_BASIS_POINTS = 1500;
 
 export class MoneyError extends Error {
   constructor(message: string) {
@@ -27,7 +25,7 @@ function assertRange(value: number, min: number, max: number, label: string): vo
 /** Division entière arrondie au demi supérieur, pour numérateur ≥ 0 et dénominateur > 0 uniquement. */
 function roundHalfUpDiv(numerator: bigint, denominator: bigint): bigint {
   if (numerator < 0n || denominator <= 0n) throw new MoneyError('Division monétaire sur valeur négative');
-  return (numerator * 2n + denominator) / (denominator * 2n);
+  return (numerator * HALF_UP_DOUBLING + denominator) / (denominator * HALF_UP_DOUBLING);
 }
 
 function toSafeNumber(value: bigint): number {
@@ -38,32 +36,32 @@ function toSafeNumber(value: bigint): number {
 /** serviceFeeCents = fixe + round_half_up(subtotal × bp / 10000) ; pas de frais sur une commande gratuite. */
 export function computeServiceFee(subtotalCents: number, fixedCents: number, basisPoints: number): number {
   assertCents(subtotalCents, 'Sous-total');
-  assertRange(fixedCents, 0, MAX_SERVICE_FEE_FIXED_CENTS, 'Frais fixes');
-  assertRange(basisPoints, 0, MAX_SERVICE_FEE_BASIS_POINTS, 'Frais en points de base');
+  assertRange(fixedCents, 0, SETTINGS_BOUNDS.serviceFeeFixedCents.max, 'Frais fixes');
+  assertRange(basisPoints, 0, SETTINGS_BOUNDS.serviceFeeBasisPoints.max, 'Frais en points de base');
   if (subtotalCents === 0) return 0;
-  const variable = roundHalfUpDiv(BigInt(subtotalCents) * BigInt(basisPoints), 10_000n);
+  const variable = roundHalfUpDiv(BigInt(subtotalCents) * BigInt(basisPoints), BASIS_POINTS_SCALE);
   return toSafeNumber(BigInt(fixedCents) + variable);
 }
 
 /** Part d'un montant selon un pourcentage entier 0–100, arrondie au demi supérieur. */
 export function percentOf(amountCents: number, percent: number): number {
   assertCents(amountCents, 'Montant');
-  assertRange(percent, 0, 100, 'Pourcentage');
-  return toSafeNumber(roundHalfUpDiv(BigInt(amountCents) * BigInt(percent), 100n));
+  assertRange(percent, 0, PERCENT_MAX, 'Pourcentage');
+  return toSafeNumber(roundHalfUpDiv(BigInt(amountCents) * BigInt(percent), PERCENT_SCALE));
 }
 
 /** Produit prix unitaire × quantité, contrôlé. */
 export function lineTotal(unitPriceCents: number, quantity: number): number {
   assertCents(unitPriceCents, 'Prix unitaire');
-  assertRange(quantity, 1, 1000, 'Quantité');
+  assertRange(quantity, 1, LINE_QUANTITY_MAX, 'Quantité');
   return toSafeNumber(BigInt(unitPriceCents) * BigInt(quantity));
 }
 
 /** Part d'un montant selon un pourcentage entier 0–100, arrondie à l'inférieur (règle de remboursement du contrat). */
 export function floorPercentOf(amountCents: number, percent: number): number {
   assertCents(amountCents, 'Montant');
-  assertRange(percent, 0, 100, 'Pourcentage');
-  return toSafeNumber((BigInt(amountCents) * BigInt(percent)) / 100n);
+  assertRange(percent, 0, PERCENT_MAX, 'Pourcentage');
+  return toSafeNumber((BigInt(amountCents) * BigInt(percent)) / PERCENT_SCALE);
 }
 
 /**

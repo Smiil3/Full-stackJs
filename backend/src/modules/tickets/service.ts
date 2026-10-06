@@ -2,6 +2,7 @@ import { clock } from '../../lib/clock.js';
 import { getDb } from '../../lib/db.js';
 import { iso } from '../../lib/schemas.js';
 import { qrPayloadFor } from '../../lib/ticketSigning.js';
+import { MY_TICKETS_MAX } from '../../config/events.js';
 
 /**
  * Billets de l'acheteur (commandes payées, remboursées ou annulées : statut du billet à l'appui).
@@ -15,7 +16,7 @@ export async function myTickets(userId: string) {
       event: { select: { id: true, title: true, venue: true, isOnline: true, startsAt: true, endsAt: true, timezone: true } },
     },
     orderBy: [{ event: { startsAt: 'asc' } }, { createdAt: 'asc' }, { seq: 'asc' }],
-    take: 500,
+    take: MY_TICKETS_MAX,
   });
   const now = clock.now().getTime();
   const upcoming = tickets.filter((t) => t.event.endsAt.getTime() > now);

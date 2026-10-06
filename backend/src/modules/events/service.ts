@@ -12,6 +12,8 @@ import { getSettings } from '../orgs/repo.js';
 import { OVERRIDE_KEYS, overridesOf, resolveEventSettings, toPublicRules, type EventOverrideFields } from '../settings/resolveEventSettings.js';
 import * as repo from './repo.js';
 import type { EventCreateBody, EventPatchBody, OverridesInput, TicketTypeBody, TicketTypePatchBody } from './schemas.js';
+import { hours } from '../../config/units.js';
+import { PERCENT_MAX } from '../../config/money.js';
 
 type EventWithTypes = Event & { ticketTypes: TicketType[] };
 
@@ -234,7 +236,7 @@ async function applyReschedule(
     // Délai figé = ancien début − ancienne limite ; à défaut (annulation désactivée), délai effectif actuel.
     const deadlineMs = order.cancellableUntil
       ? before.startsAt.getTime() - order.cancellableUntil.getTime()
-      : rules.cancellationDeadlineHours * 3600_000;
+      : hours(rules.cancellationDeadlineHours);
     const candidate = dates.startsAt.getTime() - deadlineMs;
     const cancellableUntil = new Date(Math.max(order.cancellableUntil?.getTime() ?? candidate, candidate));
     // Une réservation ne peut pas survivre au nouveau début : échéance ramenée au nouveau startsAt.
@@ -242,7 +244,7 @@ async function applyReschedule(
     // Transition gardée : seule une commande toujours dans le même statut est modifiée.
     await tx.order.updateMany({
       where: { id: order.id, status: order.status },
-      data: { cancellableUntil, refundPercent: 100, serviceFeeRefundable: true, ...(order.status === 'PAID' ? {} : { expiresAt }) },
+      data: { cancellableUntil, refundPercent: PERCENT_MAX, serviceFeeRefundable: true, ...(order.status === 'PAID' ? {} : { expiresAt }) },
     });
   }
   const buyers = await tx.order.findMany({

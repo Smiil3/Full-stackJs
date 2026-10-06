@@ -1,4 +1,6 @@
 import { escapeHtml } from './escape.js';
+import { CENTS_PER_EURO } from '../../config/money.js';
+import { EMAIL_TOKEN_TTL_MINUTES } from '../../config/auth.js';
 
 /** Données de chaque gabarit (sérialisées en JSON dans l'outbox). */
 export interface TemplatePayloads {
@@ -62,8 +64,8 @@ export function renderTemplate<T extends MailTemplate>(template: T, data: Templa
     case 'verifyEmail':
       return {
         subject: 'Confirmez votre adresse email',
-        html: layout('Bienvenue !', [`Bonjour ${e(s('displayName'))},`, 'Confirmez votre adresse pour pouvoir réserver. Ce lien expire dans 30 minutes.'], { label: 'Confirmer mon adresse', url: s('link') }),
-        text: `Bonjour ${s('displayName')},\nConfirmez votre adresse (lien valable 30 minutes) : ${s('link')}`,
+        html: layout('Bienvenue !', [`Bonjour ${e(s('displayName'))},`, `Confirmez votre adresse pour pouvoir réserver. Ce lien expire dans ${EMAIL_TOKEN_TTL_MINUTES} minutes.`], { label: 'Confirmer mon adresse', url: s('link') }),
+        text: `Bonjour ${s('displayName')},\nConfirmez votre adresse (lien valable ${EMAIL_TOKEN_TTL_MINUTES} minutes) : ${s('link')}`,
       };
     case 'accountExists':
       return {
@@ -74,8 +76,8 @@ export function renderTemplate<T extends MailTemplate>(template: T, data: Templa
     case 'resetPassword':
       return {
         subject: 'Réinitialisation de votre mot de passe',
-        html: layout('Réinitialiser le mot de passe', [`Bonjour ${e(s('displayName'))},`, 'Ce lien est valable 30 minutes et ne peut servir qu’une fois. Si vous n’êtes pas à l’origine de cette demande, ignorez ce message.'], { label: 'Choisir un nouveau mot de passe', url: s('link') }),
-        text: `Bonjour ${s('displayName')},\nRéinitialisez votre mot de passe (lien valable 30 minutes) : ${s('link')}`,
+        html: layout('Réinitialiser le mot de passe', [`Bonjour ${e(s('displayName'))},`, `Ce lien est valable ${EMAIL_TOKEN_TTL_MINUTES} minutes et ne peut servir qu’une fois. Si vous n’êtes pas à l’origine de cette demande, ignorez ce message.`], { label: 'Choisir un nouveau mot de passe', url: s('link') }),
+        text: `Bonjour ${s('displayName')},\nRéinitialisez votre mot de passe (lien valable ${EMAIL_TOKEN_TTL_MINUTES} minutes) : ${s('link')}`,
       };
     case 'passwordChanged':
       return {
@@ -178,5 +180,5 @@ export function renderTemplate<T extends MailTemplate>(template: T, data: Templa
 }
 
 export function formatEuros(cents: number): string {
-  return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(cents / 100);
+  return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(cents / CENTS_PER_EURO);
 }

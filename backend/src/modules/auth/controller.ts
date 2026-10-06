@@ -5,6 +5,8 @@ import { getAuth } from '../../middlewares/auth.js';
 import type { ValidatedInput } from '../../middlewares/validate.js';
 import * as service from './service.js';
 import type { ChangePasswordBody, EmailBody, LoginBody, RegisterBody, ResetBody, TokenBody } from './schemas.js';
+import { HTTP_STATUS } from '../../config/http.js';
+import { REFRESH_TTL_MS } from '../../config/auth.js';
 
 type Empty = Record<string, never>;
 type In<B> = ValidatedInput<Empty, Empty, B, Empty>;
@@ -21,7 +23,7 @@ function cookieOptions(): CookieOptions {
 }
 
 function setRefreshCookie(res: Response, token: string): void {
-  res.cookie(REFRESH_COOKIE, token, { ...cookieOptions(), maxAge: service.REFRESH_TTL_MS });
+  res.cookie(REFRESH_COOKIE, token, { ...cookieOptions(), maxAge: REFRESH_TTL_MS });
 }
 
 function clearRefreshCookie(res: Response): void {
@@ -62,7 +64,7 @@ export async function refresh(_input: In<Empty>, req: Request, res: Response) {
   } catch (err) {
     // Cookie effacé UNIQUEMENT sur un refus explicite (401) : une erreur transitoire (5xx, réseau)
     // ne doit pas déconnecter l'utilisateur.
-    if (err instanceof AppError && err.status === 401) clearRefreshCookie(res);
+    if (err instanceof AppError && err.status === HTTP_STATUS.UNAUTHORIZED) clearRefreshCookie(res);
     throw err;
   }
 }

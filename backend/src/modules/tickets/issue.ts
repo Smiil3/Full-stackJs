@@ -1,9 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import type { Tx } from '../../lib/db.js';
+import { TICKET_PUBLIC_ID_BYTES } from '../../config/checkin.js';
 
 /** publicId : 16 octets aléatoires (128 bits), base64url sans padding (22 caractères). */
 export function newPublicId(): string {
-  return randomBytes(16).toString('base64url');
+  return randomBytes(TICKET_PUBLIC_ID_BYTES).toString('base64url');
 }
 
 /**

@@ -2,8 +2,7 @@ import { transaction } from '../lib/db.js';
 import { getLogger } from '../lib/logger.js';
 import { withTxRetry } from '../lib/txRetry.js';
 import { cancelOrderForEvent } from '../modules/orders/cancel.js';
-
-const MAX_PER_TICK = 500;
+import { EVENT_CANCELLATIONS_PER_TICK } from '../config/worker.js';
 
 /**
  * Traite les commandes des événements annulés, UNE TRANSACTION PAR COMMANDE (`FOR UPDATE SKIP LOCKED`) :
@@ -14,7 +13,7 @@ export async function processEventCancellations(): Promise<{ processed: number; 
   let processed = 0;
   let failed = 0;
   const skipped: string[] = [];
-  for (let i = 0; i < MAX_PER_TICK; i += 1) {
+  for (let i = 0; i < EVENT_CANCELLATIONS_PER_TICK; i += 1) {
     const current: { id: string | null } = { id: null };
     try {
       const done = await withTxRetry(() => transaction(async (tx) => {

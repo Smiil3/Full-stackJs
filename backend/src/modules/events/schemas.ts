@@ -2,6 +2,8 @@ import Joi from 'joi';
 import { cents, isoDateInput, isoDateOutput, nullable, pageOf, pageQuery, text, timezone, uuid, uuidStrict, type PageQuery } from '../../lib/schemas.js';
 import { settingsBounds } from '../orgs/schemas.js';
 import type { EventOverrideFields } from '../settings/resolveEventSettings.js';
+import { FIELD_LIMITS } from '../../config/fields.js';
+import { TICKET_PRICE_MAX_CENTS } from '../../config/money.js';
 
 export type OverridesInput = { [K in keyof EventOverrideFields]?: EventOverrideFields[K] };
 
@@ -16,10 +18,10 @@ export interface EventCreateBody {
 export type EventPatchBody = Partial<EventCreateBody> & { rescheduleReason?: string; offlineCheckinEnabled?: boolean };
 
 const eventFields = {
-  title: text().min(1).max(150),
-  description: nullable(text({ multiline: true }).max(5000)),
-  venue: nullable(text().max(150)),
-  address: nullable(text({ multiline: true }).max(300)),
+  title: text().min(1).max(FIELD_LIMITS.eventTitle),
+  description: nullable(text({ multiline: true }).max(FIELD_LIMITS.eventDescription)),
+  venue: nullable(text().max(FIELD_LIMITS.venue)),
+  address: nullable(text({ multiline: true }).max(FIELD_LIMITS.address)),
   isOnline: Joi.boolean(),
   startsAt: isoDateInput,
   endsAt: isoDateInput,
@@ -43,7 +45,7 @@ export const eventPatchBody = Joi.object<EventPatchBody>({
   ...eventFields,
   // Surcharges : un objet vide n'a aucun effet ⇒ refusé (pas d'entrée d'audit vide).
   overrides: overrides.min(1),
-  rescheduleReason: text({ multiline: true }).min(1).max(500),
+  rescheduleReason: text({ multiline: true }).min(1).max(FIELD_LIMITS.reason),
   // Mode secours hors-ligne : OWNER uniquement (contrôlé dans le service).
   offlineCheckinEnabled: Joi.boolean(),
 }).min(1);
@@ -55,13 +57,13 @@ export interface TicketTypeBody {
 export type TicketTypePatchBody = Partial<TicketTypeBody>;
 
 const ttFields = {
-  name: text().min(1).max(80),
-  description: nullable(text({ multiline: true }).max(1000)),
-  capacity: Joi.number().integer().min(1).max(100_000),
-  priceCents: cents.max(1_000_000),
-  earlyPriceCents: nullable(cents.max(1_000_000)),
+  name: text().min(1).max(FIELD_LIMITS.name),
+  description: nullable(text({ multiline: true }).max(FIELD_LIMITS.ticketTypeDescription)),
+  capacity: Joi.number().integer().min(1).max(FIELD_LIMITS.capacityMax),
+  priceCents: cents.max(TICKET_PRICE_MAX_CENTS),
+  earlyPriceCents: nullable(cents.max(TICKET_PRICE_MAX_CENTS)),
   earlyUntil: nullable(isoDateInput),
-  sortOrder: Joi.number().integer().min(0).max(1000),
+  sortOrder: Joi.number().integer().min(0).max(FIELD_LIMITS.sortOrderMax),
 };
 export const ticketTypeCreateBody = Joi.object<TicketTypeBody>({
   ...ttFields,
@@ -101,4 +103,4 @@ export const eventAdminResponse = Joi.object({
   createdAt: isoDateOutput, updatedAt: isoDateOutput,
 });
 export const eventAdminPage = pageOf(eventAdminResponse);
-export const cancelEventBody = Joi.object<{ reason: string }>({ reason: text({ multiline: true }).min(1).max(500).required() });
+export const cancelEventBody = Joi.object<{ reason: string }>({ reason: text({ multiline: true }).min(1).max(FIELD_LIMITS.reason).required() });

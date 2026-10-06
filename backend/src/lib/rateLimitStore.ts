@@ -4,10 +4,13 @@ import { getDb } from './db.js';
 import { AppError } from './errors.js';
 import { getEnv } from '../config/env.js';
 import { clock } from './clock.js';
+import { MIN_RETRY_AFTER_SECONDS, RATE_BUCKET_KEY_MAX_LENGTH, RATE_BUCKET_RETENTION_MS } from '../config/rateLimits.js';
+import { DEFAULT_RATE_WINDOW_MS, HTTP_STATUS } from '../config/http.js';
+import { ceilSeconds } from '../config/units.js';
 
 /** Clé stockée : hash du préfixe et de l'identifiant (IP, email…) — aucune donnée personnelle en clair. */
 function bucketKey(prefix: string, id: string): string {
-  return `${prefix}:${sha256Hex(id)}`.slice(0, 100);
+  return `${prefix}:${sha256Hex(id)}`.slice(0, RATE_BUCKET_KEY_MAX_LENGTH);
 }
 
 /** Incrément atomique d'un compteur à fenêtre fixe (réinitialisé à l'expiration). */
@@ -33,7 +36,7 @@ export async function hit(prefix: string, id: string, windowMs: number, cost = 1
  * au redémarrage (un limiteur en mémoire se contourne en relançant / multipliant les instances).
  */
 export class PgRateLimitStore implements Store {
-  private windowMs = 60_000;
+  private windowMs = DEFAULT_RATE_WINDOW_MS;
   readonly localKeys = false;
 
   constructor(readonly prefix: string) {}
@@ -63,12 +66,12 @@ export class PgRateLimitStore implements Store {
 export async function consumeQuota(prefix: string, id: string, windowMs: number, max: number, cost = 1): Promise<void> {
   const { totalHits, resetTime } = await hit(prefix, id, windowMs, cost);
   if (totalHits > Math.max(1, Math.floor(max * getEnv().rateLimitMultiplier))) {
-    const retryAfter = Math.max(1, Math.ceil((resetTime.getTime() - clock.now().getTime()) / 1000));
-    throw new AppError(429, 'RATE_LIMITED', 'Trop de requêtes, veuillez patienter.', { retryAfterSeconds: retryAfter });
+    const retryAfter = Math.max(MIN_RETRY_AFTER_SECONDS, ceilSeconds(resetTime.getTime() - clock.now().getTime()));
+    throw new AppError(HTTP_STATUS.TOO_MANY_REQUESTS, 'RATE_LIMITED', 'Trop de requêtes, veuillez patienter.', { retryAfterSeconds: retryAfter });
   }
 }
 
 /** Purge des compteurs expirés (worker). */
 export async function purgeExpiredBuckets(): Promise<number> {
-  return getDb().$executeRaw`DELETE FROM "rate_limit_buckets" WHERE "resetAt" < ${new Date(clock.now().getTime() - 3600_000)}`;
+  return getDb().$executeRaw`DELETE FROM "rate_limit_buckets" WHERE "resetAt" < ${new Date(clock.now().getTime() - RATE_BUCKET_RETENTION_MS)}`;
 }

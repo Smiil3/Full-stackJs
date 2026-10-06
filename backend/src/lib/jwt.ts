@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { SignJWT, jwtVerify, type JWTHeaderParameters } from 'jose';
 import { getEnv } from '../config/env.js';
+import { ACCESS_TOKEN_TTL_SECONDS } from '../config/auth.js';
 
-export const ACCESS_TOKEN_TTL_SECONDS = 600;
 const ALGORITHM = 'HS256';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 

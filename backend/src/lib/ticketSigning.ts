@@ -1,6 +1,8 @@
 import { createPrivateKey, createPublicKey, sign, verify, type KeyObject } from 'node:crypto';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { getEnv } from '../config/env.js';
+import { KEY_FILE_FORBIDDEN_MODE_BITS } from '../config/crypto.js';
+import { HOLDER_INITIALS_MAX, QR_PARTS, QR_PAYLOAD_MAX_LENGTH } from '../config/checkin.js';
 
 const PREFIX = 'NG1';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -32,7 +34,7 @@ export function loadTicketKeys(): Keys {
   // Chemins fournis par l'opérateur (variables d'environnement validées), jamais par un client HTTP.
   // eslint-disable-next-line security/detect-non-literal-fs-filename -- chemin de configuration
   const mode = statSync(env.ticketSigningPrivateKeyFile).mode;
-  if (env.nodeEnv === 'production' && (mode & 0o077) !== 0) {
+  if (env.nodeEnv === 'production' && (mode & KEY_FILE_FORBIDDEN_MODE_BITS) !== 0) {
     throw new TicketKeyError('La clé privée de signature des billets est lisible par d’autres utilisateurs (attendu : 0600 ou 0400).');
   }
   // eslint-disable-next-line security/detect-non-literal-fs-filename -- chemin de configuration
@@ -78,9 +80,9 @@ export type QrCheck = { ok: true; eventId: string; publicId: string } | { ok: fa
 
 /** Vérification stricte : 4 parties, préfixe, formats (base64url canonique), puis signature. */
 export function verifyQrPayload(payload: string): QrCheck {
-  if (payload.length > 256) return { ok: false, reason: 'format' };
+  if (payload.length > QR_PAYLOAD_MAX_LENGTH) return { ok: false, reason: 'format' };
   const parts = payload.split('.');
-  if (parts.length !== 4) return { ok: false, reason: 'format' };
+  if (parts.length !== QR_PARTS) return { ok: false, reason: 'format' };
   const [prefix, eventId, publicId, signature] = parts;
   if (
     prefix !== PREFIX || !eventId || !UUID_RE.test(eventId)
@@ -107,7 +109,7 @@ export function holderInitials(displayName: string): string {
     .split(/[\s-]+/)
     .map((word) => word.codePointAt(0))
     .filter((cp): cp is number => cp !== undefined)
-    .slice(0, 3)
+    .slice(0, HOLDER_INITIALS_MAX)
     .map((cp) => `${String.fromCodePoint(cp).toUpperCase()}.`)
     .join('');
   return initials === '' ? '?' : initials;

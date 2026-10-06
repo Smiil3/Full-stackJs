@@ -152,3 +152,19 @@ Décisions non bloquantes prises pendant l'implémentation (option la plus sûre
 - **2026-10-06 — Réglages du collectif : rôle OWNER relu dans la transaction (adhésion FOR SHARE) après la ré-authentification argon2.**
 - **2026-10-06 — `Order.paymentInProgress` (contrat 1.16) = PENDING_PAYMENT, session courante présente (non refusée) et réservation non échue (la session n'expire jamais avant la réservation).**
 - **2026-10-06 — Export CSV : l'identifiant public du billet sort TEL QUEL (contrat §5 : même chaîne partout), même s'il commence par « - » (1 tirage sur 64).** — Exception ciblée à la neutralisation des formules (`csvIdentifier`) : seulement pour un alphabet base64url / UUID de 64 caractères au plus, qui ne permet ni appel de fonction ni lien externe (au pire un tableur l'affiche mal) ; hors de cet alphabet, la valeur est neutralisée comme les autres cellules. Le test d'export est désormais déterministe (horloge figée, dates fixes, identifiant fixe commençant par « - ») ; c'était la cause de son échec intermittent.
+
+## B10 — Plus aucun nombre magique
+
+- **2026-10-06 — Toute valeur numérique métier ou technique vit, nommée, typée et commentée (sens + source), dans `src/config/` ; aucun changement de valeur.** — Garde-fou : `@typescript-eslint/no-magic-numbers` en erreur sur `src/` (ignorés : 0, 1, -1, 0n, index de tableaux, enums, types littéraux ; exclus : `src/config/**`, `src/generated/**` ; hors périmètre : tests, migrations, seed). Les nombres placés dans des objets littéraux (que la règle ne voit pas) ont été déplacés aussi, ainsi que les tailles de corps (`'10kb'`…) ; `no-template-curly-in-string` ajouté (un `${…}` dans une chaîne simple partirait tel quel dans un mail). Ce qui n'était pas une variable d'environnement le reste pas : constantes de code, revues et testées. Les valeurs réglables par le client restent en base (OrganizationSettings / Event) ; seules leurs bornes sont dans `settingsBounds.ts`.
+- **Où trouver quoi (`src/config/`)** :
+  - `units.ts` — unités et conversions (`minutes()`, `hours()`, `days()`, `toUnixSeconds()`…) : plus de `60_000` / `3600_000` / `/ 1000` ailleurs ;
+  - `auth.ts` — TTL jeton d'accès / refresh / famille, grâce de rotation, liens mail, quotas mail, verrouillage, gigue du plancher de réponse ;
+  - `password.ts` — longueurs (12–128 / 256 octets), argon2id (OWASP), sémaphore 4 / 64 ;
+  - `checkin.ts` — fenêtre −12 h / +24 h, lot de sync 500, quota 2000/min, tolérance +5 min, format du QR ;
+  - `payments.ts` (PSP, webhook, rapprochement) · `refunds.ts` (lot, bail, essais, statuts transitoires) · `mail.ts` (outbox, backoff, délais SMTP, image QR) ;
+  - `rateLimits.ts` — TOUS les plafonds et fenêtres, en tableau (`RATE_LIMITS`, `QUOTAS`) ;
+  - `http.ts` — codes HTTP, tailles de corps, pagination, HSTS / CORS, arrêt ;
+  - `money.ts` (plafonds, échelles % et points de base) · `settingsBounds.ts` (bornes des réglages, utilisées par les schémas Joi et le calcul des frais) · `fields.ts` (longueurs des champs d'entrée) ;
+  - `banking.ts` (IBAN ISO 13616, références de virement) · `crypto.ts` (tailles de jetons, AES-GCM) · `database.ts` (pool, délais et nouvel essai des transactions) ;
+  - `events.ts` (rétention publique, stock bas) · `waitlist.ts` (accumulation 30 min) · `worker.ts` (lots par passage) · `mockPsp.ts` (PSP simulé).
+- **Invariants testés** (`tests/unit/config.test.ts`) : grâce de refresh < TTL d'accès ≤ TTL refresh ≤ famille ; verrou max ≤ fenêtre d'échecs ; un lot de 500 vrais QR tient dans 160 ko et dans le quota ; bornes de réglages ordonnées et alignées sur les champs d'entrée ; la plus grosse commande possible reste sous la borne de webhook ; les baux couvrent les délais réseau qu'ils protègent ; le suivi de commande du front passe sous son plafond.

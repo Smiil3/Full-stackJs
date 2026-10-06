@@ -1,7 +1,9 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { BYTE_VALUES, ENCRYPTED_PARTS, GCM_IV_BYTES, GCM_TAG_BYTES, RANDOM_TOKEN_BYTES, REJECTION_SAMPLING_OVERDRAW } from '../config/crypto.js';
+import { TRANSFER_REFERENCE_LENGTH } from '../config/banking.js';
 
-/** Jeton aléatoire cryptographique encodé en base64url (32 octets = 256 bits par défaut). */
-export function randomToken(bytes = 32): string {
+/** Jeton aléatoire cryptographique encodé en base64url (256 bits par défaut). */
+export function randomToken(bytes = RANDOM_TOKEN_BYTES): string {
   return randomBytes(bytes).toString('base64url');
 }
 
@@ -16,8 +18,6 @@ export function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(ha, hb);
 }
 
-const GCM_IV_BYTES = 12;
-const GCM_TAG_BYTES = 16;
 const KID_RE = /^[a-z0-9]{1,16}$/;
 
 export interface Keyring {
@@ -52,7 +52,7 @@ export class CryptoError extends Error {
 export function decryptString(payload: string, keyring: Keyring, aad: string): string {
   const parts = payload.split('.');
   const [version, kid, ivB64, tagB64, ctB64] = parts;
-  if (parts.length !== 5 || version !== 'v1' || !kid || !KID_RE.test(kid) || !ivB64 || !tagB64 || ctB64 === undefined) {
+  if (parts.length !== ENCRYPTED_PARTS || version !== 'v1' || !kid || !KID_RE.test(kid) || !ivB64 || !tagB64 || ctB64 === undefined) {
     throw new CryptoError('DECRYPT_FORMAT', 'Format chiffré inconnu');
   }
   const key = keyring.byId.get(kid);
@@ -81,11 +81,11 @@ export const aad = {
 const TRANSFER_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 /** Référence de virement lisible (sans caractères ambigus), tirée par rejet pour éviter le biais modulo. */
-export function transferReference(length = 10): string {
+export function transferReference(length = TRANSFER_REFERENCE_LENGTH): string {
   let out = '';
   while (out.length < length) {
-    for (const byte of randomBytes(length * 2)) {
-      if (byte < 256 - (256 % TRANSFER_ALPHABET.length)) {
+    for (const byte of randomBytes(length * REJECTION_SAMPLING_OVERDRAW)) {
+      if (byte < BYTE_VALUES - (BYTE_VALUES % TRANSFER_ALPHABET.length)) {
         out += TRANSFER_ALPHABET.charAt(byte % TRANSFER_ALPHABET.length);
         if (out.length === length) break;
       }

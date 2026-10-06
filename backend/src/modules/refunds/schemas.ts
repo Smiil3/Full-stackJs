@@ -1,5 +1,6 @@
 import Joi from 'joi';
 import { isoDateOutput, nullable, pageOf, pageQuery, text, uuid, uuidStrict, type PageQuery } from '../../lib/schemas.js';
+import { FIELD_LIMITS } from '../../config/fields.js';
 
 export const REFUND_STATUSES = ['PENDING', 'SUCCEEDED', 'MANUAL_REQUIRED', 'FAILED'] as const;
 export type RefundStatusName = (typeof REFUND_STATUSES)[number];
@@ -8,7 +9,7 @@ export interface RefundsQuery extends PageQuery { status?: RefundStatusName; eve
 export const refundsQuery = Joi.object<RefundsQuery>({ ...pageQuery, status: Joi.string().valid(...REFUND_STATUSES), eventId: uuid });
 export const orgParams = Joi.object<{ orgId: string }>({ orgId: uuid.required() });
 export const refundParams = Joi.object<{ orgId: string; refundId: string }>({ orgId: uuid.required(), refundId: uuid.required() });
-export const markDoneBody = Joi.object<{ note: string }>({ note: text({ multiline: true }).min(1).max(500).required() });
+export const markDoneBody = Joi.object<{ note: string }>({ note: text({ multiline: true }).min(1).max(FIELD_LIMITS.reason).required() });
 
 export const refundAdminResponse = Joi.object({
   id: uuidStrict, orderId: uuidStrict, eventId: uuidStrict, eventTitle: Joi.string(), buyerEmail: Joi.string(), amountCents: Joi.number().integer(),

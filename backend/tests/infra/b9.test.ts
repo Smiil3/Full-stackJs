@@ -7,9 +7,10 @@ import { testClock } from '../../src/lib/clock.js';
 import { getDb, transaction } from '../../src/lib/db.js';
 import { AppError } from '../../src/lib/errors.js';
 import { updateSettings } from '../../src/modules/orgs/service.js';
-import { distributeWaitlist, MAX_ACCUMULATION_MINUTES } from '../../src/modules/waitlist/distribute.js';
+import { distributeWaitlist } from '../../src/modules/waitlist/distribute.js';
 import { api, createUser, loggedInUser, type LoggedIn } from '../helpers.js';
 import { createEvent, orgWithStaff, setStock, type OrgFixture } from '../fixtures.js';
+import { MAX_ACCUMULATION_MINUTES } from '../../src/config/waitlist.js';
 
 let org: OrgFixture;
 let buyer: LoggedIn;

@@ -1,4 +1,5 @@
 import { AppError } from './errors.js';
+import { BUSY_RETRY_AFTER_SECONDS, HTTP_STATUS } from '../config/http.js';
 
 /**
  * Sémaphore à file bornée : au plus `max` tâches simultanées, au plus `maxQueue` en attente ;
@@ -13,7 +14,7 @@ export class Semaphore {
   async run<T>(task: () => Promise<T>): Promise<T> {
     if (this.active >= this.max) {
       if (this.queue.length >= this.maxQueue) {
-        throw new AppError(429, 'RATE_LIMITED', 'Serveur occupé, veuillez réessayer.', { retryAfterSeconds: 1 });
+        throw new AppError(HTTP_STATUS.TOO_MANY_REQUESTS, 'RATE_LIMITED', 'Serveur occupé, veuillez réessayer.', { retryAfterSeconds: BUSY_RETRY_AFTER_SECONDS });
       }
       await new Promise<void>((resolve) => this.queue.push(resolve));
     } else {

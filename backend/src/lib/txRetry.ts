@@ -1,6 +1,8 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { randomInt } from 'node:crypto';
 import { AppError } from './errors.js';
+import { ERROR_CAUSE_MAX_DEPTH, TX_RETRY_ATTEMPTS, TX_RETRY_JITTER_MAX_MS, TX_RETRY_JITTER_MIN_MS } from '../config/database.js';
+import { HTTP_STATUS } from '../config/http.js';
 
 const RETRYABLE_SQLSTATES = new Set(['40P01', '40001']);
 
@@ -10,7 +12,7 @@ const RETRYABLE_SQLSTATES = new Set(['40P01', '40001']);
  * ses métadonnées ou sa cause selon la couche (Prisma, adaptateur pg).
  */
 export function isTransientTxError(err: unknown, depth = 0): boolean {
-  if (typeof err !== 'object' || err === null || depth > 3) return false;
+  if (typeof err !== 'object' || err === null || depth > ERROR_CAUSE_MAX_DEPTH) return false;
   const e = err as { code?: unknown; meta?: Record<string, unknown>; cause?: unknown; message?: unknown };
   if (e.code === 'P2034' || (typeof e.code === 'string' && RETRYABLE_SQLSTATES.has(e.code))) return true;
   for (const key of ['code', 'originalCode', 'driverAdapterError']) {
@@ -22,15 +24,15 @@ export function isTransientTxError(err: unknown, depth = 0): boolean {
   return isTransientTxError(e.cause, depth + 1);
 }
 
-/** Rejoue `fn` (3 essais, petite gigue aléatoire) sur erreur transitoire, puis 409 CONFLICT propre. */
-export async function withTxRetry<T>(fn: () => Promise<T>, alsoRetry: (err: unknown) => boolean = () => false, attempts = 3): Promise<T> {
+/** Rejoue `fn` (TX_RETRY_ATTEMPTS essais, petite gigue aléatoire) sur erreur transitoire, puis 409 CONFLICT propre. */
+export async function withTxRetry<T>(fn: () => Promise<T>, alsoRetry: (err: unknown) => boolean = () => false, attempts = TX_RETRY_ATTEMPTS): Promise<T> {
   for (let attempt = 1; ; attempt += 1) {
     try {
       return await fn();
     } catch (err) {
       if (!isTransientTxError(err) && !alsoRetry(err)) throw err;
-      if (attempt >= attempts) throw new AppError(409, 'CONFLICT', 'Conflit d’accès concurrent, veuillez réessayer.');
-      await sleep(randomInt(10, 60) * attempt);
+      if (attempt >= attempts) throw new AppError(HTTP_STATUS.CONFLICT, 'CONFLICT', 'Conflit d’accès concurrent, veuillez réessayer.');
+      await sleep(randomInt(TX_RETRY_JITTER_MIN_MS, TX_RETRY_JITTER_MAX_MS) * attempt);
     }
   }
 }

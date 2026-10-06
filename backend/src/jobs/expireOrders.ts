@@ -4,12 +4,9 @@ import { getLogger } from '../lib/logger.js';
 import { enqueueEmail } from '../lib/outbox.js';
 import { releaseHeld } from '../modules/orders/repo.js';
 import { distributeMany, lockWaitlistEntries } from '../modules/waitlist/distribute.js';
-import { RECONCILE_GRACE_MS, reconcileOrder } from './reconcilePayments.js';
-
-/** Commandes traitées au plus par passage du worker. */
-const MAX_PER_TICK = 200;
-/** Au-delà de ce nombre d'échecs, la commande est écartée (alerte) pour ne pas bloquer les suivantes. */
-export const MAX_EXPIRE_FAILURES = 5;
+import { reconcileOrder } from './reconcilePayments.js';
+import { EXPIRE_ORDERS_PER_TICK, MAX_EXPIRE_FAILURES } from '../config/worker.js';
+import { RECONCILE_GRACE_MS } from '../config/payments.js';
 
 /**
  * Expire les réservations non payées à temps et libère leurs places, UNE TRANSACTION PAR COMMANDE :
@@ -34,7 +31,7 @@ export async function expireOrders(): Promise<{ expired: number; failed: number;
       AND o."expireFailures" < ${MAX_EXPIRE_FAILURES}
       AND EXISTS (SELECT 1 FROM "psp_sessions" s WHERE s."orderId" = o."id")
     ORDER BY o."expiresAt", o."id"
-    LIMIT ${MAX_PER_TICK}`;
+    LIMIT ${EXPIRE_ORDERS_PER_TICK}`;
   for (const candidate of toReconcile) {
     let outcome;
     try {
@@ -45,7 +42,7 @@ export async function expireOrders(): Promise<{ expired: number; failed: number;
     }
     if (outcome === 'unreachable' && now.getTime() - candidate.expiresAt.getTime() < RECONCILE_GRACE_MS) skipped.push(candidate.id);
   }
-  for (let i = 0; i < MAX_PER_TICK; i += 1) {
+  for (let i = 0; i < EXPIRE_ORDERS_PER_TICK; i += 1) {
     // Objet mutable : la valeur est renseignée dans la transaction (closure).
     const current: { id: string | null } = { id: null };
     try {

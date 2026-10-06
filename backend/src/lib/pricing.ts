@@ -1,4 +1,5 @@
 import type { TicketType } from '../generated/prisma/client.js';
+import { LOW_STOCK_DIVISOR } from '../config/events.js';
 
 export interface PriceAt {
   unitPriceCents: number;
@@ -26,7 +27,7 @@ export type Availability = 'AVAILABLE' | 'LOW' | 'SOLD_OUT';
 export function availabilityOf(tt: Pick<TicketType, 'capacity' | 'sold' | 'held'>, waitlistBlocks: boolean): Availability {
   const remaining = tt.capacity - tt.sold - tt.held;
   if (remaining <= 0 || waitlistBlocks) return 'SOLD_OUT';
-  return remaining * 10 <= tt.capacity ? 'LOW' : 'AVAILABLE';
+  return remaining * LOW_STOCK_DIVISOR <= tt.capacity ? 'LOW' : 'AVAILABLE';
 }
 
 export function bestAvailability(list: Availability[]): Availability {

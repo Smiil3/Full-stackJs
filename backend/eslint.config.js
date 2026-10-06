@@ -15,6 +15,7 @@ export default defineConfig(
     },
     rules: {
       'no-console': 'error',
+      'no-template-curly-in-string': 'error',
       'no-eval': 'error',
       'no-implied-eval': 'error',
       'no-new-func': 'error',
@@ -44,6 +45,23 @@ export default defineConfig(
         'error',
         { selector: "MemberExpression[object.name='Math'][property.name='random']", message: 'Math.random est interdit : utiliser node:crypto.' },
       ],
+    },
+  },
+  {
+    // Pas de nombre magique (B10) : toute valeur métier ou technique vit, nommée et commentée, dans src/config/.
+    files: ['src/**/*.ts'],
+    ignores: ['src/config/**', 'src/generated/**'],
+    rules: {
+      '@typescript-eslint/no-magic-numbers': ['error', {
+        ignore: [0, 1, -1, '0n'],
+        ignoreArrayIndexes: true,
+        ignoreEnums: true,
+        ignoreNumericLiteralTypes: true,
+        ignoreTypeIndexes: true,
+        ignoreReadonlyClassProperties: false,
+        enforceConst: false,
+        detectObjects: false,
+      }],
     },
   },
   {

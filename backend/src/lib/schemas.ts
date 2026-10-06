@@ -1,5 +1,7 @@
 import Joi from 'joi';
-import { MAX_AMOUNT_CENTS } from './money.js';
+import { MAX_AMOUNT_CENTS } from '../config/money.js';
+import { FIELD_LIMITS } from '../config/fields.js';
+import { PAGE_MAX, PAGE_SIZE_DEFAULT, PAGE_SIZE_MAX } from '../config/http.js';
 
 /**
  * Chaîne de base de TOUTES les entrées texte : aucun caractère de contrôle Unicode (NUL, échappements
@@ -33,7 +35,7 @@ export const uuidStrict = Joi.string().guid({ version: ['uuidv4', 'uuidv7'] });
 
 /** Date ISO 8601 avec fuseau explicite (Z ou ±hh:mm) : jamais d'heure locale ambiguë. */
 export const isoDateInput = Joi.string()
-  .max(40)
+  .max(FIELD_LIMITS.isoDateInput)
   .pattern(/^\d{4}-\d{2}-\d{2}T[\d:.]{5,12}(?:Z|[+-]\d{2}:\d{2})$/)
   .isoDate()
   .messages({ 'string.pattern.base': '{{#label}} doit être une date ISO 8601 avec fuseau (ex. 2026-11-14T19:00:00.000Z)' });
@@ -45,14 +47,14 @@ export const nullable = <T extends Joi.Schema>(schema: T): T => schema.allow(nul
 
 /** Email : ASCII imprimable uniquement (même normalisation côté JS et SQL), 254 caractères max. */
 export const email = text()
-  .max(254)
+  .max(FIELD_LIMITS.email)
   .pattern(/^[\x21-\x7E]+$/, 'ascii')
   .email({ tlds: { allow: false } })
   .messages({ 'string.pattern.name': '{{#label}} doit être une adresse email ASCII' });
 
 export const pageQuery = {
-  page: Joi.number().integer().min(1).max(1000).default(1),
-  pageSize: Joi.number().integer().min(1).max(100).default(20),
+  page: Joi.number().integer().min(1).max(PAGE_MAX).default(1),
+  pageSize: Joi.number().integer().min(1).max(PAGE_SIZE_MAX).default(PAGE_SIZE_DEFAULT),
 };
 
 export interface PageQuery {
@@ -86,6 +88,6 @@ export function iso(date: Date | null): string | null {
 /** Valide un fuseau IANA connu du moteur (Intl). */
 const TIMEZONES = new Set<string>([...Intl.supportedValuesOf('timeZone'), 'UTC']);
 export const timezone = Joi.string()
-  .max(64)
+  .max(FIELD_LIMITS.timezone)
   .custom((value: string, helpers) => (TIMEZONES.has(value) ? value : helpers.error('any.invalid')))
   .messages({ 'any.invalid': '{{#label}} doit être un fuseau horaire IANA valide' });

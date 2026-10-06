@@ -5,6 +5,7 @@ import { getLogger } from './lib/logger.js';
 import { createApp } from './app.js';
 import { disconnectDb } from './lib/db.js';
 import { warmUpAuth } from './modules/auth/service.js';
+import { SHUTDOWN_TIMEOUT_MS } from './config/http.js';
 
 function loadEnvOrExit() {
   try {
@@ -37,7 +38,7 @@ function shutdown(signal: string): void {
   server.close(() => {
     void disconnectDb().finally(() => process.exit(0));
   });
-  setTimeout(() => process.exit(1), 10_000).unref();
+  setTimeout(() => process.exit(1), SHUTDOWN_TIMEOUT_MS).unref();
 }
 process.on('SIGTERM', () => {
   shutdown('SIGTERM');

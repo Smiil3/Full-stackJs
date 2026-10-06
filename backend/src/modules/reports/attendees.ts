@@ -5,8 +5,9 @@ import { getDb } from '../../lib/db.js';
 import { errors } from '../../lib/errors.js';
 import { formatInTimezone } from '../../lib/time.js';
 import { getLogger } from '../../lib/logger.js';
+import { HTTP_STATUS } from '../../config/http.js';
+import { CSV_EXPORT_PAGE } from '../../config/worker.js';
 
-const PAGE = 500;
 const STATUS_LABELS = { VALID: 'valide', USED: 'scanné', CANCELLED: 'annulé' } as const;
 
 /**
@@ -20,7 +21,7 @@ export async function streamAttendees(orgId: string, actorId: string, eventId: s
   if (!event) throw errors.notFound();
   await db.$transaction((tx) => writeAudit(tx, { orgId, actorId, action: 'attendees.export', target: `event:${eventId}`, meta: {} }));
 
-  res.status(200);
+  res.status(HTTP_STATUS.OK);
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="participants-${eventId}.csv"`);
   res.setHeader('Cache-Control', 'no-store');
@@ -46,7 +47,7 @@ export async function streamAttendees(orgId: string, actorId: string, eventId: s
         where: { eventId },
         include: { orderItem: { select: { ticketType: { select: { name: true } }, order: { select: { user: { select: { displayName: true, email: true } } } } } } },
         orderBy: { id: 'asc' },
-        take: PAGE,
+        take: CSV_EXPORT_PAGE,
         ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
       });
       if (tickets.length === 0) break;
@@ -63,7 +64,7 @@ export async function streamAttendees(orgId: string, actorId: string, eventId: s
       }
       await write(chunk);
       cursor = tickets[tickets.length - 1]?.id;
-      if (tickets.length < PAGE) break;
+      if (tickets.length < CSV_EXPORT_PAGE) break;
     }
   } catch (err) {
     // En-têtes déjà envoyés : on ne peut plus répondre en erreur. La connexion est détruite pour que le

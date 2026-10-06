@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { getDb } from '../../src/lib/db.js';
-import { decryptOutboxPayload, messageIdFor, OUTBOX_MAX_ATTEMPTS, processOutboxBatch, type MailMessage } from '../../src/lib/outbox.js';
+import { decryptOutboxPayload, messageIdFor, processOutboxBatch, type MailMessage } from '../../src/lib/outbox.js';
 import { api, PASSWORD, tokenFromMail } from '../helpers.js';
+import { OUTBOX_MAX_ATTEMPTS } from '../../src/config/mail.js';
 
 function fakeTransport(fail = false) {
   const sent: MailMessage[] = [];

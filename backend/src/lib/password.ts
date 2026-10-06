@@ -2,12 +2,13 @@ import argon2 from 'argon2';
 import { randomToken } from './crypto.js';
 import { Semaphore } from './semaphore.js';
 import { normalizePassword } from './passwordPolicy.js';
+import { ARGON2_MAX_CONCURRENT, ARGON2_MAX_QUEUE, ARGON2_MEMORY_KIB, ARGON2_PARALLELISM, ARGON2_TIME_COST } from '../config/password.js';
 
-/** Paramètres épinglés (recommandation OWASP) : argon2id, 19 Mio, 2 itérations, parallélisme 1. */
-export const ARGON2_PARAMS = { type: argon2.argon2id, memoryCost: 19_456, timeCost: 2, parallelism: 1 } as const;
+/** Paramètres épinglés (recommandation OWASP, voir config/password.ts). */
+export const ARGON2_PARAMS = { type: argon2.argon2id, memoryCost: ARGON2_MEMORY_KIB, timeCost: ARGON2_TIME_COST, parallelism: ARGON2_PARALLELISM } as const;
 
-/** Au plus 4 calculs argon2 simultanés, 64 en file ; au-delà 429. */
-export const argon2Semaphore = new Semaphore(4, 64);
+/** Calculs argon2 simultanés bornés, file bornée ; au-delà 429. */
+export const argon2Semaphore = new Semaphore(ARGON2_MAX_CONCURRENT, ARGON2_MAX_QUEUE);
 
 /** Compteurs d'observabilité (tests) : nombre réel de hashs et de vérifications. */
 export const passwordMetrics = { hashes: 0, verifications: 0 };
@@ -38,7 +39,7 @@ let dummyHash: Promise<string> | null = null;
  */
 export function getDummyHash(): Promise<string> {
   if (!dummyHash) {
-    const pending = argon2.hash(randomToken(32), ARGON2_PARAMS);
+    const pending = argon2.hash(randomToken(), ARGON2_PARAMS);
     dummyHash = pending;
     pending.catch(() => {
       if (dummyHash === pending) dummyHash = null;

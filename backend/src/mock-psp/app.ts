@@ -5,6 +5,10 @@ import Joi from 'joi';
 import { safeEqual } from '../lib/crypto.js';
 import { escapeHtml } from '../lib/mail/escape.js';
 import { signatureHeader } from '../lib/pspSignature.js';
+import { HTTP_STATUS, HTTP_SUCCESS_MAX_EXCLUSIVE, HTTP_SUCCESS_MIN } from '../config/http.js';
+import { EURO_DECIMALS, MOCK_PSP_DELAYED_WEBHOOK_MS, MOCK_PSP_FORM_LIMIT, MOCK_PSP_ID_BYTES, MOCK_PSP_JSON_LIMIT, MOCK_PSP_KEY_MAX_LENGTH, MOCK_PSP_MAX_AMOUNT_CENTS, MOCK_PSP_RETRY_DELAYS_MS, MOCK_PSP_URL_MAX_LENGTH } from '../config/mockPsp.js';
+import { CENTS_PER_EURO } from '../config/money.js';
+import { toUnixSeconds } from '../config/units.js';
 
 /**
  * Prestataire de paiement SIMULÉ (dev / test uniquement) : sessions de paiement, page hébergée,
@@ -21,9 +25,6 @@ export interface WebhookEvent {
 
 /** Livraison d'un webhook (HTTP en dev ; injectée en test) : renvoie le statut HTTP de la réponse. */
 export type WebhookDeliver = (rawBody: string, signature: string) => Promise<number>;
-
-/** Réessais d'un webhook non acquitté (2xx) : 1 s, 5 s, 30 s, 2 min, 10 min (contrat 1.15 §9). */
-export const DEFAULT_RETRY_DELAYS_MS = [1_000, 5_000, 30_000, 120_000, 600_000];
 
 export interface MockPspOptions {
   apiKey: string;
@@ -51,7 +52,7 @@ interface Session {
   expiresAt: number;
 }
 
-const id = (prefix: string) => `${prefix}_${randomBytes(12).toString('base64url')}`;
+const id = (prefix: string) => `${prefix}_${randomBytes(MOCK_PSP_ID_BYTES).toString('base64url')}`;
 
 export interface MockPsp {
   app: Express;
@@ -73,7 +74,7 @@ export function createMockPsp(options: MockPspOptions): MockPsp {
   const paymentsById = new Map<string, { orderId: string; amountCents: number }>();
   const refundedByPayment = new Map<string, number>();
 
-  const retryDelays = options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
+  const retryDelays = options.retryDelaysMs ?? MOCK_PSP_RETRY_DELAYS_MS;
   let pending = 0;
   /** Livraison avec réessais : signature recalculée à chaque tentative (horodatage frais). */
   const emit = async (event: WebhookEvent, attempt = 0): Promise<void> => {
@@ -84,7 +85,7 @@ export function createMockPsp(options: MockPspOptions): MockPsp {
     } catch {
       status = 0;
     }
-    if (status >= 200 && status < 300) return;
+    if (status >= HTTP_SUCCESS_MIN && status < HTTP_SUCCESS_MAX_EXCLUSIVE) return;
     const delay = retryDelays[attempt];
     if (delay === undefined) return;
     pending += 1;
@@ -98,7 +99,7 @@ export function createMockPsp(options: MockPspOptions): MockPsp {
   const paymentEvent = (s: Session, type: WebhookEvent['type']): WebhookEvent => ({
     id: id('evt'),
     type,
-    created: Math.floor(Date.now() / 1000),
+    created: toUnixSeconds(Date.now()),
     data: { paymentId: s.paymentId ?? id('pay'), sessionId: s.id, orderId: s.orderId, amountCents: s.amountCents, currency: s.currency },
   });
 
@@ -113,13 +114,13 @@ export function createMockPsp(options: MockPspOptions): MockPsp {
       directives: { defaultSrc: ["'none'"], styleSrc: ["'unsafe-inline'"], formAction: ["'self'", ...redirectOrigins], frameAncestors: ["'none'"] },
     },
   }));
-  app.use(express.json({ limit: '10kb' }));
-  app.use(express.urlencoded({ extended: false, limit: '1kb' }));
+  app.use(express.json({ limit: MOCK_PSP_JSON_LIMIT }));
+  app.use(express.urlencoded({ extended: false, limit: MOCK_PSP_FORM_LIMIT }));
 
   const requireApiKey = (req: Request, res: Response, next: NextFunction): void => {
     const header = req.headers.authorization ?? '';
     if (!safeEqual(header, `Bearer ${options.apiKey}`)) {
-      res.status(401).json({ error: 'invalid_api_key' });
+      res.status(HTTP_STATUS.UNAUTHORIZED).json({ error: 'invalid_api_key' });
       return;
     }
     next();
@@ -135,10 +136,10 @@ export function createMockPsp(options: MockPspOptions): MockPsp {
 
   const sessionSchema = Joi.object({
     orderId: Joi.string().guid().required(),
-    amountCents: Joi.number().integer().min(1).max(100_000_000).required(),
+    amountCents: Joi.number().integer().min(1).max(MOCK_PSP_MAX_AMOUNT_CENTS).required(),
     currency: Joi.string().valid('EUR').required(),
-    successUrl: Joi.string().uri({ scheme: ['http', 'https'] }).max(500).required(),
-    cancelUrl: Joi.string().uri({ scheme: ['http', 'https'] }).max(500).required(),
+    successUrl: Joi.string().uri({ scheme: ['http', 'https'] }).max(MOCK_PSP_URL_MAX_LENGTH).required(),
+    cancelUrl: Joi.string().uri({ scheme: ['http', 'https'] }).max(MOCK_PSP_URL_MAX_LENGTH).required(),
     expiresAt: Joi.string().isoDate().required(),
   });
 
@@ -146,27 +147,27 @@ export function createMockPsp(options: MockPspOptions): MockPsp {
     const validated = sessionSchema.validate(req.body as unknown, { allowUnknown: false });
     const value = validated.value as (Omit<Session, 'id' | 'status' | 'paymentId' | 'expiresAt'> & { expiresAt: string }) | undefined;
     if (validated.error || !value || !redirectAllowed(value.successUrl) || !redirectAllowed(value.cancelUrl)) {
-      res.status(400).json({ error: 'invalid_request' });
+      res.status(HTTP_STATUS.BAD_REQUEST).json({ error: 'invalid_request' });
       return;
     }
     // Idempotence : même Idempotency-Key ⇒ même session (checkout rejoué ou concurrent).
-    const key = typeof req.headers['idempotency-key'] === 'string' ? req.headers['idempotency-key'].slice(0, 100) : null;
+    const key = typeof req.headers['idempotency-key'] === 'string' ? req.headers['idempotency-key'].slice(0, MOCK_PSP_KEY_MAX_LENGTH) : null;
     const existing = key ? sessions.get(sessionsByKey.get(key) ?? '') : undefined;
     if (existing && existing.status === 'open' && !isExpired(existing) && existing.amountCents === value.amountCents) {
-      res.status(200).json({ id: existing.id, url: `${options.publicUrl}/checkout/${existing.id}` });
+      res.status(HTTP_STATUS.OK).json({ id: existing.id, url: `${options.publicUrl}/checkout/${existing.id}` });
       return;
     }
     const session: Session = { ...value, id: id('cs'), status: 'open', paymentId: null, expiresAt: new Date(value.expiresAt).getTime() };
     sessions.set(session.id, session);
     if (key) sessionsByKey.set(key, session.id);
-    res.status(201).json({ id: session.id, url: `${options.publicUrl}/checkout/${session.id}` });
+    res.status(HTTP_STATUS.CREATED).json({ id: session.id, url: `${options.publicUrl}/checkout/${session.id}` });
   });
 
   // Consultation d'une session (rapprochement par le backend, filet si un webhook a été perdu).
   app.get('/v1/checkout-sessions/:sessionId', requireApiKey, (req: Request<{ sessionId: string }>, res) => {
     const s = sessions.get(req.params.sessionId);
     if (!s) {
-      res.status(404).json({ error: 'unknown_session' });
+      res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'unknown_session' });
       return;
     }
     const status = s.status === 'open' && isExpired(s) ? 'expired' : s.status;
@@ -176,7 +177,7 @@ export function createMockPsp(options: MockPspOptions): MockPsp {
   app.get('/checkout/:sessionId', (req, res) => {
     const s = sessions.get(req.params.sessionId);
     if (!s) {
-      res.status(404).type('text/plain').send('Session inconnue');
+      res.status(HTTP_STATUS.NOT_FOUND).type('text/plain').send('Session inconnue');
       return;
     }
     const action = (path: string, label: string) =>
@@ -185,7 +186,7 @@ export function createMockPsp(options: MockPspOptions): MockPsp {
 <body style="font-family:Arial,sans-serif;max-width:420px;margin:24px auto;padding:0 16px">
 <h1 style="font-size:20px">Paiement simulé</h1>
 <p>Commande <code>${escapeHtml(s.orderId)}</code></p>
-<p>Montant : <strong>${escapeHtml((s.amountCents / 100).toFixed(2))} ${escapeHtml(s.currency)}</strong></p>
+<p>Montant : <strong>${escapeHtml((s.amountCents / CENTS_PER_EURO).toFixed(EURO_DECIMALS))} ${escapeHtml(s.currency)}</strong></p>
 ${s.status === 'open' && isExpired(s)
     ? '<p>Session expirée : la réservation a dépassé son échéance.</p>'
     : s.status === 'open'
@@ -198,22 +199,22 @@ ${s.status === 'open' && isExpired(s)
     const s = sessions.get(req.params.sessionId);
     const { action } = req.params;
     if (!s || !['pay', 'fail', 'pay-twice', 'pay-delayed'].includes(action)) {
-      res.status(404).type('text/plain').send('Introuvable');
+      res.status(HTTP_STATUS.NOT_FOUND).type('text/plain').send('Introuvable');
       return;
     }
     if (s.status !== 'open') {
-      res.redirect(303, s.status === 'paid' ? s.successUrl : s.cancelUrl);
+      res.redirect(HTTP_STATUS.SEE_OTHER, s.status === 'paid' ? s.successUrl : s.cancelUrl);
       return;
     }
     // Session échue : paiement refusé (une réservation expirée ne peut pas être payée après coup).
     if (isExpired(s)) {
-      res.redirect(303, s.cancelUrl);
+      res.redirect(HTTP_STATUS.SEE_OTHER, s.cancelUrl);
       return;
     }
     if (action === 'fail') {
       s.status = 'failed';
       await emit(paymentEvent(s, 'payment.failed')).catch(() => undefined);
-      res.redirect(303, s.cancelUrl);
+      res.redirect(HTTP_STATUS.SEE_OTHER, s.cancelUrl);
       return;
     }
     s.status = 'paid';
@@ -221,61 +222,61 @@ ${s.status === 'open' && isExpired(s)
     paymentsById.set(s.paymentId, { orderId: s.orderId, amountCents: s.amountCents });
     const event = paymentEvent(s, 'payment.succeeded');
     if (action === 'pay-delayed') {
-      setTimeout(() => void emit(event).catch(() => undefined), options.delayedWebhookMs ?? 30_000).unref();
+      setTimeout(() => void emit(event).catch(() => undefined), options.delayedWebhookMs ?? MOCK_PSP_DELAYED_WEBHOOK_MS).unref();
     } else {
       await emit(event).catch(() => undefined);
       // Doublon volontaire : même événement (même id) renvoyé une seconde fois.
       if (action === 'pay-twice') await emit(event).catch(() => undefined);
     }
-    res.redirect(303, s.successUrl);
+    res.redirect(HTTP_STATUS.SEE_OTHER, s.successUrl);
   });
 
-  const refundSchema = Joi.object({ paymentId: Joi.string().max(100).required(), amountCents: Joi.number().integer().min(1).required() });
+  const refundSchema = Joi.object({ paymentId: Joi.string().max(MOCK_PSP_KEY_MAX_LENGTH).required(), amountCents: Joi.number().integer().min(1).required() });
 
   app.post('/v1/refunds', requireApiKey, async (req, res) => {
     const validated = refundSchema.validate(req.body as unknown, { allowUnknown: false });
     const value = validated.value as { paymentId: string; amountCents: number } | undefined;
-    const key = typeof req.headers['idempotency-key'] === 'string' ? req.headers['idempotency-key'].slice(0, 100) : null;
+    const key = typeof req.headers['idempotency-key'] === 'string' ? req.headers['idempotency-key'].slice(0, MOCK_PSP_KEY_MAX_LENGTH) : null;
     if (validated.error || !value || !key) {
-      res.status(400).json({ error: 'invalid_request' });
+      res.status(HTTP_STATUS.BAD_REQUEST).json({ error: 'invalid_request' });
       return;
     }
     const already = refunds.get(key);
     if (already) {
       // Idempotence stricte : même clé + corps différent ⇒ conflit.
       if (already.paymentId !== value.paymentId || already.amountCents !== value.amountCents) {
-        res.status(409).json({ error: 'idempotency_conflict' });
+        res.status(HTTP_STATUS.CONFLICT).json({ error: 'idempotency_conflict' });
         return;
       }
-      res.status(200).json({ id: already.id, status: 'succeeded' });
+      res.status(HTTP_STATUS.OK).json({ id: already.id, status: 'succeeded' });
       return;
     }
     const payment = paymentsById.get(value.paymentId);
     if (!payment) {
-      res.status(404).json({ error: 'unknown_payment' });
+      res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'unknown_payment' });
       return;
     }
     const refunded = refundedByPayment.get(value.paymentId) ?? 0;
     if (refunded + value.amountCents > payment.amountCents) {
-      res.status(422).json({ error: 'amount_exceeds_payment' });
+      res.status(HTTP_STATUS.UNPROCESSABLE_ENTITY).json({ error: 'amount_exceeds_payment' });
       return;
     }
     refundedByPayment.set(value.paymentId, refunded + value.amountCents);
     const refund = { id: id('re'), paymentId: value.paymentId, amountCents: value.amountCents };
     refunds.set(key, refund);
-    res.status(201).json({ id: refund.id, status: 'succeeded' });
+    res.status(HTTP_STATUS.CREATED).json({ id: refund.id, status: 'succeeded' });
     await emit({
-      id: id('evt'), type: 'refund.succeeded', created: Math.floor(Date.now() / 1000),
+      id: id('evt'), type: 'refund.succeeded', created: toUnixSeconds(Date.now()),
       data: { paymentId: value.paymentId, refundId: refund.id, idempotencyKey: key, orderId: payment.orderId, amountCents: value.amountCents, currency: 'EUR' },
     }).catch(() => undefined);
   });
 
   // Consultation d'un remboursement par clé d'idempotence (le backend vérifie avant de passer en manuel).
   app.get('/v1/refunds', requireApiKey, (req, res) => {
-    const key = typeof req.query['idempotencyKey'] === 'string' ? req.query['idempotencyKey'].slice(0, 100) : '';
+    const key = typeof req.query['idempotencyKey'] === 'string' ? req.query['idempotencyKey'].slice(0, MOCK_PSP_KEY_MAX_LENGTH) : '';
     const refund = refunds.get(key);
     if (!refund) {
-      res.status(404).json({ error: 'unknown_refund' });
+      res.status(HTTP_STATUS.NOT_FOUND).json({ error: 'unknown_refund' });
       return;
     }
     res.json({ id: refund.id, status: 'succeeded', paymentId: refund.paymentId, amountCents: refund.amountCents });

@@ -3,18 +3,13 @@ import { getDb } from '../lib/db.js';
 import { getLogger } from '../lib/logger.js';
 import { getPspClient, PspError } from '../lib/psp.js';
 import { backoffMs } from '../lib/outbox.js';
-
-const BATCH = 20;
-const LEASE_MS = 5 * 60_000;
-export const MAX_REFUND_ATTEMPTS = 10;
+import { MAX_REFUND_ATTEMPTS, REFUND_BATCH, REFUND_LAST_ERROR_MAX_LENGTH, REFUND_LEASE_MS, REFUND_PENDING_RECHECK_MS, TRANSIENT_PSP_STATUSES } from '../config/refunds.js';
+import { HTTP_CLIENT_ERROR_MIN, HTTP_SERVER_ERROR_MIN } from '../config/http.js';
 
 /** Erreur PSP définitive (requête refusée) : inutile de réessayer, intervention humaine. */
 function isPermanent(err: unknown): boolean {
-  return err instanceof PspError && err.status >= 400 && err.status < 500 && ![408, 409, 425, 429].includes(err.status);
+  return err instanceof PspError && err.status >= HTTP_CLIENT_ERROR_MIN && err.status < HTTP_SERVER_ERROR_MIN && !TRANSIENT_PSP_STATUSES.includes(err.status);
 }
-
-/** Délai avant de reconsulter un remboursement que le PSP a accepté mais pas encore exécuté. */
-const PENDING_RECHECK_MS = 10 * 60_000;
 
 /**
  * Réponse du PSP interprétée selon son statut, jamais supposée réussie :
@@ -32,11 +27,11 @@ async function recordOutcome(
   if (result.status === 'pending' && row.attempts < MAX_REFUND_ATTEMPTS) {
     await db.refund.updateMany({
       where: { id: row.id, status: 'PENDING' },
-      data: { providerRefundId: result.id, nextAttemptAt: new Date(clock.now().getTime() + PENDING_RECHECK_MS), lastError: 'PSP pending' },
+      data: { providerRefundId: result.id, nextAttemptAt: new Date(clock.now().getTime() + REFUND_PENDING_RECHECK_MS), lastError: 'PSP pending' },
     });
     return 'pending';
   }
-  await db.refund.updateMany({ where: { id: row.id, status: 'PENDING' }, data: { status: 'MANUAL_REQUIRED', providerRefundId: result.id, lastError: `PSP ${result.status}`.slice(0, 200) } });
+  await db.refund.updateMany({ where: { id: row.id, status: 'PENDING' }, data: { status: 'MANUAL_REQUIRED', providerRefundId: result.id, lastError: `PSP ${result.status}`.slice(0, REFUND_LAST_ERROR_MAX_LENGTH) } });
   getLogger().error({ refundId: row.id, status: result.status }, 'remboursement refusé ou bloqué par le PSP : à traiter manuellement');
   return 'manual';
 }
@@ -59,11 +54,11 @@ export async function processRefunds(): Promise<{ succeeded: number; manual: num
       FROM "refunds" r JOIN "payments" p ON p."id" = r."paymentId"
       WHERE r."status" = 'PENDING' AND r."nextAttemptAt" <= ${now}
       ORDER BY r."nextAttemptAt", r."id"
-      LIMIT ${BATCH}
+      LIMIT ${REFUND_BATCH}
       FOR UPDATE OF r SKIP LOCKED`;
     if (rows.length > 0) {
       await tx.$executeRaw`
-        UPDATE "refunds" SET "attempts" = "attempts" + 1, "nextAttemptAt" = ${new Date(now.getTime() + LEASE_MS)}, "updatedAt" = ${now}
+        UPDATE "refunds" SET "attempts" = "attempts" + 1, "nextAttemptAt" = ${new Date(now.getTime() + REFUND_LEASE_MS)}, "updatedAt" = ${now}
         WHERE "id" = ANY(${rows.map((r) => r.id)}::uuid[])`;
     }
     return rows.map((r) => ({ ...r, attempts: r.attempts + 1 }));

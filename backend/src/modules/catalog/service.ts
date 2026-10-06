@@ -7,6 +7,7 @@ import { resolveEventSettings, toPublicRules } from '../settings/resolveEventSet
 import * as repo from './repo.js';
 import { getDb } from '../../lib/db.js';
 import { waitlistBlockedTypes } from '../waitlist/distribute.js';
+import { PUBLIC_RETENTION_MS } from '../../config/events.js';
 
 type CatalogEvent = Event & {
   organization: { id: string; name: string; slug: string; settings: repo.PublicSettings | null };
@@ -31,9 +32,6 @@ function summary(e: CatalogEvent, waiting: Set<string>, now: Date) {
     fromPriceCents: prices.length > 0 ? Math.min(...prices) : 0,
   };
 }
-
-/** Un événement terminé depuis plus de 30 jours disparaît du détail public. */
-const PUBLIC_RETENTION_MS = 30 * 24 * 3600_000;
 
 export async function listEvents(filter: { orgSlug?: string; from?: string; to?: string }, page: number, pageSize: number) {
   if (filter.from && filter.to && new Date(filter.from).getTime() > new Date(filter.to).getTime()) {

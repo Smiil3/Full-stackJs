@@ -12,6 +12,8 @@ import { viewOwnOrder } from '../orders/service.js';
 import { resolveEventSettings } from '../settings/resolveEventSettings.js';
 import { distributeWaitlist, lockWaitlistEntries, releaseOffer, salesOpen } from './distribute.js';
 import { withTxRetry } from '../../lib/txRetry.js';
+import { SHA256_HEX_LENGTH } from '../../config/crypto.js';
+import { WAITLIST_OFFERS_PER_TICK, WAITLIST_SWEEP_TYPES_PER_TICK } from '../../config/worker.js';
 
 type EntryWithNames = WaitlistEntry & { event: { title: string }; ticketType: { name: string } };
 
@@ -146,7 +148,7 @@ export async function accept(userId: string, entryId: string) {
       data: {
         userId, eventId: event.id, waitlistEntryId: entry.id,
         status: 'PENDING_PAYMENT', paymentMethod: 'CARD',
-        idempotencyKey: randomUUID(), requestHash: `waitlist:${entry.id}`.padEnd(64, '0').slice(0, 64),
+        idempotencyKey: randomUUID(), requestHash: `waitlist:${entry.id}`.padEnd(SHA256_HEX_LENGTH, '0').slice(0, SHA256_HEX_LENGTH),
         subtotalCents, serviceFeeCents, totalCents: subtotalCents + serviceFeeCents,
         refundPercent: rules.refundPercent, serviceFeeRefundable: rules.serviceFeeRefundable,
         cancellableUntil: rules.selfCancellationEnabled ? addHours(event.startsAt, -rules.cancellationDeadlineHours) : null,
@@ -169,7 +171,7 @@ export async function accept(userId: string, entryId: string) {
 /** Worker : offres échues ⇒ EXPIRED, places libérées et proposées au suivant. Une transaction par offre. */
 export async function expireWaitlistOffers(): Promise<{ expired: number }> {
   let expired = 0;
-  for (let i = 0; i < 200; i += 1) {
+  for (let i = 0; i < WAITLIST_OFFERS_PER_TICK; i += 1) {
     const done = await transaction(async (tx) => {
       const rows = await tx.$queryRaw<{ id: string }[]>`
         SELECT "id" FROM "waitlist_entries"
@@ -196,7 +198,7 @@ export async function expireWaitlistOffers(): Promise<{ expired: number }> {
 export async function sweepWaitlist(): Promise<{ offered: number }> {
   const types = await getDb().$queryRaw<{ id: string }[]>`
     SELECT DISTINCT t."id" FROM "ticket_types" t JOIN "waitlist_entries" w ON w."ticketTypeId" = t."id"
-    WHERE w."status" = 'WAITING' AND t."sold" + t."held" < t."capacity" ORDER BY t."id" LIMIT 100`;
+    WHERE w."status" = 'WAITING' AND t."sold" + t."held" < t."capacity" ORDER BY t."id" LIMIT ${WAITLIST_SWEEP_TYPES_PER_TICK}`;
   let offered = 0;
   for (const { id } of types) offered += await transaction((tx) => distributeWaitlist(tx, id));
   return { offered };

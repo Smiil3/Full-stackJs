@@ -1,10 +1,11 @@
 import express, { Router } from 'express';
-import { jsonReviver, SYNC_BODY_LIMIT } from '../../lib/bodyLimits.js';
+import { jsonReviver } from '../../lib/bodyLimits.js';
 import type { Limiters } from '../../middlewares/rateLimit.js';
 import { requireOrgRole } from '../../middlewares/requireOrgRole.js';
 import { endpoint } from '../../middlewares/validate.js';
 import * as c from './controller.js';
 import * as s from './schemas.js';
+import { SYNC_BODY_LIMIT } from '../../config/http.js';
 
 /** Contrôle d'accès, monté sous `/orgs/:orgId/checkin`. */
 export function orgCheckinRouter(): Router {

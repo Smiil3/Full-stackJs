@@ -2,6 +2,7 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 import Joi from 'joi';
 import { getEnv } from '../config/env.js';
 import { errors, ResponseContractError, type FieldError } from '../lib/errors.js';
+import { HTTP_STATUS, MAX_INPUT_DEPTH } from '../config/http.js';
 
 export interface RequestSchemas<P, Q, B, H> {
   params?: Joi.ObjectSchema<P>;
@@ -24,7 +25,7 @@ const EMPTY = Joi.object({});
 
 /** Recherche d'un caractère NUL à n'importe quelle profondeur (Postgres le refuse : jamais jusqu'à la base). */
 function findNul(value: unknown, path: string[] = [], depth = 0): string | null {
-  if (depth > 10) return null;
+  if (depth > MAX_INPUT_DEPTH) return null;
   if (typeof value === 'string') return value.includes('\u0000') ? path.join('.') : null;
   if (Array.isArray(value)) {
     for (const [i, v] of value.entries()) {
@@ -138,12 +139,12 @@ export function endpoint<P = Empty, Q = Empty, B = Empty, H = Empty>(
     const input = res.locals['input'] as ValidatedInput<P, Q, B, H>;
     const result: unknown = await handler(input, req, res);
     if (spec.response === null) {
-      res.status(spec.status ?? 204).end();
+      res.status(spec.status ?? HTTP_STATUS.NO_CONTENT).end();
       return;
     }
     const body: unknown = checkResponse(spec.response, result);
     const override: unknown = res.locals['status'];
-    res.status(typeof override === 'number' ? override : (spec.status ?? 200)).json(body);
+    res.status(typeof override === 'number' ? override : (spec.status ?? HTTP_STATUS.OK)).json(body);
   };
   return [validate(spec), run];
 }

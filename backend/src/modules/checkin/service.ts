@@ -6,15 +6,17 @@ import { getLogger } from '../../lib/logger.js';
 import { consumeQuota } from '../../lib/rateLimitStore.js';
 import { iso } from '../../lib/schemas.js';
 import { holderInitials, publicKeyJwk, verifyQrPayload } from '../../lib/ticketSigning.js';
+import { CHECKIN_CLOSES_AFTER_MS, CHECKIN_EVENTS_LIST_MAX, CHECKIN_OPENS_BEFORE_MS, INVALID_QR_LOG_EVERY, SCAN_FUTURE_TOLERANCE_MS } from '../../config/checkin.js';
+import { QUOTAS } from '../../config/rateLimits.js';
 
 /** Événements à contrôler (SCANNER+) : publiés, terminés depuis moins de 24 h ; aucun chiffre de vente. */
 export async function listCheckinEvents(orgId: string) {
-  const since = new Date(clock.now().getTime() - 24 * 3600_000);
+  const since = new Date(clock.now().getTime() - CHECKIN_CLOSES_AFTER_MS);
   const rows = await getDb().event.findMany({
     where: { orgId, status: 'PUBLISHED', endsAt: { gt: since } },
     select: { id: true, title: true, venue: true, isOnline: true, startsAt: true, endsAt: true, timezone: true, status: true, offlineCheckinEnabled: true },
     orderBy: [{ startsAt: 'asc' }, { id: 'asc' }],
-    take: 100,
+    take: CHECKIN_EVENTS_LIST_MAX,
   });
   return {
     items: rows.map((e) => ({
@@ -25,10 +27,6 @@ export async function listCheckinEvents(orgId: string) {
   };
 }
 
-/** Fenêtre de contrôle (contrat 1.15 §7.4) : de startsAt − 12 h à endsAt + 24 h. */
-const CHECKIN_OPENS_BEFORE_MS = 12 * 3600_000;
-const CHECKIN_WINDOW_MS = 24 * 3600_000;
-
 /**
  * Événement contrôlable : du collectif (orgId dans le filtre), PUBLISHED et dans la fenêtre de contrôle
  * (startsAt − 12 h → endsAt + 24 h) ; CANCELLED est signalé à l'appelant (le scan répond alors CANCELLED) ;
@@ -37,7 +35,7 @@ const CHECKIN_WINDOW_MS = 24 * 3600_000;
 async function eventOfOrg(db: Tx, orgId: string, eventId: string, allowCancelled = false) {
   const event = await db.event.findFirst({ where: { id: eventId, orgId }, select: { id: true, salesStartAt: true, status: true, startsAt: true, endsAt: true, offlineCheckinEnabled: true } });
   const now = clock.now().getTime();
-  if (!event || now < event.startsAt.getTime() - CHECKIN_OPENS_BEFORE_MS || event.endsAt.getTime() <= now - CHECKIN_WINDOW_MS) throw errors.notFound();
+  if (!event || now < event.startsAt.getTime() - CHECKIN_OPENS_BEFORE_MS || event.endsAt.getTime() <= now - CHECKIN_CLOSES_AFTER_MS) throw errors.notFound();
   if (event.status === 'CANCELLED' && allowCancelled) return event;
   if (event.status !== 'PUBLISHED') throw errors.notFound();
   return event;
@@ -105,7 +103,7 @@ export async function scanOne(input: ScanInput): Promise<ScanOutcome> {
   const qr = verifyQrPayload(input.qrPayload);
   if (!qr.ok && qr.reason === 'format') {
     checkinMetrics.invalidFormat += 1;
-    if (checkinMetrics.invalidFormat % 100 === 1) getLogger().warn({ total: checkinMetrics.invalidFormat }, 'QR de format invalide présentés au contrôle');
+    if (checkinMetrics.invalidFormat % INVALID_QR_LOG_EVERY === 1) getLogger().warn({ total: checkinMetrics.invalidFormat }, 'QR de format invalide présentés au contrôle');
     return { result: 'INVALID', ticket: null, usedAt: null };
   }
   return transaction(async (tx) => {
@@ -170,10 +168,6 @@ export async function scan(orgId: string, eventId: string, scannerId: string, bo
   return scanOne({ orgId, eventId, scannerId, ...body, scannedAt: now, clientScannedAt: null, clamped: false, offline: false });
 }
 
-const FUTURE_TOLERANCE_MS = 5 * 60_000;
-/** Scans synchronisés au plus par minute et par contrôleur. */
-export const SYNC_SCANS_PER_MINUTE = 2000;
-
 /**
  * Synchronisation des scans hors-ligne. « Le premier gagne » :
  * - AU SEIN D'UN LOT : ordre `scannedAt` (horodatage appareil borné), puis ordre dans la requête ;
@@ -185,13 +179,13 @@ export const SYNC_SCANS_PER_MINUTE = 2000;
  */
 export async function sync(orgId: string, eventId: string, scannerId: string, body: { deviceId: string; scans: { scanId: string; qrPayload: string; scannedAt: string }[] }) {
   const event = await eventOfOrg(getDb(), orgId, eventId, true);
-  await consumeQuota('scan-sync-user', scannerId, 60_000, SYNC_SCANS_PER_MINUTE, body.scans.length);
+  await consumeQuota('scan-sync-user', scannerId, QUOTAS.scanSync.windowMs, QUOTAS.scanSync.max, body.scans.length);
   if (event.status === 'CANCELLED') {
     return { results: body.scans.map((s) => ({ scanId: s.scanId, result: 'CANCELLED' as const, usedAt: null })) };
   }
   const now = clock.now().getTime();
   const min = event.salesStartAt.getTime();
-  const max = now + FUTURE_TOLERANCE_MS;
+  const max = now + SCAN_FUTURE_TOLERANCE_MS;
   const ordered = body.scans
     .map((s, index) => ({ ...s, index, client: new Date(s.scannedAt) }))
     .sort((a, b) => a.client.getTime() - b.client.getTime() || a.index - b.index);

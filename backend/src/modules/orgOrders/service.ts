@@ -7,6 +7,7 @@ import { orderInclude, scannedCounts } from '../orders/repo.js';
 import { toOrderView } from '../orders/service.js';
 import { loadOrderForUpdate, settleHeldOrder, settleLateHeldOrder, tryResettleExpiredOrder } from '../payments/settle.js';
 import type { EventOrdersQuery } from './schemas.js';
+import { HTTP_STATUS } from '../../config/http.js';
 
 const adminInclude = { ...orderInclude, user: { select: { id: true, email: true, displayName: true } } } satisfies Prisma.OrderInclude;
 type AdminOrder = Prisma.OrderGetPayload<{ include: typeof adminInclude }>;
@@ -72,9 +73,9 @@ export async function confirmTransfer(orgId: string, actorId: string, orderId: s
     } else if (late) {
       const outcome = await settleLateHeldOrder(tx, order, 'AWAITING_TRANSFER');
       if (outcome === 'refused') throw expiredError();
-      if (outcome === 'inconsistent') throw new AppError(409, 'CONFLICT', 'Stock incohérent pour cette commande : contactez le support.');
+      if (outcome === 'inconsistent') throw new AppError(HTTP_STATUS.CONFLICT, 'CONFLICT', 'Stock incohérent pour cette commande : contactez le support.');
     } else if (!(await settleHeldOrder(tx, order, 'AWAITING_TRANSFER'))) {
-      throw new AppError(409, 'CONFLICT', 'Stock incohérent pour cette commande : contactez le support.');
+      throw new AppError(HTTP_STATUS.CONFLICT, 'CONFLICT', 'Stock incohérent pour cette commande : contactez le support.');
     }
     await writeAudit(tx, {
       orgId, actorId, action: 'order.confirm_transfer', target: `order:${order.id}`,

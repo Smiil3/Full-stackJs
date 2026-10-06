@@ -1,8 +1,9 @@
 import Joi from 'joi';
 import { isoDateOutput, nullable, uuid, uuidStrict } from '../../lib/schemas.js';
+import { FIELD_LIMITS } from '../../config/fields.js';
 
 export const joinParams = Joi.object<{ eventId: string; ticketTypeId: string }>({ eventId: uuid.required(), ticketTypeId: uuid.required() });
-export const joinBody = Joi.object<{ quantity: number }>({ quantity: Joi.number().integer().min(1).max(20).required() });
+export const joinBody = Joi.object<{ quantity: number }>({ quantity: Joi.number().integer().min(1).max(FIELD_LIMITS.quantityPerLine).required() });
 export const entryParams = Joi.object<{ entryId: string }>({ entryId: uuid.required() });
 
 export const waitlistEntryResponse = Joi.object({

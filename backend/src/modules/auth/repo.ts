@@ -1,10 +1,7 @@
 import type { EmailTokenPurpose } from '../../generated/prisma/client.js';
 import { getDb, type Tx } from '../../lib/db.js';
 import { clock } from '../../lib/clock.js';
-
-export const LOCK_THRESHOLD = 5;
-export const MAX_LOCK_MINUTES = 15;
-export const FAILURE_WINDOW_MINUTES = 15;
+import { FAILURE_WINDOW_MINUTES, LOCK_GROWTH_FACTOR, LOCK_THRESHOLD, MAX_LOCK_MINUTES } from '../../config/auth.js';
 
 export function findUserByEmail(email: string) {
   return getDb().user.findUnique({ where: { email } });
@@ -47,7 +44,7 @@ export async function reserveLoginAttempt(userId: string): Promise<boolean> {
                   WHEN "lastFailedLoginAt" IS NULL OR "lastFailedLoginAt" < ${now}::timestamptz - make_interval(mins => ${FAILURE_WINDOW_MINUTES}) THEN 1
                   ELSE "failedLoginCount" + 1
                 END) >= ${LOCK_THRESHOLD}
-            THEN ${now}::timestamptz + make_interval(mins => LEAST(${MAX_LOCK_MINUTES}, power(2, "failedLoginCount" + 1 - ${LOCK_THRESHOLD})::int))
+            THEN ${now}::timestamptz + make_interval(mins => LEAST(${MAX_LOCK_MINUTES}, power(${LOCK_GROWTH_FACTOR}::int, "failedLoginCount" + 1 - ${LOCK_THRESHOLD})::int))
           ELSE NULL
         END,
         "lastFailedLoginAt" = ${now},

@@ -3,7 +3,7 @@ import { getEnv } from '../../config/env.js';
 import { transaction, type Tx } from '../../lib/db.js';
 import { errors } from '../../lib/errors.js';
 import { randomToken, sha256Hex } from '../../lib/crypto.js';
-import { ACCESS_TOKEN_TTL_SECONDS, signAccessToken } from '../../lib/jwt.js';
+import { signAccessToken } from '../../lib/jwt.js';
 import { enqueueEmail } from '../../lib/outbox.js';
 import { addMinutes } from '../../lib/time.js';
 import { withResponseFloor } from '../../lib/timing.js';
@@ -13,14 +13,8 @@ import { normalizePassword } from '../../lib/passwordPolicy.js';
 import { normalizeEmail } from '../../lib/email.js';
 import * as repo from './repo.js';
 import { clock } from '../../lib/clock.js';
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-export const REFRESH_TTL_MS = 30 * DAY_MS;
-/** Durée de vie absolue d'une famille de refresh : reconnexion obligatoire au-delà. */
-export const REFRESH_FAMILY_MAX_MS = 90 * DAY_MS;
-/** Délai de grâce de rotation (réponse de refresh perdue sur réseau mobile). */
-export const REFRESH_GRACE_MS = 10_000;
-const EMAIL_TOKEN_TTL_MINUTES = 30;
+import { ACCESS_TOKEN_TTL_SECONDS, AUTH_EMAIL_QUOTAS, EMAIL_TOKEN_TTL_MINUTES, MAIL_DAILY_WINDOW_MS, MAIL_MAX_PER_DAY, MAIL_MIN_INTERVAL_MINUTES, REFRESH_FAMILY_MAX_MS, REFRESH_GRACE_MS, REFRESH_TTL_MS } from '../../config/auth.js';
+import { minutes } from '../../config/units.js';
 
 export const GENERIC_ACCEPTED_MESSAGE =
   'Si cette adresse peut recevoir un message, un email vient de lui être envoyé.';
@@ -82,15 +76,8 @@ export async function reauthenticate(userId: string, password: string): Promise<
   if (!user || !(await checkAccountPassword(user, password))) throw errors.invalidCredentials();
 }
 
-/** Plafonds PAR ADRESSE des mails d'authentification (silencieux côté réponse). */
-export const MAIL_MIN_INTERVAL_MINUTES = 2;
-
 /** Quotas par adresse email (en plus des quotas par IP), appliqués que le compte existe ou non. */
-const QUOTA = {
-  login: { windowMs: 15 * 60_000, max: 30 },
-  mail: { windowMs: 60 * 60_000, max: 5 },
-};
-export const MAIL_MAX_PER_DAY = 10;
+const QUOTA = AUTH_EMAIL_QUOTAS;
 
 /**
  * Émet un jeton mail sous verrou de la ligne utilisateur (jamais deux liens actifs concurrents).
@@ -103,10 +90,10 @@ async function issueEmailToken(
 ): Promise<string | null> {
   await repo.lockUser(tx, user.id);
   const now = clock.now().getTime();
-  const recent = await repo.countEmailTokensSince(tx, user.id, new Date(now - MAIL_MIN_INTERVAL_MINUTES * 60_000));
-  const daily = await repo.countEmailTokensSince(tx, user.id, new Date(now - 24 * 60 * 60_000));
+  const recent = await repo.countEmailTokensSince(tx, user.id, new Date(now - minutes(MAIL_MIN_INTERVAL_MINUTES)));
+  const daily = await repo.countEmailTokensSince(tx, user.id, new Date(now - MAIL_DAILY_WINDOW_MS));
   if (recent > 0 || daily >= MAIL_MAX_PER_DAY) return null;
-  const raw = randomToken(32);
+  const raw = randomToken();
   await repo.invalidateEmailTokens(tx, user.id, purpose);
   await repo.createEmailToken(tx, user.id, user.email, purpose, sha256Hex(raw), addMinutes(new Date(now), EMAIL_TOKEN_TTL_MINUTES));
   return raw;
@@ -138,7 +125,7 @@ interface FamilyInfo {
 
 /** Émet un refresh token : expiration glissante de 30 jours, plafonnée par la fin de vie de la famille. */
 async function createRefreshToken(tx: Tx, userId: string, family: FamilyInfo): Promise<{ id: string; raw: string }> {
-  const raw = randomToken(32);
+  const raw = randomToken();
   const familyEnd = family.familyCreatedAt.getTime() + REFRESH_FAMILY_MAX_MS;
   const row = await tx.refreshToken.create({
     data: {

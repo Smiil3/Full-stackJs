@@ -12,6 +12,7 @@ import { alreadyOwned, heldToSold, lockBuyerEvent, releaseHeld } from '../orders
 import { resolveEventSettings } from '../settings/resolveEventSettings.js';
 import { distributeMany, lockWaitlistEntries } from '../waitlist/distribute.js';
 import { issueTickets } from '../tickets/issue.js';
+import { HTTP_STATUS } from '../../config/http.js';
 
 export const orderForSettlement = {
   items: { orderBy: { ticketTypeId: 'asc' } },
@@ -31,7 +32,7 @@ export async function loadOrderForUpdate(tx: Tx, orderId: string) {
 /** Transition gardée : ne change le statut que s'il vaut encore `from` ; vérifie le nombre de lignes. */
 async function transition(tx: Tx, orderId: string, from: OrderStatus[], data: { status: OrderStatus } & Record<string, unknown>): Promise<void> {
   const { count } = await tx.order.updateMany({ where: { id: orderId, status: { in: from } }, data });
-  if (count !== 1) throw new AppError(409, 'INVALID_STATE', 'La commande a changé d’état entre-temps.');
+  if (count !== 1) throw new AppError(HTTP_STATUS.CONFLICT, 'INVALID_STATE', 'La commande a changé d’état entre-temps.');
 }
 
 async function confirm(tx: Tx, order: SettlementOrder): Promise<void> {

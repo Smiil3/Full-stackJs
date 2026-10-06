@@ -1,12 +1,11 @@
-export const MINUTE_MS = 60_000;
-export const HOUR_MS = 60 * MINUTE_MS;
+import { hours as hoursMs, minutes as minutesMs } from '../config/units.js';
 
 export function addMinutes(date: Date, minutes: number): Date {
-  return new Date(date.getTime() + minutes * MINUTE_MS);
+  return new Date(date.getTime() + minutesMs(minutes));
 }
 
 export function addHours(date: Date, hours: number): Date {
-  return new Date(date.getTime() + hours * HOUR_MS);
+  return new Date(date.getTime() + hoursMs(hours));
 }
 
 /** Formate une date dans le fuseau de l'événement (« 14/11/2026 20:00 »), pour les mails et l'export CSV. */

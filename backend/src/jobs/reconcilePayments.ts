@@ -4,13 +4,7 @@ import { withTxRetry } from '../lib/txRetry.js';
 import { getLogger } from '../lib/logger.js';
 import { getPspClient } from '../lib/psp.js';
 import { applySucceededPayment } from '../modules/payments/webhook.js';
-
-/** Sessions consultées au plus par passage du worker (hors commandes arrivées à échéance). */
-const RECENT_BATCH = 20;
-/** Âge minimal d'une session, et délai entre deux consultations d'une même session. */
-const RECHECK_MS = 60_000;
-/** PSP injoignable : l'expiration d'une commande carte est différée au plus de ce délai après l'échéance. */
-export const RECONCILE_GRACE_MS = 15 * 60_000;
+import { RECONCILE_BATCH, RECONCILE_RECHECK_MS } from '../config/payments.js';
 
 export type ReconcileOutcome = 'paid' | 'unpaid' | 'unreachable';
 
@@ -46,7 +40,7 @@ export async function reconcileOrder(orderId: string): Promise<ReconcileOutcome>
 /** Job : sessions récentes des commandes carte encore en attente, consultées au plus une fois par minute. */
 export async function reconcileRecentSessions(): Promise<{ checked: number; paid: number }> {
   const now = clock.now();
-  const before = new Date(now.getTime() - RECHECK_MS);
+  const before = new Date(now.getTime() - RECONCILE_RECHECK_MS);
   const rows = await getDb().$queryRaw<{ orderId: string }[]>`
     SELECT s."orderId"
     FROM "psp_sessions" s JOIN "orders" o ON o."id" = s."orderId"
@@ -54,7 +48,7 @@ export async function reconcileRecentSessions(): Promise<{ checked: number; paid
       AND s."createdAt" <= ${before} AND (s."checkedAt" IS NULL OR s."checkedAt" <= ${before})
     GROUP BY s."orderId"
     ORDER BY MIN(COALESCE(s."checkedAt", s."createdAt")), s."orderId"
-    LIMIT ${RECENT_BATCH}`;
+    LIMIT ${RECONCILE_BATCH}`;
   let paid = 0;
   for (const { orderId } of rows) {
     try {

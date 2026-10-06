@@ -4,8 +4,7 @@ import supertest from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getDb } from '../../src/lib/db.js';
 import { createApp } from '../../src/app.js';
-import { RECONCILE_GRACE_MS } from '../../src/jobs/reconcilePayments.js';
-import { expireOrders, MAX_EXPIRE_FAILURES } from '../../src/jobs/expireOrders.js';
+import { expireOrders } from '../../src/jobs/expireOrders.js';
 import { referenceGenerator, requestHash } from '../../src/modules/orders/service.js';
 import { isTransientTxError, withTxRetry } from '../../src/lib/txRetry.js';
 import { transferReference } from '../../src/lib/crypto.js';
@@ -13,6 +12,8 @@ import { AppError } from '../../src/lib/errors.js';
 import { PASSWORD, api, bearerFor, createUser, loggedInUser, type LoggedIn } from '../helpers.js';
 import { createEvent, orgWithStaff, type OrgFixture } from '../fixtures.js';
 import { paymentEvent, postWebhook } from '../psp.js';
+import { RECONCILE_GRACE_MS } from '../../src/config/payments.js';
+import { MAX_EXPIRE_FAILURES } from '../../src/config/worker.js';
 
 let org: OrgFixture;
 let buyer: LoggedIn;

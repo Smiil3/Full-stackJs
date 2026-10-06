@@ -6,14 +6,12 @@ import { addMinutes, formatWithZone } from '../../lib/time.js';
 import { resolveEventSettings } from '../settings/resolveEventSettings.js';
 import { getLogger } from '../../lib/logger.js';
 import { alreadyOwned } from '../orders/repo.js';
+import { MAX_ACCUMULATION_MINUTES } from '../../config/waitlist.js';
 
 /** Ventes ouvertes au sens de la liste d'attente (contrat 1.14) : salesStartAt ≤ now < min(salesEndAt, startsAt). */
 export function salesOpen(event: { status: string; salesStartAt: Date; salesEndAt: Date; startsAt: Date }, now: Date): boolean {
   return event.status === 'PUBLISHED' && now >= event.salesStartAt && now < event.salesEndAt && now < event.startsAt;
 }
-
-/** Durée maximale de l'accumulation de places pour la tête de file (anti-gel des ventes). */
-export const MAX_ACCUMULATION_MINUTES = 30;
 
 /**
  * Distribue les places libres d'un type de place à la liste d'attente (contrat 1.14 §6), FIFO (createdAt, id) :

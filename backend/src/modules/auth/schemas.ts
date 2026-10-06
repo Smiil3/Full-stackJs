@@ -1,9 +1,12 @@
 import Joi from 'joi';
 import { email, roleSchema, text, uuidStrict } from '../../lib/schemas.js';
-import { checkPasswordPolicy, PASSWORD_MAX_BYTES } from '../../lib/passwordPolicy.js';
+import { checkPasswordPolicy } from '../../lib/passwordPolicy.js';
+import { PASSWORD_MAX_BYTES, PASSWORD_MAX_CODE_POINTS, PASSWORD_MIN_CODE_POINTS } from '../../config/password.js';
+import { FIELD_LIMITS } from '../../config/fields.js';
+import { ACCESS_TOKEN_TTL_SECONDS } from '../../config/auth.js';
 
 /**
- * Mot de passe d'un NOUVEAU secret : 12 à 128 points de code, ≤ 256 octets, pas un mot de passe courant
+ * Mot de passe d'un NOUVEAU secret : longueurs et taille de config/password.ts, pas un mot de passe courant
  * (pas de règle de composition, cf. recommandations ANSSI / NIST).
  */
 export const password = text({ trim: false })
@@ -13,13 +16,13 @@ export const password = text({ trim: false })
     return problem === null ? value : helpers.error(`password.${problem}`);
   })
   .messages({
-    'password.too_short': '{{#label}} doit contenir au moins 12 caractères',
-    'password.too_long': '{{#label}} doit contenir au plus 128 caractères',
+    'password.too_short': `{{#label}} doit contenir au moins ${PASSWORD_MIN_CODE_POINTS} caractères`,
+    'password.too_long': `{{#label}} doit contenir au plus ${PASSWORD_MAX_CODE_POINTS} caractères`,
     'password.too_many_bytes': '{{#label}} est trop long',
     'password.common': '{{#label}} fait partie des mots de passe les plus courants, choisissez-en un autre',
   });
 /** Nom affiché : pas de caractères de contrôle. */
-export const displayName = text().min(1).max(80);
+export const displayName = text().min(1).max(FIELD_LIMITS.name);
 /** Jeton reçu par mail : 32 octets base64url. */
 const mailToken = Joi.string().pattern(/^[A-Za-z0-9_-]{43}$/).messages({ 'string.pattern.base': '{{#label}} est invalide' });
 
@@ -52,7 +55,7 @@ export const userResponse = Joi.object({
 
 export const authSessionResponse = Joi.object({
   accessToken: Joi.string(),
-  expiresIn: Joi.number().integer().valid(600),
+  expiresIn: Joi.number().integer().valid(ACCESS_TOKEN_TTL_SECONDS),
   user: userResponse,
 });
 

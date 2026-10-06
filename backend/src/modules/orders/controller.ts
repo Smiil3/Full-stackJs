@@ -5,6 +5,7 @@ import type { PageQuery } from '../../lib/schemas.js';
 import * as service from './service.js';
 import { cancelOwnOrder } from './cancel.js';
 import type { CreateOrderBody } from './schemas.js';
+import { HTTP_STATUS } from '../../config/http.js';
 
 type Empty = Record<string, never>;
 
@@ -15,7 +16,7 @@ export async function create(
 ) {
   const result = await service.createOrder(getAuth(res).userId, headers['idempotency-key'], body);
   // Rejeu de la même requête : même commande, 200 (et non 201).
-  if (result.replayed) res.locals['status'] = 200;
+  if (result.replayed) res.locals['status'] = HTTP_STATUS.OK;
   return result.order;
 }
 

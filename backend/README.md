@@ -83,7 +83,7 @@ Mot de passe commun : variable `SEED_PASSWORD` (≥ 16 caractères), lue dans l'
 ```
 src/
   server.ts, worker.ts, app.ts, routes.ts   démarrage (fail-fast env + clés), pile Express, montage des modules
-  config/env.ts                             variables d'environnement validées par Joi
+  config/                                   env.ts (variables d'environnement validées par Joi) + constantes par domaine (voir « Configuration »)
   middlewares/                              auth (JWT + relecture en base), requireOrgRole, validate (Joi in/out),
                                             csrf, rate limit, contentType, rawBody (webhook), errorHandler, requestId
   modules/<domaine>/{routes,controller,service,repo,schemas}.ts
@@ -102,7 +102,7 @@ src/
                  ticketSigning (Ed25519), outbox mail, rate limit PostgreSQL, horloge injectable, CSV sûr…
   mock-psp/      prestataire de paiement simulé (app Express séparée)
 prisma/          schéma, migrations (dont contraintes CHECK, index partiels et déclencheurs SQL), seed
-tests/           375 tests d'intégration et unitaires (Vitest + Supertest, base réelle)
+tests/           385 tests d'intégration et unitaires (Vitest + Supertest, base réelle)
 ```
 
 ### Garanties principales et où elles vivent
@@ -119,6 +119,27 @@ tests/           375 tests d'intégration et unitaires (Vitest + Supertest, base
 | Entrées / sorties | Joi en entrée (champs inconnus ⇒ 400) et en sortie (seuls les champs du contrat sortent) |
 
 Les décisions détaillées (et leurs raisons) sont dans [`DECISIONS.md`](DECISIONS.md).
+
+## Configuration
+
+Deux niveaux, jamais mélangés :
+
+- **Variables d'environnement** (`src/config/env.ts`, validées au démarrage) : ce qui change d'un déploiement à l'autre — URL, secrets, SMTP, proxys, intervalle du worker.
+- **Constantes de code** (`src/config/*.ts`) : toutes les valeurs métier et techniques, nommées, typées et commentées (sens + source). Aucun nombre en dur ailleurs dans `src/` : la règle ESLint `@typescript-eslint/no-magic-numbers` est en erreur.
+
+| Fichier | Contenu |
+|---|---|
+| `units.ts` | Unités de temps et conversions (`minutes(15)`, `hours(12)`, `toUnixSeconds()`) |
+| `auth.ts`, `password.ts` | Sessions, liens mail, verrouillage, argon2id, longueurs de mot de passe |
+| `rateLimits.ts` | Tous les plafonds de requêtes et quotas, en tableau |
+| `http.ts` | Codes HTTP, tailles de corps, pagination, HSTS / CORS |
+| `checkin.ts` | Fenêtre de contrôle, lots de synchronisation, format du QR |
+| `payments.ts`, `refunds.ts`, `mail.ts` | PSP, webhook, rapprochement, remboursements, outbox et SMTP |
+| `money.ts`, `settingsBounds.ts`, `fields.ts` | Plafonds de montants, bornes des réglages du back-office, longueurs des champs |
+| `banking.ts`, `crypto.ts`, `database.ts` | IBAN, tailles cryptographiques, pool et transactions |
+| `events.ts`, `waitlist.ts`, `worker.ts`, `mockPsp.ts` | Catalogue, liste d'attente, lots du worker, PSP simulé |
+
+Les valeurs réglables par un collectif (durées de réservation, frais, plafonds…) restent en base (réglages du back-office) ; seules leurs bornes sont dans `settingsBounds.ts`. Les invariants entre constantes sont testés dans `tests/unit/config.test.ts`.
 
 ## Variables d'environnement
 

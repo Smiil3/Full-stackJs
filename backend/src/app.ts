@@ -13,7 +13,8 @@ import { errorHandler, notFoundHandler } from './middlewares/errorHandler.js';
 import { buildLimiters } from './middlewares/rateLimit.js';
 import { endpoint } from './middlewares/validate.js';
 import { buildApiRouter, buildWebhookRouter } from './routes.js';
-import { JSON_BODY_LIMIT, jsonReviver, SYNC_ROUTE, WEBHOOK_BODY_LIMIT } from './lib/bodyLimits.js';
+import { jsonReviver, SYNC_ROUTE } from './lib/bodyLimits.js';
+import { CORS_PREFLIGHT_MAX_AGE_SECONDS, HSTS_MAX_AGE_SECONDS, HTTP_CLIENT_ERROR_MIN, HTTP_SERVER_ERROR_MIN, JSON_BODY_LIMIT, WEBHOOK_BODY_LIMIT } from './config/http.js';
 
 export interface AppOptions {
   /** Multiplicateur des plafonds de rate limiting (tests). */
@@ -44,7 +45,7 @@ export function createApp(options: AppOptions = {}): Express {
         const fromClient = clientRequestId(req);
         return fromClient ? { clientRequestId: fromClient } : {};
       },
-      customLogLevel: (_req, res, err) => (err || res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info'),
+      customLogLevel: (_req, res, err) => (err || res.statusCode >= HTTP_SERVER_ERROR_MIN ? 'error' : res.statusCode >= HTTP_CLIENT_ERROR_MIN ? 'warn' : 'info'),
     }),
   );
 
@@ -56,7 +57,7 @@ export function createApp(options: AppOptions = {}): Express {
       },
       crossOriginResourcePolicy: { policy: 'same-site' },
       referrerPolicy: { policy: 'no-referrer' },
-      strictTransportSecurity: env.nodeEnv === 'production' ? { maxAge: 31_536_000, includeSubDomains: true } : false,
+      strictTransportSecurity: env.nodeEnv === 'production' ? { maxAge: HSTS_MAX_AGE_SECONDS, includeSubDomains: true } : false,
     }),
   );
   app.use((_req, res, next) => {
@@ -72,7 +73,7 @@ export function createApp(options: AppOptions = {}): Express {
       methods: ['GET', 'POST', 'PATCH', 'DELETE'],
       allowedHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Requested-With', 'X-Request-Id'],
       exposedHeaders: ['Retry-After', 'X-Request-Id', 'Content-Disposition'],
-      maxAge: 600,
+      maxAge: CORS_PREFLIGHT_MAX_AGE_SECONDS,
     }),
   );
 

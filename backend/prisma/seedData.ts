@@ -17,7 +17,8 @@ import { getDb } from '../src/lib/db.js';
 import { randomToken, transferReference } from '../src/lib/crypto.js';
 import { bankCrypto } from '../src/lib/bankCrypto.js';
 import { isValidIban, maskIban, normalizeIban } from '../src/lib/iban.js';
-import { addHours, HOUR_MS } from '../src/lib/time.js';
+import { addHours } from '../src/lib/time.js';
+import { HOUR_MS } from '../src/config/units.js';
 import type { Role } from '../src/generated/prisma/client.js';
 import { assertSeedAllowed } from './seedGuard.js';
 

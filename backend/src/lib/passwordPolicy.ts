@@ -1,8 +1,5 @@
 import { COMMON_PASSWORDS } from './data/commonPasswords.js';
-
-export const PASSWORD_MIN_CODE_POINTS = 12;
-export const PASSWORD_MAX_CODE_POINTS = 128;
-export const PASSWORD_MAX_BYTES = 256;
+import { PASSWORD_MAX_BYTES, PASSWORD_MAX_CODE_POINTS, PASSWORD_MIN_CODE_POINTS } from '../config/password.js';
 
 const COMMON = new Set(COMMON_PASSWORDS);
 

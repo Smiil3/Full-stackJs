@@ -1,5 +1,6 @@
 import Joi from 'joi';
 import { cents, isoDateOutput, nullable, pageOf, pageQuery, uuid, uuidStrict, type PageQuery } from '../../lib/schemas.js';
+import { FIELD_LIMITS } from '../../config/fields.js';
 
 export interface OrderItemInput { ticketTypeId: string; quantity: number }
 export interface CreateOrderBody { eventId: string; paymentMethod: 'CARD' | 'TRANSFER'; items: OrderItemInput[] }
@@ -8,8 +9,8 @@ export const createOrderBody = Joi.object<CreateOrderBody>({
   eventId: uuid.required(),
   paymentMethod: Joi.string().valid('CARD', 'TRANSFER').required(),
   items: Joi.array()
-    .items(Joi.object<OrderItemInput>({ ticketTypeId: uuid.required(), quantity: Joi.number().integer().min(1).max(20).required() }))
-    .min(1).max(10).unique('ticketTypeId').required(),
+    .items(Joi.object<OrderItemInput>({ ticketTypeId: uuid.required(), quantity: Joi.number().integer().min(1).max(FIELD_LIMITS.quantityPerLine).required() }))
+    .min(1).max(FIELD_LIMITS.orderLines).unique('ticketTypeId').required(),
 });
 
 export const idempotencyHeaders = Joi.object<{ 'idempotency-key': string }>({

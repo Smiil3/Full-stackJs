@@ -7,6 +7,7 @@ import { getLogger } from './logger.js';
 import { renderTemplate, type MailTemplate, type TemplatePayloads } from './mail/templates.js';
 import QRCode from 'qrcode';
 import { qrPayloadFor } from './ticketSigning.js';
+import { BACKOFF_BASE_MS, BACKOFF_FACTOR, BACKOFF_MAX_MS, OUTBOX_BATCH, OUTBOX_LEASE_MS, OUTBOX_MAX_ATTEMPTS, QR_IMAGE_MARGIN, QR_IMAGE_WIDTH_PX } from '../config/mail.js';
 
 /** Payload stocké : uniquement chiffré (les liens de vérification / reset contiennent des jetons). */
 // Alias (et non interface) : compatible avec le type JSON attendu par Prisma.
@@ -49,7 +50,7 @@ async function attachmentsFor(template: string, data: Record<string, unknown>): 
   });
   return Promise.all(tickets.map(async (t, i) => ({
     filename: `billet-${i + 1}.png`,
-    content: await QRCode.toBuffer(qrPayloadFor(t.eventId, t.publicId), { type: 'png', errorCorrectionLevel: 'M', margin: 2, width: 512 }),
+    content: await QRCode.toBuffer(qrPayloadFor(t.eventId, t.publicId), { type: 'png', errorCorrectionLevel: 'M', margin: QR_IMAGE_MARGIN, width: QR_IMAGE_WIDTH_PX }),
     contentType: 'image/png',
   })));
 }
@@ -58,12 +59,9 @@ export interface MailTransport {
   sendMail(message: MailMessage): Promise<unknown>;
 }
 
-export const OUTBOX_MAX_ATTEMPTS = 8;
-const BATCH_SIZE = 20;
-
 /** Délai avant nouvel essai : 30 s, 1 min, 2 min… plafonné à 1 h. */
 export function backoffMs(attempts: number): number {
-  return Math.min(30_000 * 2 ** Math.max(0, attempts - 1), 3_600_000);
+  return Math.min(BACKOFF_BASE_MS * BACKOFF_FACTOR ** Math.max(0, attempts - 1), BACKOFF_MAX_MS);
 }
 
 interface OutboxRow {
@@ -73,9 +71,6 @@ interface OutboxRow {
   payload: unknown;
   attempts: number;
 }
-
-/** Bail : durée pendant laquelle un mail pris par un worker n'est repris par aucun autre. */
-const LEASE_MS = 5 * 60_000;
 
 /** Message-ID stable par ligne d'outbox : un renvoi après incident est dédoublonnable côté SMTP / client mail. */
 export function messageIdFor(outboxId: string): string {
@@ -98,11 +93,11 @@ export async function processOutboxBatch(transport: MailTransport): Promise<{ se
       SELECT "id", "to", "template", "payload", "attempts" FROM "email_outbox"
       WHERE "status" = 'PENDING' AND "nextAttemptAt" <= ${now}
       ORDER BY "nextAttemptAt", "id"
-      LIMIT ${BATCH_SIZE}
+      LIMIT ${OUTBOX_BATCH}
       FOR UPDATE SKIP LOCKED`;
     if (rows.length > 0) {
       await tx.$executeRaw`
-        UPDATE "email_outbox" SET "attempts" = "attempts" + 1, "nextAttemptAt" = ${new Date(now.getTime() + LEASE_MS)}
+        UPDATE "email_outbox" SET "attempts" = "attempts" + 1, "nextAttemptAt" = ${new Date(now.getTime() + OUTBOX_LEASE_MS)}
         WHERE "id" = ANY(${rows.map((r) => r.id)}::uuid[])`;
     }
     return rows.map((r) => ({ ...r, attempts: r.attempts + 1 }));

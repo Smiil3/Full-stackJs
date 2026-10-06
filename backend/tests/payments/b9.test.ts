@@ -4,13 +4,15 @@ import supertest from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getDb } from '../../src/lib/db.js';
 import { expireOrders } from '../../src/jobs/expireOrders.js';
-import { MAX_REFUND_ATTEMPTS, processRefunds } from '../../src/jobs/processRefunds.js';
-import { RECONCILE_GRACE_MS, reconcileRecentSessions } from '../../src/jobs/reconcilePayments.js';
+import { processRefunds } from '../../src/jobs/processRefunds.js';
+import { reconcileRecentSessions } from '../../src/jobs/reconcilePayments.js';
 import { httpPspClient, PspError, setPspClientForTests, type PspClient } from '../../src/lib/psp.js';
 import { createMockPsp } from '../../src/mock-psp/app.js';
 import { api, PASSWORD, loggedInUser, type LoggedIn } from '../helpers.js';
 import { createEvent, orgWithStaff, setStock, type OrgFixture } from '../fixtures.js';
 import { openSession, paymentEvent, postWebhook, startPsp, type PspHarness } from '../psp.js';
+import { MAX_REFUND_ATTEMPTS } from '../../src/config/refunds.js';
+import { RECONCILE_GRACE_MS } from '../../src/config/payments.js';
 
 let org: OrgFixture;
 let buyer: LoggedIn;

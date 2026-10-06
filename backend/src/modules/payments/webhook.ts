@@ -7,6 +7,9 @@ import { verifySignature } from '../../lib/pspSignature.js';
 import { consumeQuota } from '../../lib/rateLimitStore.js';
 import { loadOrderForUpdate, refundUnexpectedPayment, settleHeldOrder, settleLateHeldOrder, tryResettleExpiredOrder } from './settle.js';
 import { clock } from '../../lib/clock.js';
+import { PSP_ID_MAX_LENGTH, WEBHOOK_MAX_AMOUNT_CENTS, WEBHOOK_TYPE_MAX_LENGTH, WEBHOOK_TYPE_STORED_LENGTH } from '../../config/payments.js';
+import { QUOTAS } from '../../config/rateLimits.js';
+import { fromUnixSeconds } from '../../config/units.js';
 
 interface PspEnvelope {
   id: string;
@@ -18,7 +21,7 @@ interface PspEnvelope {
 /** Enveloppe : seuls les champs utilisés sont validés ; les champs inconnus de `data` sont tolérés. */
 const envelopeSchema = Joi.object<PspEnvelope>({
   id: Joi.string().pattern(/^evt_[A-Za-z0-9_-]{1,64}$/).required(),
-  type: Joi.string().max(64).required(),
+  type: Joi.string().max(WEBHOOK_TYPE_MAX_LENGTH).required(),
   created: Joi.number().integer().min(0).required(),
   data: Joi.object().unknown(true).required(),
 }).unknown(true);
@@ -33,19 +36,17 @@ export interface PaymentData {
 
 const paymentDataSchema = Joi.object<PaymentData>({
   paymentId: Joi.string().pattern(/^pay_[A-Za-z0-9_-]{1,64}$/).required(),
-  orderId: Joi.string().max(100).required(),
-  amountCents: Joi.number().integer().min(0).max(100_000_000).required(),
+  orderId: Joi.string().max(PSP_ID_MAX_LENGTH).required(),
+  amountCents: Joi.number().integer().min(0).max(WEBHOOK_MAX_AMOUNT_CENTS).required(),
   currency: Joi.string().pattern(/^[A-Z]{3}$/).required(),
-  sessionId: Joi.string().max(100),
+  sessionId: Joi.string().max(PSP_ID_MAX_LENGTH),
 }).unknown(true);
 
 const refundDataSchema = Joi.object<{ refundId?: string; paymentId: string; idempotencyKey?: string }>({
   refundId: Joi.string().pattern(/^re_[A-Za-z0-9_-]{1,64}$/),
-  idempotencyKey: Joi.string().max(100),
-  paymentId: Joi.string().max(100).required(),
+  idempotencyKey: Joi.string().max(PSP_ID_MAX_LENGTH),
+  paymentId: Joi.string().max(PSP_ID_MAX_LENGTH).required(),
 }).unknown(true);
-
-const INVALID_WEBHOOKS_PER_MINUTE = 60;
 
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -80,7 +81,7 @@ export async function handlePspWebhook(raw: Buffer, signature: string | undefine
   if (!check.ok) {
     getLogger().warn({ reason: check.reason }, 'webhook PSP refusé');
     // Seules les signatures invalides sont comptées : une notification signée n'est jamais refusée pour débit.
-    await consumeQuota('webhook-invalid', ip, 60_000, INVALID_WEBHOOKS_PER_MINUTE);
+    await consumeQuota('webhook-invalid', ip, QUOTAS.webhookInvalid.windowMs, QUOTAS.webhookInvalid.max);
     throw errors.validation([{ path: 'Psp-Signature', message: check.reason === 'timestamp' ? 'Horodatage hors tolérance.' : 'Signature invalide.' }], 'Signature invalide.');
   }
   const event = parseEnvelope(raw);
@@ -91,7 +92,7 @@ export async function handlePspWebhook(raw: Buffer, signature: string | undefine
   await transaction(async (tx) => {
     const inserted = await tx.$queryRaw<{ id: string }[]>`
       INSERT INTO "webhook_events" ("id", "providerEventId", "type", "receivedAt")
-      VALUES (gen_random_uuid(), ${event.id}, ${event.type.slice(0, 50)}, ${clock.now()})
+      VALUES (gen_random_uuid(), ${event.id}, ${event.type.slice(0, WEBHOOK_TYPE_STORED_LENGTH)}, ${clock.now()})
       ON CONFLICT ("providerEventId") DO NOTHING
       RETURNING "id"`;
     // Doublon : déjà traité (ou en cours dans une transaction concurrente qui a la priorité).
@@ -128,7 +129,7 @@ async function onPaymentSucceeded(tx: Tx, event: PspEnvelope): Promise<void> {
   const data = paymentData(event);
   if (!data) return;
   // L'horodatage signé du PSP dit si le paiement a eu lieu avant ou après l'échéance de la commande.
-  await applySucceededPayment(tx, data, new Date(event.created * 1000));
+  await applySucceededPayment(tx, data, new Date(fromUnixSeconds(event.created)));
 }
 
 /**

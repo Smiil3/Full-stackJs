@@ -20,6 +20,7 @@ import { issueTickets } from '../tickets/issue.js';
 import { refundPreview } from './refund.js';
 import * as repo from './repo.js';
 import type { CreateOrderBody } from './schemas.js';
+import { TRANSFER_REFERENCE_ATTEMPTS } from '../../config/banking.js';
 
 type Viewer = 'owner' | 'admin';
 
@@ -202,7 +203,7 @@ async function reserveAndCreate(tx: Tx, userId: string, idempotencyKey: string, 
       throw errors.unprocessable('PAYMENT_METHOD_UNAVAILABLE', 'Le paiement par virement n’est pas disponible pour cet événement.');
     }
     let reference = referenceGenerator.next();
-    for (let attempt = 0; attempt < 3 && (await tx.order.count({ where: { transferReference: reference } })) > 0; attempt += 1) {
+    for (let attempt = 0; attempt < TRANSFER_REFERENCE_ATTEMPTS && (await tx.order.count({ where: { transferReference: reference } })) > 0; attempt += 1) {
       reference = referenceGenerator.next();
     }
     transfer = {

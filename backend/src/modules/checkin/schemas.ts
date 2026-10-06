@@ -1,5 +1,7 @@
 import Joi from 'joi';
 import { isoDateOutput, nullable, uuid, uuidStrict } from '../../lib/schemas.js';
+import { QR_PAYLOAD_MAX_LENGTH, SYNC_MAX_SCANS } from '../../config/checkin.js';
+import { FIELD_LIMITS } from '../../config/fields.js';
 
 export const orgParams = Joi.object<{ orgId: string }>({ orgId: uuid.required() });
 
@@ -13,8 +15,8 @@ export const checkinEventsResponse = Joi.object({
 
 export const eventParams = Joi.object<{ orgId: string; eventId: string }>({ orgId: uuid.required(), eventId: uuid.required() });
 
-const qrPayload = Joi.string().max(256).pattern(/^[\x21-\x7E]+$/).messages({ 'string.pattern.base': '{{#label}} est invalide' });
-const isoInput = Joi.string().max(40).isoDate();
+const qrPayload = Joi.string().max(QR_PAYLOAD_MAX_LENGTH).pattern(/^[\x21-\x7E]+$/).messages({ 'string.pattern.base': '{{#label}} est invalide' });
+const isoInput = Joi.string().max(FIELD_LIMITS.isoDateInput).isoDate();
 
 export interface ScanBody { qrPayload: string; deviceId: string; scanId: string }
 export const scanBody = Joi.object<ScanBody>({ qrPayload: qrPayload.required(), deviceId: uuid.required(), scanId: uuid.required() });
@@ -24,7 +26,7 @@ export const syncBody = Joi.object<SyncBody>({
   deviceId: uuid.required(),
   scans: Joi.array()
     .items(Joi.object({ scanId: uuid.required(), qrPayload: qrPayload.required(), scannedAt: isoInput.required() }))
-    .min(1).max(500).unique('scanId').required(),
+    .min(1).max(SYNC_MAX_SCANS).unique('scanId').required(),
 });
 
 const scanResult = Joi.string().valid('OK', 'ALREADY_USED', 'INVALID', 'CANCELLED', 'WRONG_EVENT');
