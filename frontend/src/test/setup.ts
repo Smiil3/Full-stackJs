@@ -8,7 +8,6 @@ import { runSessionCleanups } from '../auth/sessionCleanup';
 import '../scanner/cleanup';
 import { clearLogoutPending } from '../offline/pendingLogout'; // comme App.tsx : purge du scanner en fin de session
 import { __resetServerClock } from '../api/serverClock';
-import { __resetCheckoutLaunched } from '../api/hooks/orders';
 import { __resetUrlTokens } from '../pages/account/useUrlToken';
 import { resetMockDb } from '../mocks/core';
 import { server } from '../mocks/server';
@@ -35,7 +34,6 @@ afterEach(async () => {
   resetMockDb();
   __resetClientForTests();
   __resetServerClock();
-  __resetCheckoutLaunched();
   __resetUrlTokens();
 });
 afterAll(() => {

@@ -9,7 +9,6 @@ import { markPaid } from '../../mocks/domain';
 import { mockPspPay } from '../../mocks/psp';
 import { server } from '../../mocks/server';
 import { DEMO_PASSWORD, IDS } from '../../mocks/state';
-import { markCheckoutLaunched } from '../../api/hooks/orders';
 import { BUYER, renderApp } from '../../test/renderApp';
 
 async function createOrder(paymentMethod: 'CARD' | 'TRANSFER' = 'CARD', qty = 1): Promise<Order> {
@@ -48,19 +47,41 @@ describe('page commande', () => {
     vi.useRealTimers();
   });
 
-  it('H1 : paiement lancé dans la session puis retour sans paramètre ⇒ pas de « Payer », confirmation attendue', async () => {
+  it('F6-M1 : paiement en cours (serveur, v1.16) puis rechargement ⇒ « Reprendre le paiement », jamais « Payer »', async () => {
+    const user = userEvent.setup();
     const order = await createOrder();
-    markCheckoutLaunched(order.id); // ce que fait la page juste avant de partir chez le prestataire
-    await renderApp(`/orders/${order.id}`);
+    await apiRequest(`/orders/${order.id}/checkout`, { method: 'POST' }); // session de paiement ouverte
+    const first = await renderApp(`/orders/${order.id}`);
     expect(await screen.findByText(/Paiement en cours de confirmation/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Payer/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Payer/ })).toBeNull();
+    first.unmount(); // rechargement de la page : aucune mémoire locale, seul le serveur fait foi
+    const { router } = await renderApp(`/orders/${order.id}`);
+    expect(await screen.findByText(/Paiement en cours de confirmation/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Payer/ })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Reprendre le paiement' }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/mock-psp/${order.id}`)); // même session
   });
 
-  it('H1 : retour explicite « failed » après un paiement lancé ⇒ nouvel essai possible', async () => {
+  it('F6-M2 : pas d’annulation tant qu’un paiement est en cours ou en attente de confirmation', async () => {
     const order = await createOrder();
-    markCheckoutLaunched(order.id);
+    await apiRequest(`/orders/${order.id}/checkout`, { method: 'POST' });
+    const first = await renderApp(`/orders/${order.id}`);
+    await screen.findByText(/Paiement en cours de confirmation/);
+    expect(screen.queryByRole('button', { name: 'Annuler la commande' })).toBeNull();
+    first.unmount();
+    const other = await createOrder(); // aucune session ouverte, mais retour « success » du PSP
+    await renderApp(`/orders/${other.id}?payment=success`);
+    await screen.findByText(/Paiement en cours de confirmation/);
+    expect(screen.queryByRole('button', { name: 'Annuler la commande' })).toBeNull();
+  });
+
+  it('F6-M1 : paiement refusé chez le PSP (session close) ⇒ nouvel essai possible', async () => {
+    const order = await createOrder();
+    await apiRequest(`/orders/${order.id}/checkout`, { method: 'POST' });
+    mockPspPay(order.id, 'failed');
     await renderApp(`/orders/${order.id}?payment=failed`);
-    expect(await screen.findByRole('button', { name: /Payer/ })).toBeEnabled();
+    expect(await screen.findByRole('button', { name: /^Payer/ })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Annuler la commande' })).toBeInTheDocument();
   });
 
   it('retour PSP « failed » : message et nouvel essai possible', async () => {

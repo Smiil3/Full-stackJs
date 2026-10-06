@@ -142,6 +142,7 @@ export const buyerHandlers = [
     const o = ownOrder(request, param(params, 'orderId'));
     if (o.status === 'EXPIRED') fail(409, 'ORDER_EXPIRED', 'Réservation expirée');
     if (o.status !== 'PENDING_PAYMENT' || o.paymentMethod !== 'CARD') fail(409, 'INVALID_STATE', 'Commande non payable');
+    o.paymentSessionOpen = true; // session déjà ouverte ⇒ même session (même URL)
     return json({ redirectUrl: `${url.origin}/mock-psp/${o.id}` });
   }),
 

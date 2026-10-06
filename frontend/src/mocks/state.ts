@@ -81,6 +81,8 @@ export type MockOrder = {
   transferReference: string | null;
   idempotencyKey: string;
   bodyFingerprint: string;
+  /** Session de paiement ouverte chez le PSP simulé (contrat v1.16). */
+  paymentSessionOpen?: boolean;
 };
 export type MockTicket = {
   id: string;

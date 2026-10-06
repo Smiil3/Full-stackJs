@@ -176,6 +176,7 @@ function orderBase(o: MockOrder): Omit<Order, 'transferInstructions'> {
     refundPercent: o.refundPercent,
     refundAmountCents: o.refundAmountCents,
     refundPreviewCents: refundPreview(o),
+    paymentInProgress: o.status === 'PENDING_PAYMENT' && o.paymentSessionOpen === true,
     createdAt: o.createdAt,
   };
 }

@@ -72,26 +72,22 @@ export function useOrders(page: number) {
   });
 }
 
-export function useOrder(orderId: string | undefined, opts: { pollUntilPaid?: boolean } = {}) {
+/**
+ * Suivi d'une commande. Polling tant qu'elle attend un paiement ET qu'un paiement est en cours selon le
+ * serveur (`paymentInProgress`, v1.16) ou annoncé par le retour du PSP — ce retour ne prouve rien seul.
+ */
+export function useOrder(orderId: string | undefined, opts: { poll?: boolean; paymentReturned?: boolean } = {}) {
   const { user } = useAuth();
   return useQuery({
     queryKey: qk.order(user?.id ?? 'anonyme', orderId ?? ''),
     queryFn: ({ signal }) => apiRequest<Order>(apiPath`/orders/${orderId ?? ''}`, { signal }),
     enabled: Boolean(orderId),
-    refetchInterval: (q) => (opts.pollUntilPaid && q.state.data?.status === 'PENDING_PAYMENT' ? 2000 : false),
+    refetchInterval: (q) => {
+      const d = q.state.data;
+      return opts.poll && d?.status === 'PENDING_PAYMENT' && (opts.paymentReturned || d.paymentInProgress) ? 2000 : false;
+    },
   });
 }
-
-/**
- * Commandes pour lesquelles un paiement a été lancé dans cette session (mémoire uniquement).
- * Tant que le serveur n'a pas confirmé, on ne repropose JAMAIS « Payer » (risque de double paiement).
- */
-const checkoutLaunched = new Set<string>();
-export const markCheckoutLaunched = (orderId: string) => checkoutLaunched.add(orderId);
-export const wasCheckoutLaunched = (orderId: string) => checkoutLaunched.has(orderId);
-export const __resetCheckoutLaunched = () => {
-  checkoutLaunched.clear();
-};
 
 export function useCheckout() {
   return useMutation({ mutationFn: (orderId: string) => apiRequest<CheckoutResponse>(apiPath`/orders/${orderId}/checkout`, { method: 'POST' }) });

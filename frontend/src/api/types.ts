@@ -165,6 +165,8 @@ export type Order = {
   refundAmountCents: number | null;
   /** Montant qui serait remboursé si l'acheteur annulait maintenant ; null si annulation impossible (contrat v1.6). */
   refundPreviewCents: number | null;
+  /** Session de paiement ouverte (ni payée, ni échouée, ni échue) : « Reprendre le paiement », pas d'annulation (contrat v1.16). */
+  paymentInProgress: boolean;
   createdAt: IsoDateTime;
   transferInstructions: TransferInstructions | null;
 };

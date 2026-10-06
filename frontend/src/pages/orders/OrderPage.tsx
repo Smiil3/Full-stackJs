@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router';
 import { apiPath } from '../../api/client';
 import { errorMessage, isApiError } from '../../api/errors';
-import { markCheckoutLaunched, useCancelOrder, useCheckout, useOrder, wasCheckoutLaunched } from '../../api/hooks/orders';
+import { useCancelOrder, useCheckout, useOrder } from '../../api/hooks/orders';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { Countdown } from '../../components/Countdown';
 import { ErrorAlert } from '../../components/ErrorAlert';
@@ -25,10 +25,14 @@ export function OrderPage() {
   const navigate = useNavigate();
   const payment = params.get('payment');
   const now = useNow(1000);
-  // Paiement possiblement en cours : retour « success » du PSP, ou paiement lancé dans cette session
-  // (sauf retour explicite « failed »). Dans ce cas, plus jamais de bouton « Payer » sur cette page.
-  const awaitingConfirmation = payment === 'success' || (orderId !== undefined && wasCheckoutLaunched(orderId) && payment !== 'failed');
   const [pollTimedOutFor, setPollTimedOutFor] = useState<string | null>(null);
+  const pollAllowed = pollTimedOutFor !== orderId;
+  // La redirection du PSP ne prouve rien : seul le statut renvoyé par l'API (webhook traité) fait foi.
+  const { data: order, error, isPending, refetch } = useOrder(orderId, { poll: pollAllowed, paymentReturned: payment === 'success' });
+  // Paiement en cours (session ouverte selon le SERVEUR, v1.16 — survit au rechargement) ou retour « success »
+  // du PSP : jamais de nouveau « Payer », ni d'annulation, tant que le serveur n'a pas tranché.
+  const paymentInProgress = order?.status === 'PENDING_PAYMENT' && order.paymentInProgress;
+  const awaitingConfirmation = order?.status === 'PENDING_PAYMENT' && (paymentInProgress || payment === 'success');
   useEffect(() => {
     if (!awaitingConfirmation || !orderId) return;
     const timer = setTimeout(() => {
@@ -38,9 +42,7 @@ export function OrderPage() {
       clearTimeout(timer);
     };
   }, [orderId, awaitingConfirmation]);
-  const polling = awaitingConfirmation && pollTimedOutFor !== orderId;
-  // La redirection du PSP ne prouve rien : seul le statut renvoyé par l'API (webhook traité) fait foi.
-  const { data: order, error, isPending, refetch } = useOrder(orderId, { pollUntilPaid: polling });
+  const polling = awaitingConfirmation && pollAllowed;
   const checkout = useCheckout();
   const cancel = useCancelOrder();
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -59,7 +61,6 @@ export function OrderPage() {
           setRedirectError(true);
           return;
         }
-        markCheckoutLaunched(order.id);
         if (target.kind === 'internal') void navigate(target.path);
         else window.location.assign(target.url);
       },
@@ -76,8 +77,6 @@ export function OrderPage() {
       },
     });
   };
-
-  const paidStatusKnown = order.status !== 'PENDING_PAYMENT';
 
   return (
     <section className="page">
@@ -97,7 +96,7 @@ export function OrderPage() {
       </div>
 
       <div aria-live="polite">
-        {awaitingConfirmation && !paidStatusKnown ? (
+        {awaitingConfirmation ? (
           polling ? (
             <p className="alert alert--info" role="status">
               Paiement en cours de confirmation… Cette page se met à jour automatiquement.
@@ -137,7 +136,12 @@ export function OrderPage() {
       {order.status === 'PENDING_PAYMENT' && order.expiresAt ? (
         <div className="stack">
           <Countdown until={order.expiresAt} label="Places réservées encore" onExpire={() => void refetch()} />
-          {!awaitingConfirmation ? (
+          {paymentInProgress ? (
+            // Le serveur renvoie la MÊME session de paiement : aucun risque de double débit.
+            <button type="button" className="btn btn--block btn--secondary" onClick={pay} disabled={checkout.isPending}>
+              {checkout.isPending ? 'Redirection vers le paiement…' : 'Reprendre le paiement'}
+            </button>
+          ) : !awaitingConfirmation ? (
             <button type="button" className="btn btn--block" onClick={pay} disabled={checkout.isPending}>
               {checkout.isPending ? 'Redirection vers le paiement…' : `Payer ${formatCents(order.totalCents)} par carte`}
             </button>
@@ -153,7 +157,7 @@ export function OrderPage() {
 
       {order.status === 'AWAITING_TRANSFER' && order.transferInstructions ? <TransferInstructions order={order} t={order.transferInstructions} /> : null}
 
-      {canCancel(order, now) ? (
+      {canCancel(order, now) && !paymentInProgress && !polling ? (
         <div className="stack">
           {order.status === 'PAID' && order.cancellableUntil ? (
             <p className="muted">
