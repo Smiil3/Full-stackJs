@@ -80,9 +80,24 @@ describe('AuthProvider', () => {
     await screen.findByText('anonymous:-');
     await act(() => auth().login('owner@nuits.test', DEMO_PASSWORD));
     qc.setQueryData(['orgs', 'secret'], { x: 1 });
-    await act(() => auth().login('acheteur@example.test', DEMO_PASSWORD));
-    await waitFor(() => {
-      expect(qc.getQueryData(['orgs', 'secret'])).toBeUndefined();
+    qc.getMutationCache().build(qc, { mutationFn: () => new Promise(() => undefined) });
+    let seenStaleData = false;
+    const off = qc.getQueryCache().subscribe(() => undefined);
+    // Revue F1.1 (B4) : au moment où le NOUVEL utilisateur est publié, le cache est déjà vide.
+    const { onAuthEvent } = await import('../api/client');
+    const unsubscribe = onAuthEvent((e) => {
+      if (e.type === 'session' && e.session.user.email === 'acheteur@example.test') {
+        queueMicrotask(() => {
+          if (qc.getQueryData(['orgs', 'secret']) !== undefined) seenStaleData = true;
+        });
+      }
     });
+    await act(() => auth().login('acheteur@example.test', DEMO_PASSWORD));
+    unsubscribe();
+    off();
+    expect(qc.getQueryData(['orgs', 'secret'])).toBeUndefined();
+    expect(qc.getMutationCache().getAll()).toHaveLength(0);
+    expect(seenStaleData).toBe(false);
+    expect(screen.getByText('authenticated:acheteur@example.test')).toBeInTheDocument();
   });
 });
