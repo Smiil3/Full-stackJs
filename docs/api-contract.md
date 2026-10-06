@@ -1,7 +1,7 @@
 # Contrat d'API — Billetterie « Les Nuits de la Garonne »
 
 > **Source de vérité commune front / back.** Toute modification passe par le PO (session `fullstack-js`) : demander via une ligne `NEED: changement de contrat …`. Ne jamais diverger silencieusement.
-> Version : 1.5 — 2026-10-06 (voir §11 Historique)
+> Version : 1.6 — 2026-10-06 (voir §11 Historique)
 
 ## 1. Conventions
 
@@ -104,9 +104,12 @@ type OrderStatus = 'PENDING_PAYMENT'|'AWAITING_TRANSFER'|'PAID'|'EXPIRED'|'CANCE
 type Order = { id; eventId; eventTitle; eventStartsAt; eventTimezone; status: OrderStatus; paymentMethod: 'CARD'|'TRANSFER';
   items: { ticketTypeId; name; quantity; unitPriceCents }[]; subtotalCents; serviceFeeCents; totalCents; currency: 'EUR';
   expiresAt: string|null; paidAt: string|null; cancellableUntil: string|null; refundPercent: number; refundAmountCents: number|null;
+  refundPreviewCents: number|null /* montant qui serait remboursé si l'acheteur annulait maintenant ; null si annulation impossible */;
   createdAt; transferInstructions: null | { beneficiary; iban; bic; reference; amountCents; deadline } }
 ```
 `transferInstructions` n'est rempli que pour le propriétaire de la commande et si `status = AWAITING_TRANSFER`.
+
+**Remboursement** (calcul serveur, entiers) : `floor(subtotalCents × refundPercent / 100)` + `serviceFeeCents` si `serviceFeeRefundable` (figé sur la commande), sinon + 0. Annulation d'événement par l'organisateur : `totalCents`. `refundPreviewCents` applique cette formule si l'annulation self-service est possible à l'instant de la réponse (statut PAID, aucun billet scanné, avant `cancellableUntil`, annulation activée), sinon `null`. Commande non payée : annulation sans remboursement (`refundPreviewCents = 0`).
 
 | Méthode & chemin | Auth | Body | Réponse |
 |---|---|---|---|
@@ -252,6 +255,7 @@ type EventStats = { eventId; generatedAt; currency: 'EUR';
 - En-têtes de sécurité via helmet ; CORS : origine `FRONT_URL` uniquement, `credentials: true`.
 
 ## 11. Historique
+- **1.6** (2026-10-06) : `Order.refundPreviewCents` + formule de remboursement explicite.
 - **1.5** (2026-10-06) : login non vérifié ⇒ 403 `EMAIL_NOT_VERIFIED` ; règles d'inscription (ASCII, mots de passe courants refusés, dernière inscription gagne) ; délai de grâce 10 s de rotation ; famille 90 j ; verify-email révoque les sessions.
 - **1.4** (2026-10-06) : `/admin/*` pour non-admin ⇒ 404 ; liste d'attente désactivée ⇒ 409 `WAITLIST_DISABLED`.
 - **1.3** (2026-10-06) : codes `PAYLOAD_TOO_LARGE` (413) et `UNSUPPORTED_MEDIA_TYPE` (415) ; JSON malformé ⇒ 400 `VALIDATION_ERROR`.
