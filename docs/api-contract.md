@@ -1,7 +1,7 @@
 # Contrat d'API — Billetterie « Les Nuits de la Garonne »
 
 > **Source de vérité commune front / back.** Toute modification passe par le PO (session `fullstack-js`) : demander via une ligne `NEED: changement de contrat …`. Ne jamais diverger silencieusement.
-> Version : 1.12 — 2026-10-06 (voir §11 Historique)
+> Version : 1.13 — 2026-10-06 (voir §11 Historique)
 
 ## 1. Conventions
 
@@ -36,6 +36,7 @@
 | 409 | `INVALID_STATE` | Transition impossible (ex. payer une commande annulée) |
 | 409 | `IDEMPOTENCY_CONFLICT` | Même Idempotency-Key avec un body différent |
 | 409 | `ALREADY_IN_WAITLIST` / `NOT_SOLD_OUT` / `OFFER_EXPIRED` / `WAITLIST_DISABLED` | Liste d'attente |
+| 409 | `OFFLINE_CHECKIN_DISABLED` | Liste hors-ligne demandée alors que le mode secours n'est pas activé pour l'événement |
 | 409 | `CANCELLATION_CLOSED` | Délai d'annulation dépassé / billet déjà scanné / annulation désactivée |
 | 409 | `CONFLICT` | Conflit générique (slug déjà pris, capacité < vendus, suppression impossible…) |
 | 413 | `PAYLOAD_TOO_LARGE` | Corps de requête trop volumineux |
@@ -187,7 +188,7 @@ type EventOverrides = { cardHoldMinutes: number|null; transferHoldHours: number|
 type TicketTypeAdmin = { id; name; description: string|null; capacity; sold; held; remaining; priceCents; earlyPriceCents: number|null;
   earlyUntil: string|null; sortOrder: number }
 type EventAdmin = { id; orgId; title; description: string|null; venue: string|null; address: string|null; isOnline; startsAt; endsAt; timezone;
-  status: 'DRAFT'|'PUBLISHED'|'CANCELLED'; salesStartAt; salesEndAt; overrides: EventOverrides;
+  status: 'DRAFT'|'PUBLISHED'|'CANCELLED'; salesStartAt; salesEndAt; overrides: EventOverrides; offlineCheckinEnabled: boolean;
   effectiveRules: EventRulesPublic; ticketTypes: TicketTypeAdmin[]; createdAt; updatedAt }
 ```
 | Méthode & chemin | Rôle | Body | Réponse |
@@ -203,6 +204,7 @@ type EventAdmin = { id; orgId; title; description: string|null; venue: string|nu
 | `DELETE /orgs/:orgId/events/:eventId/ticket-types/:ticketTypeId` | MANAGER+ | — | 204 · 409 si déjà des commandes |
 
 **Report d'un événement** (modification de `startsAt` ou `endsAt` alors qu'il existe des commandes `PENDING_PAYMENT`/`AWAITING_TRANSFER`/`PAID`) : réservé à l'**OWNER**, `rescheduleReason` obligatoire. Effets : chaque commande PAID reçoit un nouveau `cancellableUntil` = max(ancien, nouveau `startsAt` − délai figé) et un `refundPercent` porté à 100 (droit au remboursement intégral, frais compris, suite au report) ; mail à tous les acheteurs ; AuditLog.
+**Mode secours hors-ligne du contrôle d'accès** : champ `offlineCheckinEnabled` (défaut `false`). Modifiable **uniquement par un OWNER** via `PATCH /orgs/:orgId/events/:eventId` (MANAGER ⇒ 403 sur ce champ) ; chaque bascule est tracée dans l'AuditLog.
 **Prix modifiés après ventes** : autorisé (MANAGER+), n'affecte que les nouvelles commandes (prix figés), tracé dans l'AuditLog.
 **Invariants de dates** revérifiés à la création, à chaque PATCH (valeurs fusionnées) et à la publication : `endsAt > startsAt`, `salesStartAt < salesEndAt ≤ endsAt`, publication impossible si `salesEndAt ≤ maintenant` ; types de places : `earlyUntil ≤ salesEndAt` (revalidé quand les dates de l'événement changent). `GET /events/:eventId` public renvoie 404 pour un événement terminé depuis plus de 30 jours.
 
@@ -238,12 +240,14 @@ type RefundAdmin = { id; orderId; eventId; eventTitle; buyerEmail; amountCents; 
 Un remboursement de commande payée par virement est toujours `MANUAL_REQUIRED`. Un remboursement carte en échec définitif passe `MANUAL_REQUIRED` (jamais un `FAILED` silencieux). `EventStats.totals` ajoute `refundsToProcess: number` (MANUAL_REQUIRED + FAILED).
 
 ### 7.4 Contrôle d'accès (scan)
-| `GET /orgs/:orgId/checkin/events` | SCANNER+ | — | 200 `{ items: { id; title; venue; isOnline; startsAt; endsAt; timezone; status }[] }` — événements PUBLISHED dont la fin date de moins de 24 h, sans aucun chiffre de vente |
+| `GET /orgs/:orgId/checkin/events` | SCANNER+ | — | 200 `{ items: { id; title; venue; isOnline; startsAt; endsAt; timezone; status; offlineCheckinEnabled }[] }` — événements PUBLISHED dont la fin date de moins de 24 h, sans aucun chiffre de vente |
 | Méthode & chemin | Rôle | Body | Réponse |
 |---|---|---|---|
-| `GET /orgs/:orgId/events/:eventId/checkin/snapshot` | SCANNER+ (événement PUBLISHED terminé depuis < 24 h, sinon 404) | — | 200 `{ eventId; generatedAt; publicKeyJwk: { kty:'OKP', crv:'Ed25519', x }; tickets: { publicId; ticketTypeName; holderInitials; status; usedAt }[] }` |
+| `GET /orgs/:orgId/events/:eventId/checkin/snapshot` | SCANNER+ (événement PUBLISHED terminé depuis < 24 h, sinon 404 ; **409 `OFFLINE_CHECKIN_DISABLED` si le mode secours n'est pas activé**) | — | 200 `{ eventId; generatedAt; publicKeyJwk: { kty:'OKP', crv:'Ed25519', x }; tickets: { publicId; ticketTypeName; holderInitials; status; usedAt }[] }` |
 | `POST /orgs/:orgId/events/:eventId/checkin/scan` | SCANNER+ | `{ qrPayload (≤256), deviceId (uuid), scanId (uuid, généré par l'appareil pour chaque tentative) }` | 200 `{ result: 'OK'|'ALREADY_USED'|'INVALID'|'CANCELLED'|'WRONG_EVENT'; ticket: null | { publicId; ticketTypeName; holderInitials }; usedAt: string|null }` — rate-limité |
 | `POST /orgs/:orgId/events/:eventId/checkin/sync` | SCANNER+ | `{ deviceId, scans: [{ scanId (uuid), qrPayload, scannedAt }] (1–500, scanId uniques) }` | 200 `{ results: [{ scanId; result: 'ACCEPTED'|'ALREADY_USED'|'INVALID'|'CANCELLED'|'WRONG_EVENT'; usedAt: string|null }] }` — le premier scan (ordre `scannedAt`, puis arrivée serveur) gagne |
+
+**Fonctionnement par défaut : en ligne.** Le scanner exige une réponse du serveur. En cas de réseau lent ou d'erreur 429/5xx, il réessaie avec le **même `scanId`** (backoff, budget total ≈ 10 s) ; sans réponse, il affiche « Vérification impossible — réessayez » et **ne laisse pas entrer**. La validation locale (signature + liste téléchargée) n'existe **que si `offlineCheckinEnabled` est vrai** pour l'événement ; sinon aucune liste n'est téléchargée. `POST …/checkin/sync` reste accepté dans tous les cas (il ne fait qu'enregistrer des passages déjà décidés, avec les mêmes règles « premier gagne »).
 
 **Idempotence du scan par `scanId`** : `CheckIn.scanId` est UNIQUE. Si un `scanId` déjà enregistré est rejoué (scan en ligne dont la réponse s'est perdue, puis sync), le serveur renvoie le **résultat d'origine** (`OK` ⇒ `ACCEPTED` en sync) sans nouvel effet. Un **nouveau** `scanId` sur un billet déjà utilisé ⇒ `ALREADY_USED`, **même depuis le même appareil** (capture d'écran présentée deux fois à la même porte).
 `scannedAt` fourni par l'appareil : sert à l'ordre et au journal, borné à [début des ventes, maintenant + 5 min], jamais pour contourner un `USED` existant.
@@ -276,6 +280,7 @@ Un remboursement de commande payée par virement est toujours `MANUAL_REQUIRED`.
 - En-têtes de sécurité via helmet ; CORS : origine `FRONT_URL` uniquement, `credentials: true`.
 
 ## 11. Historique
+- **1.13** (2026-10-06) : contrôle d'accès en ligne par défaut ; validation hors-ligne = mode secours `offlineCheckinEnabled` (défaut false, OWNER seulement, audité) ; snapshot ⇒ 409 `OFFLINE_CHECKIN_DISABLED` si désactivé.
 - **1.12** (2026-10-06) : sync ≤ 160 ko après authentification ; check-in limité aux événements PUBLISHED terminés depuis < 24 h (CANCELLED ⇒ résultat `CANCELLED`) ; tout billet d'une commande annulée/remboursée/expirée est `CANCELLED`.
 - **1.11** (2026-10-06) : `data.refundId` sur `refund.succeeded` ; limites de taille de corps explicitées (sync 256 ko).
 - **1.10** (2026-10-06) : webhook — 200 pour tout événement signé (paiement jamais perdu, remboursement auto des anomalies) ; suivi des remboursements (§7.3 bis) ; `refundsToProcess` dans les stats.
