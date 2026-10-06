@@ -4,15 +4,18 @@ import { RouterProvider } from 'react-router';
 import { createQueryClient } from './api/queryClient';
 import { AuthProvider } from './auth/AuthProvider';
 import { createAppRouter } from './router';
+import { AppErrorBoundary } from './components/AppErrorBoundary';
 
 export function App() {
   const [queryClient] = useState(createQueryClient);
   const [router] = useState(createAppRouter);
   return (
-    <QueryClientProvider client={queryClient}>
-      <AuthProvider>
-        <RouterProvider router={router} />
-      </AuthProvider>
-    </QueryClientProvider>
+    <AppErrorBoundary>
+      <QueryClientProvider client={queryClient}>
+        <AuthProvider>
+          <RouterProvider router={router} />
+        </AuthProvider>
+      </QueryClientProvider>
+    </AppErrorBoundary>
   );
 }

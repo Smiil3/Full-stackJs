@@ -57,6 +57,15 @@ describe('describeEventTime', () => {
     expect(d.local).toBe('soit 15:00 chez vous, New York (UTC−4)');
   });
 
+  it('fuseau d’événement inconnu ⇒ pas de plantage, UTC affiché explicitement (revue F1.1 — B1)', () => {
+    const d = describeEventTime('2026-11-14T19:00:00.000Z', 'Mars/Olympus', 'Europe/Paris');
+    expect(d.event).toBe('sam. 14 nov. 2026, 19:00 — heure UTC — fuseau de l’événement non reconnu (UTC)');
+    expect(d.local).toBe('soit 20:00 chez vous, Paris (UTC+1)');
+    expect(describeEventTime('2026-11-14T19:00:00.000Z', 'Europe/Paris', 'Nope/Nope').local).toBe('soit 19:00 chez vous, UTC (UTC)');
+    expect(formatTime('2026-11-14T20:04:00Z', 'Nope/Nope')).toBe('20:04');
+    expect(utcToZonedInput('2026-11-14T19:00:00.000Z', 'Nope/Nope')).toBe('2026-11-14T19:00');
+  });
+
   it('rejette une date invalide', () => {
     expect(() => describeEventTime('pas une date', 'Europe/Paris', 'Europe/Paris')).toThrow(RangeError);
   });

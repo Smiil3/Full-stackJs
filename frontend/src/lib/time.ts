@@ -49,6 +49,14 @@ export function isValidTimeZone(tz: string): boolean {
 }
 
 /** Liste des fuseaux IANA supportés par le navigateur (pour les sélecteurs du back-office). */
+/**
+ * Fuseau utilisable par Intl : un identifiant inconnu (donnée corrompue, navigateur ancien) ne doit pas
+ * faire planter l'écran. On retombe sur UTC, affiché explicitement comme tel par describeEventTime.
+ */
+function zone(tz: string): string {
+  return isValidTimeZone(tz) ? tz : 'UTC';
+}
+
 export function listTimeZones(): string[] {
   const intl = Intl as typeof Intl & { supportedValuesOf?: ((key: 'timeZone') => string[]) | undefined };
   const zones = typeof intl.supportedValuesOf === 'function' ? intl.supportedValuesOf('timeZone') : [];
@@ -56,7 +64,7 @@ export function listTimeZones(): string[] {
 }
 
 export function userTimeZone(): string {
-  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  return zone(Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
 }
 
 /** Ville lisible d'un fuseau IANA : "America/New_York" → "New York". */
@@ -77,7 +85,7 @@ type WallClock = { year: number; month: number; day: number; hour: number; minut
 
 function wallClock(epochMs: number, tz: string): WallClock {
   const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
+    timeZone: zone(tz),
     hourCycle: 'h23',
     year: 'numeric',
     month: '2-digit',
@@ -121,6 +129,7 @@ function part(parts: Intl.DateTimeFormatPart[], type: Intl.DateTimeFormatPartTyp
 
 /** « sam. 14 nov. 2026, 20:00 » dans le fuseau donné. */
 export function formatDateTime(iso: string | Date | number, tz: string, opts: { withYear?: boolean } = {}): string {
+  tz = zone(tz);
   const parts = new Intl.DateTimeFormat(LOCALE, {
     timeZone: tz,
     weekday: 'short',
@@ -139,6 +148,7 @@ export function formatDateTime(iso: string | Date | number, tz: string, opts: { 
 
 /** « sam. 14 nov. 2026 » dans le fuseau donné. */
 export function formatDate(iso: string | Date | number, tz: string): string {
+  tz = zone(tz);
   const parts = new Intl.DateTimeFormat(LOCALE, { timeZone: tz, weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' }).formatToParts(
     new Date(toEpoch(iso)),
   );
@@ -147,6 +157,7 @@ export function formatDate(iso: string | Date | number, tz: string): string {
 
 /** « 21:04 » dans le fuseau donné. */
 export function formatTime(iso: string | Date | number, tz: string): string {
+  tz = zone(tz);
   const parts = new Intl.DateTimeFormat(LOCALE, { timeZone: tz, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(
     new Date(toEpoch(iso)),
   );
@@ -172,14 +183,17 @@ export type EventTimeDisplay = {
  */
 export function describeEventTime(iso: string | Date, eventTz: string, viewerTz: string = userTimeZone()): EventTimeDisplay {
   const ms = toEpoch(iso);
-  const eventOffset = offsetMinutes(ms, eventTz);
-  const event = `${formatDateTime(ms, eventTz)} — ${timeZoneLabel(eventTz)} (${formatOffset(eventOffset)})`;
+  const evZone = zone(eventTz);
+  const viewer = zone(viewerTz);
+  const eventOffset = offsetMinutes(ms, evZone);
+  const label = evZone === eventTz ? timeZoneLabel(evZone) : 'heure UTC — fuseau de l’événement non reconnu';
+  const event = `${formatDateTime(ms, evZone)} — ${label} (${formatOffset(eventOffset)})`;
 
-  const viewerOffset = offsetMinutes(ms, viewerTz);
+  const viewerOffset = offsetMinutes(ms, viewer);
   if (viewerOffset === eventOffset) return { event, local: null };
 
-  const when = sameCalendarDay(ms, eventTz, viewerTz) ? formatTime(ms, viewerTz) : formatDateTime(ms, viewerTz, { withYear: false });
-  const local = `soit ${when} chez vous, ${timeZoneCity(viewerTz)} (${formatOffset(viewerOffset)})`;
+  const when = sameCalendarDay(ms, evZone, viewer) ? formatTime(ms, viewer) : formatDateTime(ms, viewer, { withYear: false });
+  const local = `soit ${when} chez vous, ${timeZoneCity(viewer)} (${formatOffset(viewerOffset)})`;
   return { event, local };
 }
 
@@ -191,6 +205,7 @@ const LOCAL_INPUT_RE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/;
 
 /** ISO UTC → valeur "YYYY-MM-DDTHH:mm" pour un champ datetime-local, dans le fuseau `tz`. */
 export function utcToZonedInput(iso: string, tz: string): string {
+  tz = zone(tz);
   const w = wallClock(toEpoch(iso), tz);
   const p2 = (n: number) => String(n).padStart(2, '0');
   return `${String(w.year).padStart(4, '0')}-${p2(w.month)}-${p2(w.day)}T${p2(w.hour)}:${p2(w.minute)}`;
