@@ -94,3 +94,7 @@ ol.stack { margin: 0; padding-left: 1.25rem; }
 .poster--hero { background: radial-gradient(120% 60% at 50% 58%, #4A3D86 0%, #2B2560 45%, #191538 100%); }
 .poster--hero .poster__title { font-size: clamp(2.25rem, 10vw, 3.5rem); overflow-wrap: anywhere; }
 .poster--hero .poster__month { margin-bottom: var(--space-2); }
+
+/* Bouton désactivé : toujours l'aspect neutre lisible, même pour une variante colorée (danger, secondaire) */
+.btn.btn--danger:disabled,
+.btn.btn--secondary:disabled { background: var(--color-surface-2); color: var(--color-muted); border-color: transparent; filter: none; }

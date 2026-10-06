@@ -94,3 +94,17 @@ test('back-office : tableau de bord, confirmation d’annulation', async ({ page
   await expect(page.getByRole('dialog')).toBeVisible();
   await shot(page, '10-bo-confirmation');
 });
+
+test('aucun défilement horizontal à 360 et 390 px (pages clés)', async ({ page }) => {
+  await login(page, 'acheteur@example.test');
+  const seed = await page.evaluate(() => (window as unknown as { __nuitsMock: { seedDemoBuyer: () => Promise<Seed> } }).__nuitsMock.seedDemoBuyer());
+  for (const width of [360, 390]) {
+    await page.setViewportSize({ width, height: 800 });
+    for (const path of ['/', `/events/${CONCERT}`, `/orders/${seed.transferOrderId}`, '/me/tickets', `/waitlist/${seed.waitlistId}`]) {
+      await go(page, path);
+      await page.waitForLoadState('networkidle');
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(overflow, `${path} à ${String(width)} px`).toBeLessThanOrEqual(0);
+    }
+  }
+});
