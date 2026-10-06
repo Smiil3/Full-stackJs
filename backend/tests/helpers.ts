@@ -93,3 +93,9 @@ export async function tokenFromMail(to: string, template: string, field = 'link'
 }
 
 export const csrfHeaders = { Origin: FRONT, 'X-Requested-With': 'nuits-web' };
+
+/** Access token signé directement (évite 300 connexions argon2 dans les tests de charge). */
+export async function bearerFor(userId: string): Promise<{ Authorization: string }> {
+  const { signAccessToken } = await import('../src/lib/jwt.js');
+  return { Authorization: `Bearer ${await signAccessToken(userId, 0)}` };
+}

@@ -55,7 +55,7 @@ describe('outbox mail (B2.1 M7)', () => {
     expect(row.status).toBe('PENDING');
     expect(row.attempts).toBe(1);
     expect(row.nextAttemptAt.getTime()).toBeGreaterThan(Date.now() + 20_000);
-    await getDb().emailOutbox.update({ where: { id: row.id }, data: { attempts: OUTBOX_MAX_ATTEMPTS - 1, nextAttemptAt: new Date() } });
+    await getDb().emailOutbox.update({ where: { id: row.id }, data: { attempts: OUTBOX_MAX_ATTEMPTS - 1, nextAttemptAt: new Date(Date.now() - 60_000) } });
     await processOutboxBatch(transport);
     row = await getDb().emailOutbox.findFirstOrThrow();
     expect(row.status).toBe('FAILED');

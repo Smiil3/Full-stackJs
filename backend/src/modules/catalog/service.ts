@@ -1,4 +1,5 @@
 import type { Event, OrganizationSettings, TicketType } from '../../generated/prisma/client.js';
+import { clock } from '../../lib/clock.js';
 import { errors } from '../../lib/errors.js';
 import { availabilityOf, bestAvailability, priceAt } from '../../lib/pricing.js';
 import { iso } from '../../lib/schemas.js';
@@ -40,7 +41,7 @@ export async function listEvents(filter: { orgSlug?: string; from?: string; to?:
     pageSize,
   );
   const waiting = await repo.waitingCounts(rows.flatMap((e) => e.ticketTypes.map((t) => t.id)));
-  const now = new Date();
+  const now = clock.now();
   return { items: rows.map((e) => summary(e, waiting, now)), page, pageSize, total };
 }
 
@@ -50,7 +51,7 @@ export async function getEvent(eventId: string) {
   if (!e?.organization.settings) throw errors.notFound();
   const settings = e.organization.settings;
   const waiting = await repo.waitingCounts(e.ticketTypes.map((t) => t.id));
-  const now = new Date();
+  const now = clock.now();
   return {
     ...summary(e, waiting, now),
     description: e.description,

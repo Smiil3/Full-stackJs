@@ -58,3 +58,31 @@ export function lineTotal(unitPriceCents: number, quantity: number): number {
   assertRange(quantity, 1, 1000, 'Quantité');
   return toSafeNumber(BigInt(unitPriceCents) * BigInt(quantity));
 }
+
+/** Part d'un montant selon un pourcentage entier 0–100, arrondie à l'inférieur (règle de remboursement du contrat). */
+export function floorPercentOf(amountCents: number, percent: number): number {
+  assertCents(amountCents, 'Montant');
+  assertRange(percent, 0, 100, 'Pourcentage');
+  return toSafeNumber((BigInt(amountCents) * BigInt(percent)) / 100n);
+}
+
+/**
+ * Répartit `total` entre des lignes proportionnellement à leurs poids (méthode du plus fort reste) :
+ * la somme des parts vaut exactement `total`, chaque part ≤ son poids.
+ */
+export function allocate(total: number, weights: number[]): number[] {
+  assertCents(total, 'Total');
+  const sum = weights.reduce((a, b) => a + b, 0);
+  if (total > sum) throw new MoneyError('Répartition supérieure à la somme des lignes');
+  if (sum === 0) return weights.map(() => 0);
+  const raw = weights.map((w) => (BigInt(total) * BigInt(w)));
+  const parts = raw.map((r) => Number(r / BigInt(sum)));
+  let rest = total - parts.reduce((a, b) => a + b, 0);
+  const order = raw.map((r, i) => ({ i, rem: r % BigInt(sum) })).sort((x, y) => (y.rem > x.rem ? 1 : y.rem < x.rem ? -1 : x.i - y.i));
+  for (const { i } of order) {
+    if (rest === 0) break;
+    parts[i] = (parts[i] ?? 0) + 1;
+    rest -= 1;
+  }
+  return parts;
+}
