@@ -52,16 +52,24 @@ export async function clearTickets(): Promise<void> {
   await d.put('meta', { purgePending: false, owners: [] }, 'state');
 }
 
-export async function saveTickets(userId: string, tickets: Ticket[]): Promise<void> {
+/**
+ * `stillCurrent` : vrai tant que la session qui a chargé ces billets est la session courante. Vérifié
+ * juste avant d'ouvrir la transaction d'écriture : une purge de fin de session, lancée après, passe
+ * forcément après cette écriture (transactions IndexedDB sérialisées) ; lancée avant, l'écriture est abandonnée.
+ */
+export async function saveTickets(userId: string, tickets: Ticket[], stillCurrent: () => boolean = () => true): Promise<void> {
   const p = db();
   if (!p) return;
   const d = await p;
   const m = await meta(d);
   if (m.purgePending) await clearTickets();
   const h = await ownerHash(userId);
-  const owners = (await meta(d)).owners;
-  await d.put('meta', { purgePending: false, owners: owners.includes(h) ? owners : [...owners, h] }, 'state');
-  await d.put('tickets', { ownerHash: h, savedAt: new Date().toISOString(), tickets }, 'last');
+  if (!stillCurrent()) return;
+  const tx = d.transaction(['meta', 'tickets'], 'readwrite');
+  const owners = ((await tx.objectStore('meta').get('state')) ?? { purgePending: false, owners: [] }).owners;
+  await tx.objectStore('meta').put({ purgePending: false, owners: owners.includes(h) ? owners : [...owners, h] }, 'state');
+  await tx.objectStore('tickets').put({ ownerHash: h, savedAt: new Date().toISOString(), tickets }, 'last');
+  await tx.done;
 }
 
 /**

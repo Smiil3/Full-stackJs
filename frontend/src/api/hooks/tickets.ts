@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useAuth } from '../../auth/AuthContext';
 import { loadTickets, saveTickets } from '../../offline/tickets';
-import { apiRequest } from '../client';
+import { apiRequest, sessionGeneration } from '../client';
 import { isApiError } from '../errors';
 import { qk } from '../queryKeys';
 import type { Ticket } from '../types';
@@ -21,9 +21,11 @@ export function useMyTickets() {
     retry: false,
     queryFn: async ({ signal }): Promise<TicketsResult> => {
       if (status === 'authenticated' && user) {
+        // Billets enregistrés seulement si la session qui les a chargés est toujours la session courante.
+        const generation = sessionGeneration();
         try {
           const { items } = await apiRequest<{ items: Ticket[] }>('/me/tickets', { signal });
-          await saveTickets(user.id, items).catch(() => undefined);
+          await saveTickets(user.id, items, () => sessionGeneration() === generation).catch(() => undefined);
           return { tickets: items, offline: false, savedAt: null };
         } catch (e) {
           if (!isApiError(e) || (e.code !== 'NETWORK_ERROR' && e.code !== 'TIMEOUT')) throw e;

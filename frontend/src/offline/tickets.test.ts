@@ -35,4 +35,10 @@ describe('billets hors-ligne (revue F2.1 — M1)', () => {
     expect(h).toMatch(/^[0-9a-f]{64}$/);
     expect(h).not.toContain('user-a');
   });
+
+  it('F6-B5 : session terminée ou changée avant l’écriture ⇒ rien n’est enregistré', async () => {
+    await saveTickets('user-a', [ticket('1')], () => false);
+    expect(await loadTickets('user-a')).toBeNull();
+    expect(await loadTickets(null)).toBeNull();
+  });
 });
