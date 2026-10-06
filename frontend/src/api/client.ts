@@ -249,6 +249,49 @@ export function dropSession(reason: 'expired' | 'logout'): void {
   emit({ type: reason });
 }
 
+// ---------------------------------------------------------------------------
+// Multi-onglets
+// ---------------------------------------------------------------------------
+/**
+ * Le serveur révoque TOUTE la famille de refresh tokens en cas de réutilisation : deux onglets qui
+ * rafraîchissent en même temps se déconnecteraient mutuellement. Toute opération qui fait tourner
+ * le cookie (refresh, login, logout) est donc sérialisée entre onglets par un Web Lock : le 2ᵉ onglet
+ * envoie le cookie déjà renouvelé par le 1ᵉʳ.
+ */
+export const AUTH_LOCK = 'nuits-refresh';
+async function withAuthLock<T>(fn: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator === 'undefined' ? undefined : (navigator as Navigator & { locks?: LockManager }).locks;
+  if (!locks || typeof locks.request !== 'function') return fn();
+  return locks.request(AUTH_LOCK, { mode: 'exclusive' }, () => fn());
+}
+
+/**
+ * Propagation login / logout aux autres onglets. Aucun jeton ne transite : seulement le type d'événement.
+ * - logout ailleurs ⇒ fin de session locale ;
+ * - login ailleurs ⇒ refresh (le cookie partagé désigne peut-être un autre compte ⇒ purge côté AuthProvider).
+ */
+type AuthBroadcast = { type: 'login' | 'logout' };
+const channel: BroadcastChannel | null = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('nuits-auth');
+(channel as (BroadcastChannel & { unref?: () => void }) | null)?.unref?.();
+if (channel) {
+  channel.onmessage = (e: MessageEvent<unknown>) => {
+    const data = e.data;
+    if (typeof data !== 'object' || data === null || !('type' in data)) return;
+    if (data.type === 'logout') {
+      if (getAccessToken() !== null) dropSession('logout');
+    } else if (data.type === 'login') {
+      refreshSession().catch(() => undefined);
+    }
+  };
+}
+function broadcast(message: AuthBroadcast): void {
+  try {
+    channel?.postMessage(message);
+  } catch {
+    // Canal fermé : sans conséquence pour l'onglet courant.
+  }
+}
+
 const sessionChanged = () => new ApiError({ status: 0, code: 'SESSION_CHANGED', message: 'session changed' });
 
 /**
@@ -263,7 +306,7 @@ export function refreshSession(): Promise<AuthSession> {
   const startedAt = generation;
   const promise = (async () => {
     try {
-      const raw = await rawRequest<unknown>('/auth/refresh', { method: 'POST', headers: { ...CSRF_HEADER } }, null);
+      const raw = await withAuthLock(() => rawRequest<unknown>('/auth/refresh', { method: 'POST', headers: { ...CSRF_HEADER } }, null));
       if (startedAt !== generation) throw sessionChanged();
       const session = parseAuthSession(raw);
       acceptSession(session);
@@ -318,10 +361,11 @@ export async function login(email: string, password: string): Promise<AuthSessio
   generation++;
   const startedAt = generation;
   await settleRefresh(); // la réponse d'un refresh en vol ne doit pas écraser le cookie de ce login
-  const raw = await rawRequest<unknown>('/auth/login', { method: 'POST', body: { email, password } }, null);
+  const raw = await withAuthLock(() => rawRequest<unknown>('/auth/login', { method: 'POST', body: { email, password } }, null));
   const session = parseAuthSession(raw);
   if (startedAt !== generation) throw sessionChanged();
   acceptSession(session);
+  broadcast({ type: 'login' });
   return session;
 }
 
@@ -331,10 +375,11 @@ export async function logout(): Promise<void> {
   dropSession('logout'); // local d'abord : plus aucun token utilisable, refresh en vol invalidé
   await settleRefresh(); // le serveur révoque ainsi la DERNIÈRE rotation du cookie
   try {
-    await rawRequest<undefined>('/auth/logout', { method: 'POST', headers: { ...CSRF_HEADER } }, token);
+    await withAuthLock(() => rawRequest<undefined>('/auth/logout', { method: 'POST', headers: { ...CSRF_HEADER } }, token));
   } catch {
     // Hors-ligne ou déjà expiré : la déconnexion locale a déjà eu lieu.
   }
+  broadcast({ type: 'logout' });
 }
 
 /** Réservé aux tests. */

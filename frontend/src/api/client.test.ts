@@ -248,3 +248,69 @@ describe('cycle de session (revue F1.1 — H2, M1, M2, M3, M5)', () => {
     await expect(apiRequest('/events', { auth: false })).rejects.toMatchObject({ code: 'UNEXPECTED_RESPONSE' });
   });
 });
+
+describe('multi-onglets (revue F1.1 — M4)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('refresh, login et logout passent par le même verrou inter-onglets, exécutés un par un', async () => {
+    const names: string[] = [];
+    let running = 0;
+    let maxRunning = 0;
+    let queue = Promise.resolve();
+    const locks = {
+      request: (name: string, _opts: unknown, cb: () => Promise<unknown>) => {
+        names.push(name);
+        const run = queue.then(async () => {
+          running++;
+          maxRunning = Math.max(maxRunning, running);
+          try {
+            return await cb();
+          } finally {
+            running--;
+          }
+        });
+        queue = run.then(
+          () => undefined,
+          () => undefined,
+        );
+        return run;
+      },
+    };
+    vi.stubGlobal('navigator', Object.assign(Object.create(navigator) as Navigator, { locks }));
+
+    await login(BUYER, DEMO_PASSWORD);
+    await Promise.all([refreshSession(), apiRequest('/auth/me')]);
+    await logout();
+
+    expect(names).toEqual(['nuits-refresh', 'nuits-refresh', 'nuits-refresh']);
+    expect(maxRunning).toBe(1);
+  });
+
+  it('un logout dans un autre onglet termine la session ici', async () => {
+    await login(BUYER, DEMO_PASSWORD);
+    const events: AuthEvent['type'][] = [];
+    onAuthEvent((e) => events.push(e.type));
+    const otherTab = new BroadcastChannel('nuits-auth');
+    otherTab.postMessage({ type: 'logout' });
+    await vi.waitFor(() => {
+      expect(getAccessToken()).toBeNull();
+    });
+    otherTab.close();
+    expect(events).toEqual(['logout']);
+  });
+
+  it('un login dans un autre onglet déclenche un refresh ici ; message inconnu ignoré', async () => {
+    const otherTab = new BroadcastChannel('nuits-auth');
+    otherTab.postMessage({ type: 'steal-token' });
+    otherTab.postMessage('logout');
+    mock.db.refreshCookie = { token: 't', userId: mock.db.users[0]?.id ?? '' };
+    otherTab.postMessage({ type: 'login' });
+    await vi.waitFor(() => {
+      expect(getAccessToken()).not.toBeNull();
+    });
+    otherTab.close();
+    expect(calls('POST /auth/refresh')).toBe(1);
+  });
+});
