@@ -78,3 +78,12 @@ Décisions non bloquantes prises pendant l'implémentation (option la plus sûre
 - **2026-10-06 — Limites de réservation : 60 / min par IP (CGNAT mobile) et 10 / min par compte (B4.1 M4).**
 - **2026-10-06 — Liste d'attente : à implémenter en B7 (B4.1 M3).** — (a) `distributeWaitlist` / `expireWaitlistOffers` branchés dans le worker ET déclenchés à chaque libération de places (expiration, annulation, remboursement, hausse de capacité) ; (b) garde publique corrigée : la vente publique n'est bloquée que s'il existe une entrée WAITING dont `quantity ≤ places libres` (une entrée trop grosse ne bloque ni les suivantes ni le public). D'ici là, la garde actuelle (« aucun WAITING ») est plus restrictive que nécessaire mais ne permet aucune survente.
 - **2026-10-06 — Idempotency-Key réutilisée sur une commande EXPIRED ⇒ renvoie la commande EXPIRED (contrat §4) ; une nouvelle tentative utilise une nouvelle clé.**
+
+## B6 — Billets et contrôle d'accès
+
+- **2026-10-06 — QR `NG1.<eventId>.<publicId>.<signature>` calculé à la volée (jamais stocké) ; publicId = 16 octets aléatoires base64url (22 car.) ; signature Ed25519 sur `NG1.<eventId>.<publicId>` (contrat 1.1).** — Vérification stricte : 4 parties, préfixe, formats (UUID minuscule, 22 et 86 caractères base64url), puis signature.
+- **2026-10-06 — Scan : `scanId` réservé en premier (`INSERT … ON CONFLICT DO NOTHING`), puis passage atomique `VALID → USED` gardé par le statut et l'événement.** — Un scanId rejoué (y compris en parallèle) renvoie le résultat d'origine sans effet ; s'il est rejoué sur un autre événement : INVALID sans effet. Un QR d'un autre événement (même ou autre collectif) ⇒ WRONG_EVENT (l'eventId est déjà visible dans le QR signé : aucune information divulguée).
+- **2026-10-06 — Synchronisation : chaque scan dans sa propre transaction, traités dans l'ordre `scannedAt` puis d'arrivée ; `scannedAt` borné à [début des ventes, maintenant + 5 min] (décision PO 6), avec `clientScannedAt` (valeur brute) et `scannedAtClamped` journalisés dans `CheckIn` ; `usedAt` d'un billet accepté hors-ligne = scannedAt borné.**
+- **2026-10-06 — Limite de corps de 256 ko réservée à la route de synchronisation** (500 scans ≈ 130 ko) ; toutes les autres routes restent à 10 ko.
+- **2026-10-06 — Snapshot et réponses de scan : initiales du porteur uniquement (« J.P.D. »), jamais de nom complet ni d'email.**
+- **2026-10-06 — Mail de confirmation : un QR PNG par billet VALIDE, généré à l'envoi (jamais stocké dans l'outbox).**

@@ -275,3 +275,11 @@ describe('configuration — secrets (B1.1 H1)', () => {
     expect(() => parseEnv({ ...base(), PSP_API_KEY: 'A'.repeat(43) })).not.toThrow();
   });
 });
+
+describe('limite de corps dédiée à la synchronisation', () => {
+  it('les autres routes restent limitées à 10 ko', async () => {
+    const big = { email: 'a@test.fr', password: 'x'.repeat(15_000) };
+    const res = await api().post('/api/v1/auth/login').send(big);
+    expect(res.status).toBe(413);
+  });
+});

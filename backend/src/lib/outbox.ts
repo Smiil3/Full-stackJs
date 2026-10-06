@@ -3,6 +3,8 @@ import { getEnv } from '../config/env.js';
 import { aad, decryptString, encryptString } from './crypto.js';
 import { getDb, type Tx } from './db.js';
 import { renderTemplate, type MailTemplate, type TemplatePayloads } from './mail/templates.js';
+import QRCode from 'qrcode';
+import { qrPayloadFor } from './ticketSigning.js';
 
 /** Payload stocké : uniquement chiffré (les liens de vérification / reset contiennent des jetons). */
 // Alias (et non interface) : compatible avec le type JSON attendu par Prisma.
@@ -31,6 +33,21 @@ export interface MailMessage {
   subject: string;
   html: string;
   text: string;
+  attachments?: { filename: string; content: Buffer; contentType: string }[];
+}
+
+/** Pièces jointes calculées à l'envoi (jamais stockées) : QR code de chaque billet d'une commande confirmée. */
+async function attachmentsFor(template: string, data: Record<string, unknown>): Promise<MailMessage['attachments']> {
+  if (template !== 'orderConfirmed' || typeof data['orderId'] !== 'string') return undefined;
+  const tickets = await getDb().ticket.findMany({
+    where: { orderItem: { orderId: data['orderId'] }, status: 'VALID' },
+    orderBy: [{ orderItemId: 'asc' }, { seq: 'asc' }],
+  });
+  return Promise.all(tickets.map(async (t, i) => ({
+    filename: `billet-${i + 1}.png`,
+    content: await QRCode.toBuffer(qrPayloadFor(t.eventId, t.publicId), { type: 'png', errorCorrectionLevel: 'M', margin: 2, width: 512 }),
+    contentType: 'image/png',
+  })));
 }
 
 export interface MailTransport {
@@ -73,7 +90,8 @@ export async function processOutboxBatch(transport: MailTransport): Promise<{ se
       try {
         const data = decryptOutboxPayload(row);
         const mail = renderTemplate(row.template as MailTemplate, data as never);
-        await transport.sendMail({ from: getEnv().mailFrom, to: row.to, ...mail });
+        const attachments = await attachmentsFor(row.template, data);
+        await transport.sendMail({ from: getEnv().mailFrom, to: row.to, ...mail, ...(attachments ? { attachments } : {}) });
         await tx.emailOutbox.update({ where: { id: row.id }, data: { status: 'SENT', sentAt: new Date(), payload: {}, attempts: row.attempts + 1, lastError: null } });
         sent += 1;
       } catch (err) {

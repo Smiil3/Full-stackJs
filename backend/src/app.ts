@@ -16,6 +16,8 @@ import { buildApiRouter, buildWebhookRouter } from './routes.js';
 
 export const JSON_BODY_LIMIT = '10kb';
 export const WEBHOOK_BODY_LIMIT = '64kb';
+export const SYNC_BODY_LIMIT = '256kb';
+const SYNC_ROUTE = /^\/api\/v1\/orgs\/[^/]+\/events\/[^/]+\/checkin\/sync$/;
 
 const FORBIDDEN_JSON_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
@@ -105,6 +107,9 @@ export function createApp(options: AppOptions = {}): Express {
   // Le limiteur global passe avant tout parsing : une rafale de corps volumineux ou malformés est coupée tôt.
   app.use('/api/v1', limiters.global);
   app.use(requireJsonContentType);
+  // Synchronisation hors-ligne : jusqu'à 500 scans (~130 ko) ⇒ limite dédiée À CETTE SEULE route (authentifiée,
+  // rate-limitée) ; le parseur global (10 ko) ignore ensuite un corps déjà lu.
+  app.use(SYNC_ROUTE, express.json({ limit: SYNC_BODY_LIMIT, strict: true, type: 'application/json', reviver: rejectPrototypeKeys }));
   app.use(express.json({ limit: JSON_BODY_LIMIT, strict: true, type: 'application/json', reviver: rejectPrototypeKeys }));
   app.use(cookieParser());
   app.use('/api/v1', buildApiRouter(limiters));

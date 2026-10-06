@@ -448,7 +448,12 @@ model CheckIn {
   ticketId   String?       @db.Uuid
   scannerId  String        @db.Uuid
   deviceId   String        @db.Uuid
+  /// Instant retenu pour l'ordre et le journal (borné à [début des ventes, maintenant + 5 min]).
   scannedAt  DateTime      @db.Timestamptz(3)
+  /// Instant brut envoyé par l'appareil (synchro hors-ligne), conservé pour l'audit.
+  clientScannedAt DateTime? @db.Timestamptz(3)
+  /// true si scannedAt a été ramené dans les bornes (horloge d'appareil incohérente).
+  scannedAtClamped Boolean @default(false)
   receivedAt DateTime      @default(now()) @db.Timestamptz(3)
   result     CheckInResult
   offline    Boolean       @default(false)
