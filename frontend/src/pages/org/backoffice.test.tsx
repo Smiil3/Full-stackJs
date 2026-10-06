@@ -193,6 +193,59 @@ describe('back-office : événements', () => {
     expect(Object.keys(patch ?? {}).sort()).toEqual(['endsAt', 'rescheduleReason', 'salesEndAt', 'startsAt']);
   });
 
+  it('H3 : ventes apparues après l’ouverture du formulaire ⇒ revérifiées avant envoi, dialogue de report', async () => {
+    const user = userEvent.setup();
+    const tt = mock.db.ticketTypes.find((t) => t.id === IDS.ttPartner);
+    if (tt) tt.sold = 0; // aucune vente à l'ouverture du formulaire
+    await renderApp(`/org/${IDS.orgPartner}/events/${IDS.eventPartner}`, { as: 'owner@partenaire.test' });
+    await user.click(await screen.findByRole('button', { name: 'Modifier l’événement' }));
+    expect(screen.getByLabelText('Début de l’événement')).toBeEnabled();
+    // Pendant la saisie, une vente a lieu : le cache ne la connaît pas.
+    if (tt) tt.sold = 10;
+    const start = screen.getByLabelText('Début de l’événement');
+    const v = (start as HTMLInputElement).value;
+    const [d, t] = v.split('T');
+    const earlier = `${d ?? ''}T${t === '08:00' ? '07:00' : '08:00'}`; // toujours une heure différente, avant la fin
+    await user.clear(start);
+    await user.type(start, earlier);
+    await user.click(screen.getByRole('button', { name: 'Enregistrer les modifications' }));
+    expect(await screen.findByRole('dialog', { name: 'Reporter l’événement ?' })).toBeInTheDocument();
+  });
+
+  it('H3 : changement de fuseau ⇒ choix explicite, « conserver l’instant » par défaut (aucun report)', async () => {
+    const user = userEvent.setup();
+    let patch: Record<string, unknown> | undefined;
+    server.events.on('request:start', ({ request }) => {
+      if (request.method === 'PATCH') {
+        void request
+          .clone()
+          .json()
+          .then((b: Record<string, unknown>) => {
+            patch = b;
+          });
+      }
+    });
+    await renderApp(EVENT, { as: OWNER });
+    await user.click(await screen.findByRole('button', { name: 'Modifier l’événement' }));
+    await user.selectOptions(screen.getByLabelText('Fuseau horaire de l’événement'), 'Europe/London');
+    expect(screen.getByRole('radio', { name: /Conserver l’instant/ })).toBeChecked();
+    await user.click(screen.getByRole('button', { name: 'Enregistrer les modifications' }));
+    await waitFor(() => expect(patch).toEqual({ timezone: 'Europe/London' }));
+    server.events.removeAllListeners();
+    expect(screen.queryByRole('dialog', { name: 'Reporter l’événement ?' })).toBeNull();
+  });
+
+  it('H3 : 403 du serveur sur un report ⇒ explication claire', async () => {
+    const user = userEvent.setup();
+    injectFault({ route: 'PATCH /orgs/:orgId/events/:eventId', status: 403, code: 'FORBIDDEN' });
+    await renderApp(EVENT, { as: OWNER });
+    await user.click(await screen.findByRole('button', { name: 'Modifier l’événement' }));
+    await user.clear(screen.getByLabelText('Titre'));
+    await user.type(screen.getByLabelText('Titre'), 'Nouveau titre');
+    await user.click(screen.getByRole('button', { name: 'Enregistrer les modifications' }));
+    expect(await screen.findByText('Seul le propriétaire du collectif peut reporter un événement qui a des ventes.')).toBeInTheDocument();
+  });
+
   it('annulation (OWNER) : titre à recopier + motif avant de pouvoir confirmer', async () => {
     const user = userEvent.setup();
     await renderApp(EVENT, { as: OWNER });

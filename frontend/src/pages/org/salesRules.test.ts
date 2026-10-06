@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { EventAdmin, OrgSettings } from '../../api/types';
 import { NO_OVERRIDES } from '../../mocks/state';
-import { buildEventBody, diffPatch, initialEventForm, isReschedule } from './eventForm';
+import { buildEventBody, convertDatesToTimezone, diffPatch, initialEventForm, isReschedule } from './eventForm';
 import { initialRulesState, parseRule, RULE_DEFS, rulesToOverrides } from './salesRules';
 import { draftToBody } from './ticketTypeDraft';
 
@@ -88,6 +88,34 @@ describe('formulaire d’événement', () => {
     const p = diffPatch(event, f, f2, body2);
     expect(p).toEqual({ title: 'Concert 2' });
     expect(isReschedule(event, p)).toBe(false);
+  });
+
+  it('H3 : changement de fuseau en « conservant l’instant » ⇒ seul le fuseau est envoyé, pas de report', () => {
+    const f = initialEventForm({ ...event, startsAt: '2026-11-14T19:00:42.123Z' }, settings);
+    const converted = { ...f, timezone: 'America/New_York', ...convertDatesToTimezone(f, 'Europe/Paris', 'America/New_York') };
+    expect(converted.startsAt).toBe('2026-11-14T14:00');
+    const body = buildEventBody(converted, settings).body;
+    if (!body) throw new Error('body');
+    const p = diffPatch({ ...event, startsAt: '2026-11-14T19:00:42.123Z' }, f, converted, body);
+    expect(p).toEqual({ timezone: 'America/New_York' });
+    expect(isReschedule(event, p)).toBe(false);
+  });
+
+  it('H3 : changement de fuseau en « conservant les heures saisies » ⇒ dates déplacées = report', () => {
+    const f = initialEventForm(event, settings);
+    const moved = { ...f, timezone: 'America/New_York' };
+    const body = buildEventBody(moved, settings).body;
+    if (!body) throw new Error('body');
+    const p = diffPatch(event, f, moved, body);
+    expect(p.startsAt).toBe('2026-11-15T01:00:00.000Z');
+    expect(isReschedule(event, p)).toBe(true);
+  });
+
+  it('H3 : comparaison en instants — même instant écrit autrement ⇒ rien envoyé', () => {
+    const f = initialEventForm(event, settings);
+    const body = buildEventBody({ ...f, startsAt: '2026-11-14T20:00' }, settings).body;
+    if (!body) throw new Error('body');
+    expect(diffPatch({ ...event, startsAt: '2026-11-14T19:00:00Z' }, f, { ...f, startsAt: '2026-11-14T20:00' }, body)).toEqual({});
   });
 
   it('dates modifiées avec ventes ⇒ report', () => {

@@ -104,8 +104,11 @@ export function diffPatch(event: EventAdmin, initial: EventFormState, current: E
   if ((body.address ?? null) !== event.address) patch.address = body.address ?? null;
   const tzChanged = current.timezone !== initial.timezone;
   if (tzChanged) patch.timezone = body.timezone;
+  // Comparaison en INSTANTS à la minute (précision de la saisie), seulement pour les champs touchés :
+  // seul un vrai déplacement dans le temps est envoyé.
+  const minute = (iso: string) => Math.floor(Date.parse(iso) / 60_000);
   for (const k of DATE_FIELDS) {
-    if ((tzChanged || current[k] !== initial[k]) && body[k] !== event[k]) patch[k] = body[k];
+    if ((tzChanged || current[k] !== initial[k]) && minute(body[k]) !== minute(event[k])) patch[k] = body[k];
   }
   const overrides: Partial<EventOverrides> = {};
   for (const [k, v] of Object.entries(body.overrides ?? {}) as [keyof EventOverrides, EventOverrides[keyof EventOverrides]][]) {
@@ -122,4 +125,17 @@ export function hasSales(event: EventAdmin | null): boolean {
 
 export function isReschedule(event: EventAdmin | null, patch: EventPatchBody): boolean {
   return hasSales(event) && (patch.startsAt !== undefined || patch.endsAt !== undefined);
+}
+
+/**
+ * Changement de fuseau : par défaut on CONSERVE L'INSTANT (les heures affichées sont converties, rien
+ * ne bouge). « Conserver l'heure locale » déplace l'événement dans le temps : c'est un report.
+ */
+export function convertDatesToTimezone(f: EventFormState, fromTz: string, toTz: string): Pick<EventFormState, DateField> {
+  const out = {} as Pick<EventFormState, DateField>;
+  for (const k of DATE_FIELDS) {
+    const r = zonedInputToUtc(f[k], fromTz);
+    out[k] = r.ok ? utcToZonedInput(r.iso, toTz) : f[k];
+  }
+  return out;
 }

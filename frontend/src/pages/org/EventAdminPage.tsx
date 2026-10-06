@@ -18,7 +18,7 @@ export function EventAdminPage() {
   const { orgId = '', eventId = '' } = useParams();
   const { user } = useAuth();
   const role = membershipFor(user, orgId)?.role ?? 'MANAGER';
-  const { data: event, error, isPending } = useOrgEvent(orgId, eventId);
+  const { data: event, error, isPending, refetch } = useOrgEvent(orgId, eventId);
   const settings = useOrgSettings(orgId);
   const m = useEventMutations(orgId, eventId);
   const exportCsv = useExportAttendees(orgId, eventId);
@@ -86,12 +86,10 @@ export function EventAdminPage() {
               submitLabel="Enregistrer les modifications"
               pending={m.update.isPending}
               error={m.update.error}
-              onUpdate={(patch) => {
-                if (Object.keys(patch).length === 0) {
-                  setEditing(false);
-                  return;
-                }
-                m.update.mutate(patch, { onSuccess: () => setEditing(false) });
+              refreshEvent={async () => (await refetch()).data}
+              onUpdate={async (patch) => {
+                if (Object.keys(patch).length > 0) await m.update.mutateAsync(patch);
+                setEditing(false);
               }}
             />
           ) : (

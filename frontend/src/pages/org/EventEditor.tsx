@@ -1,10 +1,10 @@
 import { useMemo, useState, type SubmitEvent } from 'react';
-import { errorMessage, fieldErrors } from '../../api/errors';
+import { errorMessage, fieldErrors, isApiError } from '../../api/errors';
 import type { EventAdmin, EventCreateBody, EventPatchBody, OrgRole, OrgSettings } from '../../api/types';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { Field } from '../../components/Field';
 import { listTimeZones, timeZoneLabel } from '../../lib/time';
-import { buildEventBody, DATE_FIELDS, diffPatch, hasSales, initialEventForm, isReschedule, type DateField, type EventFormState, type FormErrors } from './eventForm';
+import { buildEventBody, convertDatesToTimezone, DATE_FIELDS, diffPatch, hasSales, initialEventForm, isReschedule, type DateField, type EventFormState, type FormErrors } from './eventForm';
 import { SalesRulesEditor } from './SalesRulesEditor';
 
 const DATE_LABELS: Record<DateField, string> = {
@@ -20,7 +20,17 @@ type Props = {
   submitLabel: string;
   pending: boolean;
   error: unknown;
-} & ({ event: null; onCreate: (body: EventCreateBody) => void } | { event: EventAdmin; onUpdate: (patch: EventPatchBody) => void });
+} & (
+  | { event: null; onCreate: (body: EventCreateBody) => void }
+  | {
+      event: EventAdmin;
+      /** Rejette avec l'ApiError en cas d'échec (permet d'ouvrir le dialogue de report si le serveur l'exige). */
+      onUpdate: (patch: EventPatchBody) => Promise<unknown>;
+      /** Recharge l'événement juste avant de décider s'il s'agit d'un report (ventes à jour). */
+      refreshEvent: () => Promise<EventAdmin | undefined>;
+    }
+);
+type TzChoice = { from: string; localDates: Pick<EventFormState, DateField>; mode: 'instant' | 'local' };
 
 const LOCKED_DATES: readonly DateField[] = ['startsAt', 'endsAt'];
 
@@ -29,6 +39,8 @@ export function EventEditor(props: Props) {
   const [form, setForm] = useState<EventFormState>(initial);
   const [pendingPatch, setPendingPatch] = useState<EventPatchBody | null>(null);
   const [reason, setReason] = useState('');
+  const [tzChoice, setTzChoice] = useState<TzChoice | null>(null);
+  const [forbidden, setForbidden] = useState(false);
   const sold = hasSales(props.event);
   // Contrat v1.7 : report d'un événement vendu réservé à l'OWNER (le serveur renverrait 403).
   const datesLocked = sold && props.role !== 'OWNER';
@@ -48,16 +60,58 @@ export function EventEditor(props: Props) {
       return;
     }
     const patch = diffPatch(props.event, initial, form, r.body);
-    if (isReschedule(props.event, patch)) {
+    void decideAndSend(patch);
+  };
+
+  const send = async (patch: EventPatchBody) => {
+    if (props.event === null) return;
+    setForbidden(false);
+    try {
+      await props.onUpdate(patch);
+    } catch (e) {
+      // Le serveur exige un motif (ventes apparues entre-temps) : on ouvre le dialogue de report.
+      if (isApiError(e) && e.code === 'VALIDATION_ERROR' && 'rescheduleReason' in fieldErrors(e)) setPendingPatch(patch);
+      if (isApiError(e) && e.code === 'FORBIDDEN') setForbidden(true);
+    }
+  };
+
+  const decideAndSend = async (patch: EventPatchBody) => {
+    if (props.event === null) return;
+    // Ventes revérifiées à l'instant de la décision (pas un cache de quelques secondes).
+    const fresh = (await props.refreshEvent().catch(() => undefined)) ?? props.event;
+    if (isReschedule(fresh, patch)) {
       setPendingPatch(patch); // confirmation forte + motif obligatoire
       return;
     }
-    props.onUpdate(patch);
+    await send(patch);
+  };
+
+  const changeTimezone = (tz: string) => {
+    if (props.event === null) {
+      set('timezone', tz);
+      return;
+    }
+    const from = tzChoice?.from ?? form.timezone;
+    const localDates = tzChoice?.localDates ?? { startsAt: form.startsAt, endsAt: form.endsAt, salesStartAt: form.salesStartAt, salesEndAt: form.salesEndAt };
+    if (tz === from) {
+      setTzChoice(null);
+      setForm((f) => ({ ...f, timezone: tz, ...localDates }));
+      return;
+    }
+    const mode = tzChoice?.mode ?? 'instant';
+    setTzChoice({ from, localDates, mode });
+    setForm((f) => ({ ...f, timezone: tz, ...(mode === 'instant' ? convertDatesToTimezone({ ...f, ...localDates }, from, tz) : localDates) }));
+  };
+
+  const chooseTzMode = (mode: 'instant' | 'local') => {
+    if (!tzChoice) return;
+    setTzChoice({ ...tzChoice, mode });
+    setForm((f) => ({ ...f, ...(mode === 'instant' ? convertDatesToTimezone({ ...f, ...tzChoice.localDates }, tzChoice.from, f.timezone) : tzChoice.localDates) }));
   };
 
   const confirmReschedule = () => {
     if (!pendingPatch || props.event === null || reason.trim().length < 1 || reason.length > 500) return;
-    props.onUpdate({ ...pendingPatch, rescheduleReason: reason.trim() });
+    void send({ ...pendingPatch, rescheduleReason: reason.trim() });
     setPendingPatch(null);
   };
 
@@ -91,7 +145,7 @@ export function EventEditor(props: Props) {
 
       <div className="field">
         <label htmlFor="ev-timezone">Fuseau horaire de l’événement</label>
-        <select id="ev-timezone" value={form.timezone} disabled={datesLocked} onChange={(e) => set('timezone', e.target.value)}>
+        <select id="ev-timezone" value={form.timezone} disabled={datesLocked} onChange={(e) => changeTimezone(e.target.value)}>
           {zones.map((z) => (
             <option key={z} value={z}>
               {z}
@@ -101,6 +155,24 @@ export function EventEditor(props: Props) {
         <span className="field__hint">Les dates ci-dessous sont saisies en {timeZoneLabel(form.timezone)}.</span>
         {errors.timezone ?? server.timezone ? <span className="field__error">{errors.timezone ?? server.timezone}</span> : null}
       </div>
+      {tzChoice ? (
+        <fieldset className="card stack">
+          <legend>Changement de fuseau horaire</legend>
+          <label className="row">
+            <input type="radio" name="tz-mode" checked={tzChoice.mode === 'instant'} onChange={() => chooseTzMode('instant')} />
+            Conserver l’instant : l’événement ne bouge pas, seules les heures affichées sont converties
+          </label>
+          <label className="row">
+            <input type="radio" name="tz-mode" checked={tzChoice.mode === 'local'} onChange={() => chooseTzMode('local')} />
+            Conserver les heures saisies : l’événement est DÉPLACÉ dans le temps (report si des places sont vendues)
+          </label>
+        </fieldset>
+      ) : null}
+      {forbidden ? (
+        <p className="alert alert--error" role="alert">
+          Seul le propriétaire du collectif peut reporter un événement qui a des ventes.
+        </p>
+      ) : null}
       {datesLocked ? (
         <p className="alert alert--info">Des places ont été vendues : seul le propriétaire du collectif peut reporter l’événement (dates de début et de fin, fuseau).</p>
       ) : null}
