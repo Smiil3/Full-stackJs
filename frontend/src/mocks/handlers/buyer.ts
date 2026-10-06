@@ -186,7 +186,7 @@ export const buyerHandlers = [
     const v = await readBody(request, ['quantity']);
     const quantity = v.int('quantity', { min: 1 });
     v.done();
-    if (!rules.waitlistEnabled) fail(409, 'CONFLICT', 'Liste d’attente désactivée');
+    if (!rules.waitlistEnabled) fail(409, 'WAITLIST_DISABLED', 'Liste d’attente désactivée');
     if ((quantity ?? 0) > rules.maxPerOrder) fail(422, 'LIMIT_EXCEEDED', 'Plafond', { max: rules.maxPerOrder });
     if (remaining(tt) > 0) fail(409, 'NOT_SOLD_OUT', 'Places disponibles');
     if (mock.db.waitlist.some((w) => w.userId === user.id && w.ticketTypeId === tt.id && (w.status === 'WAITING' || w.status === 'OFFERED'))) {
