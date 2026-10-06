@@ -1,6 +1,8 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiPath, apiRequest } from '../client';
-import { isApiError } from '../errors';
+import { ApiError, isApiError } from '../errors';
+import { slugify } from '../../lib/slug';
+import { parseEventStats, parseOrgSettings } from '../guards';
 import { qk } from '../queryKeys';
 import type {
   AdminOrdersQuery,
@@ -46,7 +48,7 @@ export const useOrg = (orgId: string) =>
   useQuery({ queryKey: qk.org(orgId), queryFn: ({ signal }) => apiRequest<Organization>(org(orgId), { signal }) });
 
 export const useOrgSettings = (orgId: string, enabled = true) =>
-  useQuery({ queryKey: qk.orgSettings(orgId), queryFn: ({ signal }) => apiRequest<OrgSettings>(`${org(orgId)}/settings`, { signal }), enabled });
+  useQuery({ queryKey: qk.orgSettings(orgId), queryFn: async ({ signal }) => parseOrgSettings(await apiRequest<unknown>(`${org(orgId)}/settings`, { signal })), enabled });
 
 /**
  * `sensitive` (coordonnées bancaires + mot de passe) : la mutation n'est pas conservée dans le cache
@@ -56,7 +58,7 @@ export function useUpdateOrgSettings(orgId: string, opts: { sensitive?: boolean 
   const qc = useQueryClient();
   return useMutation({
     ...(opts.sensitive ? { gcTime: 0 } : {}),
-    mutationFn: (body: OrgSettingsPatch) => apiRequest<OrgSettings>(`${org(orgId)}/settings`, { method: 'PATCH', body }),
+    mutationFn: async (body: OrgSettingsPatch): Promise<OrgSettings> => parseOrgSettings(await apiRequest<unknown>(`${org(orgId)}/settings`, { method: 'PATCH', body })),
     onSuccess: (s) => {
       qc.setQueryData(qk.orgSettings(orgId), s);
       void qc.invalidateQueries({ queryKey: ['org', orgId, 'event'] });
@@ -158,7 +160,7 @@ export const STATS_POLL_MS = 5000;
 export const useEventStats = (orgId: string, eventId: string) =>
   useQuery({
     queryKey: qk.orgEventStats(orgId, eventId),
-    queryFn: ({ signal }) => apiRequest<EventStats>(`${ev(orgId, eventId)}/stats`, { signal }),
+    queryFn: async ({ signal }): Promise<EventStats> => parseEventStats(await apiRequest<unknown>(`${ev(orgId, eventId)}/stats`, { signal })),
     // Arrêt définitif sur 403 / 404 (droits retirés, événement inexistant) : inutile d'insister.
     refetchInterval: (q) => (isApiError(q.state.error) && (q.state.error.status === 403 || q.state.error.status === 404) ? false : STATS_POLL_MS),
     refetchIntervalInBackground: false,
@@ -166,15 +168,18 @@ export const useEventStats = (orgId: string, eventId: string) =>
   });
 
 /** Export CSV : téléchargement authentifié (Bearer) puis Blob local — jamais de jeton dans une URL. */
-export function useExportAttendees(orgId: string, eventId: string) {
+export function useExportAttendees(orgId: string, eventId: string, eventTitle?: string) {
   return useMutation({
     mutationFn: async () => {
       const blob = await apiRequest<Blob>(`${ev(orgId, eventId)}/attendees.csv`, { responseKind: 'blob', timeoutMs: 60_000 });
+      // On ne propose au téléchargement QUE du CSV (pas une page d'erreur HTML renvoyée par un proxy).
+      if (!blob.type.toLowerCase().startsWith('text/csv')) throw new ApiError({ status: 200, code: 'UNEXPECTED_RESPONSE', message: 'not csv' });
       const url = URL.createObjectURL(blob);
       try {
         const a = document.createElement('a');
         a.href = url;
-        a.download = `participants-${eventId}.csv`;
+        const slug = eventTitle ? slugify(eventTitle) : '';
+        a.download = slug ? `participants-${slug}.csv` : 'participants.csv';
         a.rel = 'noopener';
         document.body.append(a);
         a.click();

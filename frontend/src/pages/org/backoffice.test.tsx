@@ -416,6 +416,34 @@ describe('back-office : ventes, commandes, export', () => {
     expect(seen[0]?.auth).toMatch(/^Bearer /);
     expect(seen[0]?.url).not.toMatch(/token|bearer|mock-at/i);
     expect(createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+    const anchor = click.mock.contexts[0] as HTMLAnchorElement;
+    expect(anchor.download).toBe('participants-garonne-electrique-soiree-d-ouverture.csv'); // B1 : nom lisible, pas d'identifiant
+  });
+
+  it('B1 : réponse qui n’est pas du CSV (page HTML d’un proxy) ⇒ pas de téléchargement, message', async () => {
+    const user = userEvent.setup();
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => undefined);
+    server.use(http.get('*/api/v1/orgs/:orgId/events/:eventId/attendees.csv', () => new Response('<html>oops</html>', { headers: { 'Content-Type': 'text/html' } })));
+    await renderApp(EVENT, { as: MANAGER });
+    await user.click(await screen.findByRole('button', { name: 'Exporter les participants (CSV)' }));
+    expect(await screen.findByText(/Réponse inattendue du serveur/)).toBeInTheDocument();
+    expect(click).not.toHaveBeenCalled();
+  });
+
+  it('B2 : identifiant non-UUID dans l’URL ⇒ page introuvable, aucune requête', async () => {
+    const before = [...mock.db.calls.values()].reduce((a, b) => a + b, 0);
+    await renderApp('/orders/pas-un-uuid');
+    expect(await screen.findByRole('heading', { name: 'Page introuvable' })).toBeInTheDocument();
+    await renderApp('/org/../admin/events/x');
+    const after = [...mock.db.calls.entries()].filter(([k]) => !k.includes('/auth/')).reduce((a, [, b]) => a + b, 0);
+    expect(after).toBeLessThanOrEqual(before);
+  });
+
+  it('B4 : statistiques mal formées ⇒ message « réponse inattendue », pas d’affichage faux', async () => {
+    server.use(http.get('*/api/v1/orgs/:orgId/events/:eventId/stats', () => Response.json({ eventId: 'x', totals: { sold: '12' } })));
+    await renderApp(`${EVENT}/dashboard`, { as: MANAGER });
+    expect(await screen.findByText(/Réponse inattendue du serveur/)).toBeInTheDocument();
+    expect(screen.queryByText('Vendues')).toBeNull();
   });
 });
 
@@ -464,6 +492,18 @@ describe('membres, journal, admin plateforme', () => {
     expect(await screen.findByText('Système')).toBeInTheDocument();
     expect(screen.getByText('Administrateur plateforme')).toBeInTheDocument();
     expect(screen.getByText('{"count":3}')).toBeInTheDocument();
+  });
+
+  it('B5 : détails longs tronqués avec « Voir tout » ; indicateur de page', async () => {
+    const user = userEvent.setup();
+    mock.db.audit.unshift({ id: crypto.randomUUID(), orgId: IDS.orgNuits, actorEmail: 'owner@nuits.test', action: 'settings.update', target: 'organization', meta: { long: 'x'.repeat(400) }, createdAt: new Date().toISOString() });
+    for (let i = 0; i < 30; i++) mock.db.audit.push({ id: crypto.randomUUID(), orgId: IDS.orgNuits, actorEmail: null, action: 'order.expire', target: 'order', meta: null, createdAt: new Date(0).toISOString() });
+    await renderApp(`${ORG}/audit`, { as: OWNER });
+    const toggle = await screen.findByRole('button', { name: 'Voir tout' });
+    expect(screen.getByText(/x{280,}…$/)).toBeInTheDocument();
+    await user.click(toggle);
+    expect(screen.getByText(new RegExp(`x{400}`))).toBeInTheDocument();
+    expect(screen.getByText(/^Page 1 \/ 2$/)).toBeInTheDocument();
   });
 
   it('journal refusé au MANAGER', async () => {

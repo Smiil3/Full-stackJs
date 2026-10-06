@@ -131,6 +131,7 @@ describe('saisie back-office (datetime-local dans le fuseau de l’événement)'
     expect(zonedInputToUtc('14/11/2026 20:00', 'Europe/Paris')).toEqual({ ok: false, reason: 'format' });
     expect(zonedInputToUtc('2026-11-14T24:00', 'Europe/Paris')).toEqual({ ok: false, reason: 'format' });
     expect(zonedInputToUtc('2026-11-14T20:00', 'Nope/Nope')).toEqual({ ok: false, reason: 'timezone' });
+    expect(zonedInputToUtc('0050-01-01T10:00', 'Europe/Paris')).toEqual({ ok: false, reason: 'format' }); // revue F3.1 — B3
   });
 });
 

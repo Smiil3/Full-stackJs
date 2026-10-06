@@ -25,7 +25,8 @@ export function EventAdminPage() {
   const { data: event, error, isPending, refetch } = useOrgEvent(orgId, eventId);
   const settings = useOrgSettings(orgId);
   const m = useEventMutations(orgId, eventId);
-  const exportCsv = useExportAttendees(orgId, eventId);
+  const { data: titleData } = useOrgEvent(orgId, eventId);
+  const exportCsv = useExportAttendees(orgId, eventId, titleData?.title);
   const [cancelOpen, setCancelOpen] = useState(false);
   const [confirmTitle, setConfirmTitle] = useState('');
   const [reason, setReason] = useState('');

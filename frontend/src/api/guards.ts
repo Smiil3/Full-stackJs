@@ -3,7 +3,7 @@
  * Une réponse mal formée ne doit jamais devenir un état d'authentification.
  */
 import { ApiError } from './errors';
-import type { AuthSession, Membership, User } from './types';
+import { ORDER_STATUSES, type AuthSession, type EventStats, type Membership, type OrgSettings, type User } from './types';
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isStr = (v: unknown): v is string => typeof v === 'string' && v.length > 0;
@@ -51,5 +51,50 @@ export function parseAuthSession(v: unknown): AuthSession {
 
 export function parseUser(v: unknown): User {
   if (!isUser(v)) throw unexpected();
+  return v;
+}
+
+const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isSafeInteger(v);
+const isBool = (v: unknown): v is boolean => typeof v === 'boolean';
+
+export function isOrgSettings(v: unknown): v is OrgSettings {
+  if (!isObj(v) || !isObj(v.bank)) return false;
+  const ints = ['cardHoldMinutes', 'transferHoldHours', 'cancellationDeadlineHours', 'refundPercent', 'maxPerOrder', 'maxPerUser', 'waitlistOfferMinutes', 'serviceFeeFixedCents', 'serviceFeeBasisPoints'];
+  const bools = ['transferEnabled', 'selfCancellationEnabled', 'serviceFeeRefundable', 'waitlistEnabled'];
+  const nullableStr = (x: unknown) => x === null || typeof x === 'string';
+  return (
+    ints.every((k) => isInt(v[k])) &&
+    bools.every((k) => isBool(v[k])) &&
+    typeof v.defaultTimezone === 'string' &&
+    nullableStr(v.contactEmail) &&
+    nullableStr(v.bank.beneficiary) &&
+    nullableStr(v.bank.ibanMasked) &&
+    nullableStr(v.bank.bic)
+  );
+}
+
+export function isEventStats(v: unknown): v is EventStats {
+  if (!isObj(v) || !isObj(v.totals) || !isObj(v.ordersByStatus) || !Array.isArray(v.ticketTypes)) return false;
+  const totals = v.totals;
+  const statuses = v.ordersByStatus;
+  return (
+    isStr(v.eventId) &&
+    isStr(v.generatedAt) &&
+    ['capacity', 'sold', 'held', 'remaining', 'checkedIn', 'revenueCents', 'refundedCents', 'serviceFeeCents'].every((k) => isInt(totals[k])) &&
+    ORDER_STATUSES.every((s) => isInt(statuses[s])) &&
+    isInt(v.waitlistWaiting) &&
+    v.ticketTypes.every(
+      (t) => isObj(t) && isStr(t.ticketTypeId) && typeof t.name === 'string' && ['capacity', 'sold', 'held', 'remaining', 'checkedIn', 'revenueCents', 'refundedCents'].every((k) => isInt(t[k])),
+    )
+  );
+}
+
+export function parseOrgSettings(v: unknown): OrgSettings {
+  if (!isOrgSettings(v)) throw unexpected();
+  return v;
+}
+
+export function parseEventStats(v: unknown): EventStats {
+  if (!isEventStats(v)) throw unexpected();
   return v;
 }

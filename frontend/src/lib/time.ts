@@ -228,7 +228,8 @@ export function zonedInputToUtc(value: string, tz: string): ZonedConversion {
   if (!m) return { ok: false, reason: 'format' };
   if (!isValidTimeZone(tz)) return { ok: false, reason: 'timezone' };
   const [y, mo, d, h, mi] = m.slice(1).map(Number) as [number, number, number, number, number];
-  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59) return { ok: false, reason: 'format' };
+  // Année < 1000 refusée : Date.UTC(50, …) serait interprété comme 1950.
+  if (y < 1000 || mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59) return { ok: false, reason: 'format' };
   const wallAsUtc = Date.UTC(y, mo - 1, d, h, mi);
   if (new Date(wallAsUtc).getUTCDate() !== d) return { ok: false, reason: 'format' }; // 31 février…
 

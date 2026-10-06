@@ -1,5 +1,6 @@
 import { createBrowserRouter, type RouteObject } from 'react-router';
 import { RequireAuth, RequireOrgRole, RequirePlatformAdmin } from './auth/guards';
+import { ValidIds } from './auth/ValidIds';
 import { Layout } from './components/Layout';
 import { RouteError } from './components/RouteError';
 import { NotFoundPage } from './pages/NotFoundPage';
@@ -39,7 +40,7 @@ export const routes: RouteObject[] = [
     errorElement: <RouteError />,
     children: [
       { index: true, element: <EventsPage /> },
-      { path: 'events/:eventId', element: <EventPage /> },
+      { path: 'events/:eventId', element: <ValidIds><EventPage /></ValidIds> },
       { path: 'login', element: <LoginPage /> },
       { path: 'register', element: <RegisterPage /> },
       { path: 'verify-email', element: <VerifyEmailPage /> },
@@ -47,25 +48,27 @@ export const routes: RouteObject[] = [
       { path: 'reset-password', element: <ResetPasswordPage /> },
       { path: 'account', element: <RequireAuth><AccountPage /></RequireAuth> },
       { path: 'me/orders', element: <RequireAuth><OrdersPage /></RequireAuth> },
-      { path: 'orders/:orderId', element: <RequireAuth><OrderPage /></RequireAuth> },
+      { path: 'orders/:orderId', element: <ValidIds><RequireAuth><OrderPage /></RequireAuth></ValidIds> },
       { path: 'me/tickets', element: <RequireAuth allowOffline><TicketsPage /></RequireAuth> },
       // Back-office : gardes = confort d'affichage, l'API vérifie le rôle à chaque requête.
       { path: 'org', element: <RequireAuth><OrgHomePage /></RequireAuth> },
       {
         path: 'org/:orgId',
         element: (
-          <RequireAuth>
-            <RequireOrgRole min="MANAGER">
-              <OrgLayout />
-            </RequireOrgRole>
-          </RequireAuth>
+          <ValidIds>
+            <RequireAuth>
+              <RequireOrgRole min="MANAGER">
+                <OrgLayout />
+              </RequireOrgRole>
+            </RequireAuth>
+          </ValidIds>
         ),
         children: [
           { index: true, element: <OrgEventsPage /> },
           { path: 'events/new', element: <EventCreatePage /> },
-          { path: 'events/:eventId', element: <EventAdminPage /> },
-          { path: 'events/:eventId/dashboard', element: <DashboardPage /> },
-          { path: 'events/:eventId/orders', element: <OrdersAdminPage /> },
+          { path: 'events/:eventId', element: <ValidIds><EventAdminPage /></ValidIds> },
+          { path: 'events/:eventId/dashboard', element: <ValidIds><DashboardPage /></ValidIds> },
+          { path: 'events/:eventId/orders', element: <ValidIds><OrdersAdminPage /></ValidIds> },
           { path: 'settings', element: <SettingsPage /> },
           { path: 'members', element: <MembersPage /> },
           { path: 'audit', element: <RequireOrgRole min="OWNER"><AuditPage /></RequireOrgRole> },
