@@ -1,6 +1,7 @@
 import { ApiError, isApiError, isErrorCode } from './errors';
+import { parseAuthSession } from './guards';
 import type { AuthSession, ErrorDetails } from './types';
-import { clearAccessToken, getAccessToken, getAccessTokenExpiry, setAccessToken } from '../auth/tokenStore';
+import { clearAccessToken, getAccessToken, setAccessToken } from '../auth/tokenStore';
 
 /**
  * Client API UNIQUE de l'application. Aucun autre module ne doit appeler `fetch` vers l'API.
@@ -189,7 +190,8 @@ async function rawRequest<T>(path: string, opts: RequestOptions, token: string |
     if (res.status === 204) return undefined as T;
     if (opts.responseKind === 'blob') return (await res.blob()) as T;
     const text = await res.text();
-    if (!text) return undefined as T;
+    // Corps vide sur un statut qui doit en avoir un : on ne le transforme pas en `undefined` silencieux.
+    if (!text) throw new ApiError({ status: res.status, code: 'UNEXPECTED_RESPONSE', message: 'empty body' });
     try {
       return JSON.parse(text) as T;
     } catch {
@@ -201,59 +203,88 @@ async function rawRequest<T>(path: string, opts: RequestOptions, token: string |
 }
 
 // ---------------------------------------------------------------------------
-// Refresh : une seule promesse partagée
+// Session : génération + refresh partagé
 // ---------------------------------------------------------------------------
+/**
+ * Génération de session : incrémentée à chaque login / logout / fin de session.
+ * Un refresh démarré sous une génération antérieure est IGNORÉ à son retour (succès comme échec) :
+ * - un logout pendant un refresh en vol ne voit pas le token réinjecté ;
+ * - un 401 tardif d'un refresh de démarrage n'efface pas le token d'un login plus récent.
+ */
+let generation = 0;
 let refreshPromise: Promise<AuthSession> | null = null;
+let refreshGeneration = -1;
 let proactiveTimer: ReturnType<typeof setTimeout> | undefined;
 
-function scheduleProactiveRefresh(): void {
+/**
+ * Planifie le refresh proactif. Plancher : jamais avant la moitié de la durée de vie du token,
+ * jamais moins de 10 s ⇒ un `expiresIn` court ne peut pas provoquer de boucle de refresh.
+ */
+export function proactiveDelayMs(expiresInSeconds: number): number {
+  const lifetime = expiresInSeconds * 1000;
+  return Math.max(10_000, lifetime / 2, lifetime - PROACTIVE_MARGIN_MS);
+}
+
+function scheduleProactiveRefresh(expiresInSeconds: number): void {
   clearTimeout(proactiveTimer);
-  const delay = getAccessTokenExpiry() - Date.now() - PROACTIVE_MARGIN_MS;
   if (!getAccessToken()) return;
-  proactiveTimer = setTimeout(
-    () => {
-      // Erreur réseau : on retentera de manière réactive au prochain 401.
-      refreshSession().catch(() => undefined);
-    },
-    Math.max(5_000, delay),
-  );
+  proactiveTimer = setTimeout(() => {
+    // Erreur réseau : on retentera de manière réactive au prochain 401.
+    refreshSession().catch(() => undefined);
+  }, proactiveDelayMs(expiresInSeconds));
 }
 
 /** Enregistre une session obtenue par login / refresh (token en mémoire seulement). */
-export function acceptSession(session: AuthSession): void {
+function acceptSession(session: AuthSession): void {
   setAccessToken(session.accessToken, session.expiresIn);
-  scheduleProactiveRefresh();
+  scheduleProactiveRefresh(session.expiresIn);
   emit({ type: 'session', session });
 }
 
 /** Vide l'état d'authentification local (sans appel réseau). */
 export function dropSession(reason: 'expired' | 'logout'): void {
+  generation++;
   clearTimeout(proactiveTimer);
   clearAccessToken();
   emit({ type: reason });
 }
 
+const sessionChanged = () => new ApiError({ status: 0, code: 'SESSION_CHANGED', message: 'session changed' });
+
 /**
  * Rafraîchit la session. Tous les appelants concurrents partagent la MÊME promesse :
  * N requêtes en 401 simultanées ⇒ 1 seul POST /auth/refresh.
- * - 401 (INVALID_REFRESH_TOKEN…) ⇒ session terminée (événement `expired`)
- * - erreur réseau ⇒ on rejette sans déconnecter (mode hors-ligne)
+ * - 401 INVALID_REFRESH_TOKEN ⇒ session terminée (événement `expired`)
+ * - autre erreur (réseau, 5xx, 403 CSRF_CHECK_FAILED…) ⇒ rejet SANS déconnexion
+ * - session changée entre-temps (login/logout) ⇒ résultat ignoré, rejet SESSION_CHANGED
  */
 export function refreshSession(): Promise<AuthSession> {
-  if (refreshPromise) return refreshPromise;
-  refreshPromise = (async () => {
+  if (refreshPromise && refreshGeneration === generation) return refreshPromise;
+  const startedAt = generation;
+  const promise = (async () => {
     try {
-      const session = await rawRequest<AuthSession>('/auth/refresh', { method: 'POST', headers: { ...CSRF_HEADER } }, null);
+      const raw = await rawRequest<unknown>('/auth/refresh', { method: 'POST', headers: { ...CSRF_HEADER } }, null);
+      if (startedAt !== generation) throw sessionChanged();
+      const session = parseAuthSession(raw);
       acceptSession(session);
       return session;
     } catch (e) {
-      if (isApiError(e) && (e.status === 401 || e.status === 403)) dropSession('expired');
+      if (startedAt !== generation) throw isApiError(e) && e.code === 'SESSION_CHANGED' ? e : sessionChanged();
+      if (isApiError(e) && e.status === 401 && e.code === 'INVALID_REFRESH_TOKEN') dropSession('expired');
       throw e;
     } finally {
-      refreshPromise = null;
+      if (refreshGeneration === startedAt) refreshPromise = null;
     }
   })();
-  return refreshPromise;
+  refreshPromise = promise;
+  refreshGeneration = startedAt;
+  return promise;
+}
+
+/** Attend la fin d'un refresh en vol (sans propager son résultat). */
+async function settleRefresh(): Promise<void> {
+  const pending = refreshPromise;
+  if (pending) await pending.catch(() => undefined);
 }
 
 // ---------------------------------------------------------------------------
@@ -262,7 +293,7 @@ export function refreshSession(): Promise<AuthSession> {
 export async function apiRequest<T>(path: string, opts: RequestOptions = {}): Promise<T> {
   const useAuth = opts.auth !== false;
   // Un refresh est en cours : on l'attend plutôt que d'envoyer un token sur le point d'être remplacé.
-  if (useAuth && refreshPromise) await refreshPromise.catch(() => undefined);
+  if (useAuth) await settleRefresh();
   const token = useAuth ? getAccessToken() : null;
   try {
     return await rawRequest<T>(path, opts, token);
@@ -276,33 +307,40 @@ export async function apiRequest<T>(path: string, opts: RequestOptions = {}): Pr
     try {
       return await rawRequest<T>(path, opts, getAccessToken()); // rejeu UNIQUE
     } catch (retryError) {
-      if (isApiError(retryError) && retryError.status === 401) dropSession('expired');
+      if (isApiError(retryError) && retryError.status === 401 && retryError.code === 'UNAUTHENTICATED') dropSession('expired');
       throw retryError;
     }
   }
 }
 
-/** Login : n'utilise pas de Bearer, enregistre la session. */
+/** Login : n'utilise pas de Bearer, enregistre la session. Tout refresh en vol est invalidé. */
 export async function login(email: string, password: string): Promise<AuthSession> {
-  const session = await rawRequest<AuthSession>('/auth/login', { method: 'POST', body: { email, password } }, null);
+  generation++;
+  const startedAt = generation;
+  await settleRefresh(); // la réponse d'un refresh en vol ne doit pas écraser le cookie de ce login
+  const raw = await rawRequest<unknown>('/auth/login', { method: 'POST', body: { email, password } }, null);
+  const session = parseAuthSession(raw);
+  if (startedAt !== generation) throw sessionChanged();
   acceptSession(session);
   return session;
 }
 
 /** Déconnexion : révoque côté serveur (best effort) puis vide TOUJOURS l'état local. */
 export async function logout(): Promise<void> {
+  const token = getAccessToken();
+  dropSession('logout'); // local d'abord : plus aucun token utilisable, refresh en vol invalidé
+  await settleRefresh(); // le serveur révoque ainsi la DERNIÈRE rotation du cookie
   try {
-    await rawRequest<undefined>('/auth/logout', { method: 'POST', headers: { ...CSRF_HEADER } }, getAccessToken());
+    await rawRequest<undefined>('/auth/logout', { method: 'POST', headers: { ...CSRF_HEADER } }, token);
   } catch {
-    // Hors-ligne ou déjà expiré : la déconnexion locale doit quand même avoir lieu.
-  } finally {
-    dropSession('logout');
+    // Hors-ligne ou déjà expiré : la déconnexion locale a déjà eu lieu.
   }
 }
 
 /** Réservé aux tests. */
 export function __resetClientForTests(): void {
   refreshPromise = null;
+  generation++;
   clearTimeout(proactiveTimer);
   clearAccessToken();
   listeners.clear();

@@ -1,7 +1,7 @@
 import { ERROR_CODES, type ErrorCode, type ErrorDetails } from './types';
 
 /** Codes propres au client (jamais renvoyés par l'API). */
-export type ClientErrorCode = 'NETWORK_ERROR' | 'TIMEOUT' | 'UNEXPECTED_RESPONSE';
+export type ClientErrorCode = 'NETWORK_ERROR' | 'TIMEOUT' | 'UNEXPECTED_RESPONSE' | 'SESSION_CHANGED';
 export type AnyErrorCode = ErrorCode | ClientErrorCode;
 
 export class ApiError extends Error {
@@ -69,6 +69,7 @@ const MESSAGES: Record<AnyErrorCode, string> = {
   NETWORK_ERROR: 'Connexion impossible. Vérifiez votre réseau puis réessayez.',
   TIMEOUT: 'Le serveur met trop de temps à répondre. Réessayez.',
   UNEXPECTED_RESPONSE: 'Réponse inattendue du serveur. Réessayez dans quelques instants.',
+  SESSION_CHANGED: 'Votre session a changé entre-temps. Réessayez.',
 };
 
 /** Message français lisible, enrichi des `details` contractuels quand ils sont utiles. */
