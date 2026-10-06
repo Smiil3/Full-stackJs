@@ -99,8 +99,11 @@ async function buildSession(userId: string, refreshToken: string): Promise<Sessi
 
 /**
  * Inscription : réponse identique que l'email existe ou non. Le hash du mot de passe est calculé
- * dans tous les cas (même coût). Compte existant : mail « vous avez déjà un compte » ou nouveau lien
- * de vérification, jamais d'erreur visible.
+ * dans tous les cas (même coût).
+ * - compte vérifié : mail « vous avez déjà un compte », rien d'autre ne change ;
+ * - compte NON vérifié (anti pré-détournement) : la dernière inscription gagne — mot de passe et nom
+ *   remplacés, anciens liens de vérification invalidés, sessions révoquées, nouveau lien envoyé.
+ *   Un attaquant qui aurait inscrit l'adresse de sa victime perd tout accès dès qu'elle s'inscrit.
  */
 export async function register(input: { email: string; password: string; displayName: string }): Promise<void> {
   const email = normalizeEmail(input.email);
@@ -115,8 +118,13 @@ export async function register(input: { email: string; password: string; display
           const raw = await issueEmailToken(tx, existing.id, 'RESET_PASSWORD');
           await enqueueEmail(tx, existing.email, 'accountExists', { displayName: existing.displayName, resetLink: link('/reset-password', raw) });
         } else {
+          await tx.user.update({
+            where: { id: existing.id },
+            data: { passwordHash, displayName, tokenVersion: { increment: 1 }, failedLoginCount: 0, lockedUntil: null },
+          });
+          await repo.revokeAllForUser(tx, existing.id);
           const raw = await issueEmailToken(tx, existing.id, 'VERIFY_EMAIL');
-          await enqueueEmail(tx, existing.email, 'verifyEmail', { displayName: existing.displayName, link: link('/verify-email', raw) });
+          await enqueueEmail(tx, existing.email, 'verifyEmail', { displayName, link: link('/verify-email', raw) });
         }
         return;
       }
@@ -139,7 +147,9 @@ export async function verifyEmail(token: string): Promise<void> {
   const ok = await transaction(async (tx) => {
     const userId = await repo.consumeEmailToken(tx, sha256Hex(token), 'VERIFY_EMAIL');
     if (!userId) return false;
-    await tx.user.updateMany({ where: { id: userId, emailVerifiedAt: null }, data: { emailVerifiedAt: new Date() } });
+    // Ceinture et bretelles : toute session ouverte avant la vérification est révoquée.
+    await tx.user.update({ where: { id: userId }, data: { emailVerifiedAt: new Date(), tokenVersion: { increment: 1 } } });
+    await repo.revokeAllForUser(tx, userId);
     return true;
   });
   if (!ok) throw errors.validation([{ path: 'token', message: 'Lien invalide ou expiré.' }], 'Lien invalide ou expiré.');
@@ -157,7 +167,8 @@ export async function resendVerification(rawEmail: string): Promise<void> {
 
 /**
  * Connexion : message unique pour email inconnu, mot de passe faux ou compte verrouillé ;
- * vérification argon2 systématique (hash factice si l'email est inconnu).
+ * vérification argon2 systématique (hash factice si l'email est inconnu). Email non vérifié ⇒ 403
+ * EMAIL_NOT_VERIFIED, seulement après un mot de passe correct.
  */
 export async function login(rawEmail: string, password: string): Promise<SessionResult> {
   const email = normalizeEmail(rawEmail);
@@ -174,6 +185,8 @@ export async function login(rawEmail: string, password: string): Promise<Session
     throw errors.invalidCredentials();
   }
   if (user.failedLoginCount > 0 || user.lockedUntil) await repo.recordLoginSuccess(user.id);
+  // Email non vérifié : révélé UNIQUEMENT à qui connaît le mot de passe, et aucune session n'est créée.
+  if (!user.emailVerifiedAt) throw errors.emailNotVerified();
   const refresh = await transaction((tx) => createRefreshToken(tx, user.id, randomUUID()));
   return buildSession(user.id, refresh.raw);
 }

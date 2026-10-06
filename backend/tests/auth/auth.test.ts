@@ -351,3 +351,51 @@ describe('unicité de l’email insensible à la casse (B1.1 M6)', () => {
     await api().post(`${A}/login`).send({ email: 'ANDRÉ@exemple.com'.normalize('NFD'), password: PASSWORD }).expect(200);
   });
 });
+
+describe('pré-détournement de compte (B2.1 H1)', () => {
+  const VICTIM = 'victime@test.fr';
+  const ATTACKER_PWD = 'mot-de-passe-attaquant-1';
+  const VICTIM_PWD = 'mot-de-passe-victime-42';
+
+  it('login d’un compte non vérifié : 403 seulement avec le bon mot de passe, jamais de session', async () => {
+    await api().post(`${A}/register`).send({ email: 'nv@test.fr', password: PASSWORD, displayName: 'NV' }).expect(202);
+    const ok = await api().post(`${A}/login`).send({ email: 'nv@test.fr', password: PASSWORD });
+    expect(ok.status).toBe(403);
+    expect(ok.body.error.code).toBe('EMAIL_NOT_VERIFIED');
+    expect(ok.headers['set-cookie']).toBeUndefined();
+    const bad = await api().post(`${A}/login`).send({ email: 'nv@test.fr', password: 'mauvais-mot-de-passe' });
+    expect(bad.status).toBe(401);
+    expect(bad.body.error.code).toBe('INVALID_CREDENTIALS');
+    expect(await getDb().refreshToken.count()).toBe(0);
+  });
+
+  it('scénario complet : l’attaquant inscrit l’email de la victime puis perd tout accès', async () => {
+    // 1. L'attaquant inscrit l'adresse de la victime avec SON mot de passe : il ne peut pas se connecter.
+    await api().post(`${A}/register`).send({ email: VICTIM, password: ATTACKER_PWD, displayName: 'Attaquant' }).expect(202);
+    await api().post(`${A}/login`).send({ email: VICTIM, password: ATTACKER_PWD }).expect(403);
+    const firstLink = await tokenFromMail(VICTIM, 'verifyEmail');
+    // 2. La victime s'inscrit : sa demande remplace celle de l'attaquant.
+    await getDb().emailToken.updateMany({ data: { createdAt: new Date(Date.now() - 3 * 60_000) } });
+    await api().post(`${A}/register`).send({ email: VICTIM, password: VICTIM_PWD, displayName: 'Victime' }).expect(202);
+    const user = await getDb().user.findUniqueOrThrow({ where: { email: VICTIM } });
+    expect(user.displayName).toBe('Victime');
+    // Le lien de la première inscription ne fonctionne plus.
+    await api().post(`${A}/verify-email`).send({ token: firstLink }).expect(400);
+    // 3. La victime vérifie son adresse avec SON lien.
+    await api().post(`${A}/verify-email`).send({ token: await tokenFromMail(VICTIM, 'verifyEmail') }).expect(204);
+    // 4. Le mot de passe de l'attaquant ne sert plus à rien ; celui de la victime fonctionne.
+    await api().post(`${A}/login`).send({ email: VICTIM, password: ATTACKER_PWD }).expect(401);
+    await api().post(`${A}/login`).send({ email: VICTIM, password: VICTIM_PWD }).expect(200);
+  });
+
+  it('la vérification d’email révoque toutes les sessions antérieures', async () => {
+    await api().post(`${A}/register`).send({ email: 'sess@test.fr', password: PASSWORD, displayName: 'S' }).expect(202);
+    const user = await getDb().user.findUniqueOrThrow({ where: { email: 'sess@test.fr' } });
+    // Session préexistante (créée hors du flux normal, ex. ancienne version de l'application).
+    await getDb().refreshToken.create({ data: { userId: user.id, familyId: user.id, tokenHash: 'b'.repeat(64), expiresAt: new Date(Date.now() + 60_000) } });
+    await api().post(`${A}/verify-email`).send({ token: await tokenFromMail('sess@test.fr', 'verifyEmail') }).expect(204);
+    expect(await getDb().refreshToken.count({ where: { userId: user.id, revokedAt: null } })).toBe(0);
+    const after = await getDb().user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(after.tokenVersion).toBe(user.tokenVersion + 1);
+  });
+});
