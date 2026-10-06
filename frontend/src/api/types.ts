@@ -162,6 +162,8 @@ export type Order = {
   cancellableUntil: IsoDateTime | null;
   refundPercent: number;
   refundAmountCents: number | null;
+  /** Montant qui serait remboursé si l'acheteur annulait maintenant ; null si annulation impossible (contrat v1.6). */
+  refundPreviewCents: number | null;
   createdAt: IsoDateTime;
   transferInstructions: TransferInstructions | null;
 };

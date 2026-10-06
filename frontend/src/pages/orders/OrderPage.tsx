@@ -13,7 +13,7 @@ import { useNow } from '../../lib/hooks/useNow';
 import { formatCents } from '../../lib/money';
 import { currentPspEnv, resolvePspRedirect } from '../../lib/pspRedirect';
 import { OrderSummary } from './OrderSummary';
-import { canCancel, refundPreviewCents } from './orderRules';
+import { canCancel } from './orderRules';
 import { TransferInstructions } from './TransferInstructions';
 
 /** Durée max d'attente de la confirmation du paiement après retour du PSP (contrat §4). */
@@ -170,8 +170,7 @@ export function OrderPage() {
       >
         {order.status === 'PAID' ? (
           <p>
-            Vos billets seront annulés définitivement. Montant remboursé : <strong>{formatCents(refundPreviewCents(order))}</strong> ({order.refundPercent} % du prix des billets
-            {order.serviceFeeCents > 0 ? ', hors frais de service sauf conditions contraires du collectif' : ''}). Le montant définitif s’affichera après confirmation.
+            Vos billets seront annulés définitivement. Montant remboursé : <strong>{formatCents(order.refundPreviewCents ?? 0)}</strong>.
           </p>
         ) : (
           <p>Les places réservées seront libérées. Aucun paiement n’a été encaissé.</p>

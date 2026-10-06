@@ -103,6 +103,32 @@ describe('page commande', () => {
     expect(await screen.findByText(/Commande annulée et remboursée : 36,00\s€/)).toBeInTheDocument();
   });
 
+  it('montant remboursé = refundPreviewCents du serveur (frais inclus si remboursables)', async () => {
+    const user = userEvent.setup();
+    const order = await createOrder('CARD', 1);
+    const stored = mock.db.orders.find((o) => o.id === order.id);
+    if (stored) {
+      stored.serviceFeeRefundable = true;
+      stored.refundPercent = 50;
+      await markPaid(stored);
+    }
+    await renderApp(`/orders/${order.id}`);
+    await user.click(await screen.findByRole('button', { name: 'Annuler la commande' }));
+    // floor(1800 × 50 / 100) + 95 de frais = 995
+    expect(screen.getByRole('dialog', { name: 'Annuler cette commande ?' })).toHaveTextContent(/Montant remboursé : 9,95\s€/);
+  });
+
+  it('annulation impossible (refundPreviewCents null, ex. billet scanné) ⇒ pas de bouton', async () => {
+    const order = await createOrder();
+    const stored = mock.db.orders.find((o) => o.id === order.id);
+    if (stored) await markPaid(stored);
+    const ticket = mock.db.tickets.find((t) => t.orderId === order.id);
+    if (ticket) ticket.status = 'USED';
+    await renderApp(`/orders/${order.id}`);
+    await screen.findByText(/Paiement confirmé/);
+    expect(screen.queryByRole('button', { name: 'Annuler la commande' })).toBeNull();
+  });
+
   it('CANCELLATION_CLOSED ⇒ message', async () => {
     const user = userEvent.setup();
     const order = await createOrder();

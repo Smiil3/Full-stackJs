@@ -143,6 +143,14 @@ export function toEventAdmin(e: MockEvent): EventAdmin {
   };
 }
 
+/** Contrat v1.6 : formule de remboursement si l'annulation self-service est possible maintenant. */
+function refundPreview(o: MockOrder): number | null {
+  if (o.status === 'PENDING_PAYMENT' || o.status === 'AWAITING_TRANSFER') return 0;
+  if (o.status !== 'PAID' || !o.cancellableUntil || Date.now() >= Date.parse(o.cancellableUntil)) return null;
+  if (db().tickets.some((t) => t.orderId === o.id && t.status === 'USED')) return null;
+  return Math.floor((o.subtotalCents * o.refundPercent) / 100) + (o.serviceFeeRefundable ? o.serviceFeeCents : 0);
+}
+
 function orderBase(o: MockOrder): Omit<Order, 'transferInstructions'> {
   const e = db().events.find((x) => x.id === o.eventId);
   return {
@@ -163,6 +171,7 @@ function orderBase(o: MockOrder): Omit<Order, 'transferInstructions'> {
     cancellableUntil: o.cancellableUntil,
     refundPercent: o.refundPercent,
     refundAmountCents: o.refundAmountCents,
+    refundPreviewCents: refundPreview(o),
     createdAt: o.createdAt,
   };
 }
