@@ -3,6 +3,7 @@ import { getAuth } from '../../middlewares/auth.js';
 import type { ValidatedInput } from '../../middlewares/validate.js';
 import type { PageQuery } from '../../lib/schemas.js';
 import * as service from './service.js';
+import { cancelOwnOrder } from './cancel.js';
 import type { CreateOrderBody } from './schemas.js';
 
 type Empty = Record<string, never>;
@@ -23,6 +24,9 @@ export const list = ({ query }: ValidatedInput<Empty, PageQuery, Empty, Empty>, 
 
 export const checkout = ({ params }: ValidatedInput<{ orderId: string }, Empty, Empty, Empty>, _q: Request, res: Response) =>
   service.checkout(getAuth(res).userId, params.orderId);
+
+export const cancel = ({ params }: ValidatedInput<{ orderId: string }, Empty, Empty, Empty>, _q: Request, res: Response) =>
+  cancelOwnOrder(getAuth(res).userId, params.orderId);
 
 export const get = ({ params }: ValidatedInput<{ orderId: string }, Empty, Empty, Empty>, _q: Request, res: Response) =>
   service.getOrder(getAuth(res).userId, params.orderId);

@@ -12,12 +12,16 @@ import { webhooksRouter } from './modules/payments/routes.js';
 import { orgOrdersRouter } from './modules/orgOrders/routes.js';
 import { meRouter } from './modules/tickets/routes.js';
 import { orgRefundsRouter } from './modules/refunds/routes.js';
+import { joinWaitlistRouter, waitlistRouter } from './modules/waitlist/routes.js';
+import { reportsRouter } from './modules/reports/routes.js';
 
 /** Routeur principal `/api/v1` : chaque module y monte ses routes. */
 export function buildApiRouter(limiters: Limiters): Router {
   const router = Router();
   router.use('/auth', authRouter(limiters));
+  router.use('/events', joinWaitlistRouter(limiters));
   router.use('/events', catalogRouter());
+  router.use('/waitlist', waitlistRouter(limiters));
   router.use('/orders', ordersRouter(limiters));
   router.use('/me', meRouter());
   router.use('/admin', adminRouter());
@@ -25,6 +29,7 @@ export function buildApiRouter(limiters: Limiters): Router {
   router.use('/orgs/:orgId/refunds', orgRefundsRouter());
   router.use('/orgs/:orgId', orgOrdersRouter());
   router.use('/orgs/:orgId/events/:eventId/checkin', eventCheckinRouter(limiters));
+  router.use('/orgs/:orgId/events/:eventId', reportsRouter());
   router.use('/orgs/:orgId/events', orgEventsRouter());
   router.use('/orgs/:orgId/checkin', orgCheckinRouter());
   router.use('/orgs/:orgId', orgsRouter());

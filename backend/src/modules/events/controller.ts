@@ -21,6 +21,8 @@ export const update = ({ params, body }: In<EventP, Empty, EventPatchBody>, _q: 
   service.updateEvent(getOrg(res).orgId, { userId: getAuth(res).userId, role: getOrg(res).role }, params.eventId, body);
 export const publish = ({ params }: In<EventP, Empty, Empty>, _q: Request, res: Response) =>
   service.publishEvent(getOrg(res).orgId, getAuth(res).userId, params.eventId);
+export const cancel = ({ params, body }: In<EventP, Empty, { reason: string }>, _q: Request, res: Response) =>
+  service.cancelEvent(getOrg(res).orgId, getAuth(res).userId, params.eventId, body.reason);
 export const createTicketType = ({ params, body }: In<EventP, Empty, TicketTypeBody>, _q: Request, res: Response) =>
   service.createTicketType(getOrg(res).orgId, getAuth(res).userId, params.eventId, body);
 export const updateTicketType = ({ params, body }: In<TtP, Empty, TicketTypePatchBody>, _q: Request, res: Response) =>

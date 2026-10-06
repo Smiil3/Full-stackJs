@@ -12,7 +12,7 @@ type CatalogEvent = Event & {
 };
 
 function summary(e: CatalogEvent, waiting: Map<string, number>, now: Date) {
-  const availabilities = e.ticketTypes.map((t) => availabilityOf(t, waiting.get(t.id) ?? 0));
+  const availabilities = e.ticketTypes.map((t) => availabilityOf(t, waiting.get(t.id) ?? null));
   const prices = e.ticketTypes.map((t) => priceAt(t, now).unitPriceCents);
   return {
     id: e.id,
@@ -46,7 +46,7 @@ export async function listEvents(filter: { orgSlug?: string; from?: string; to?:
     page,
     pageSize,
   );
-  const waiting = await repo.waitingCounts(rows.flatMap((e) => e.ticketTypes.map((t) => t.id)));
+  const waiting = await repo.smallestWaiting(rows.flatMap((e) => e.ticketTypes.map((t) => t.id)));
   const now = clock.now();
   return { items: rows.map((e) => summary(e, waiting, now)), page, pageSize, total };
 }
@@ -56,7 +56,7 @@ export async function getEvent(eventId: string) {
   const e = await repo.findPublished(eventId, new Date(clock.now().getTime() - PUBLIC_RETENTION_MS));
   if (!e?.organization.settings) throw errors.notFound();
   const settings = e.organization.settings;
-  const waiting = await repo.waitingCounts(e.ticketTypes.map((t) => t.id));
+  const waiting = await repo.smallestWaiting(e.ticketTypes.map((t) => t.id));
   const now = clock.now();
   return {
     ...summary(e, waiting, now),
@@ -75,7 +75,7 @@ export async function getEvent(eventId: string) {
         regularPriceCents: t.priceCents,
         isEarly: price.isEarly,
         earlyUntil: price.isEarly ? iso(t.earlyUntil) : null,
-        availability: availabilityOf(t, waiting.get(t.id) ?? 0),
+        availability: availabilityOf(t, waiting.get(t.id) ?? null),
       };
     }),
     rules: toPublicRules(resolveEventSettings(settings, e)),

@@ -39,13 +39,13 @@ export function findPublished(eventId: string, endedAfter: Date) {
   return getDb().event.findFirst({ where: { id: eventId, status: 'PUBLISHED', endsAt: { gt: endedAfter } }, include });
 }
 
-/** Nombre d'entrées en attente par type (les places libérées leur reviennent avant le public). */
-export async function waitingCounts(ticketTypeIds: string[]): Promise<Map<string, number>> {
+/** Plus petite demande en attente par type (les places libérées reviennent d'abord à la liste d'attente). */
+export async function smallestWaiting(ticketTypeIds: string[]): Promise<Map<string, number>> {
   if (ticketTypeIds.length === 0) return new Map();
   const rows = await getDb().waitlistEntry.groupBy({
     by: ['ticketTypeId'],
     where: { ticketTypeId: { in: ticketTypeIds }, status: 'WAITING' },
-    _count: { _all: true },
+    _min: { quantity: true },
   });
-  return new Map(rows.map((r) => [r.ticketTypeId, r._count._all]));
+  return new Map(rows.flatMap((r) => (r._min.quantity === null ? [] : [[r.ticketTypeId, r._min.quantity] as const])));
 }

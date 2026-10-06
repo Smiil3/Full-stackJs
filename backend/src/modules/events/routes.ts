@@ -13,6 +13,7 @@ export function orgEventsRouter(): Router {
   r.get('/:eventId', requireOrgRole('MANAGER'), ...endpoint({ params: s.orgEventParams, response: s.eventAdminResponse }, c.get));
   r.patch('/:eventId', requireOrgRole('MANAGER'), ...endpoint({ params: s.orgEventParams, body: s.eventPatchBody, response: s.eventAdminResponse }, c.update));
   r.post('/:eventId/publish', requireOrgRole('MANAGER'), ...endpoint({ params: s.orgEventParams, response: s.eventAdminResponse }, c.publish));
+  r.post('/:eventId/cancel', requireOrgRole('OWNER'), ...endpoint({ params: s.orgEventParams, body: s.cancelEventBody, response: s.eventAdminResponse }, c.cancel));
   r.post('/:eventId/ticket-types', requireOrgRole('MANAGER'),
     ...endpoint({ params: s.orgEventParams, body: s.ticketTypeCreateBody, response: s.ticketTypeAdminResponse, status: 201 }, c.createTicketType));
   r.patch('/:eventId/ticket-types/:ticketTypeId', requireOrgRole('MANAGER'),

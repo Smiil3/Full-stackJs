@@ -8,6 +8,7 @@ import { processOutboxBatch } from './lib/outbox.js';
 import { purgeExpiredBuckets } from './lib/rateLimitStore.js';
 import { expireOrders } from './jobs/expireOrders.js';
 import { processRefunds } from './jobs/processRefunds.js';
+import { expireWaitlistOffers, sweepWaitlist } from './modules/waitlist/service.js';
 
 /**
  * Worker : expirations, envoi des mails (outbox), purge des compteurs.
@@ -34,6 +35,8 @@ const stop = new AbortController();
 async function tick(): Promise<void> {
   const jobs: [string, () => Promise<unknown>][] = [
     ['expireOrders', () => expireOrders()],
+    ['expireWaitlistOffers', () => expireWaitlistOffers()],
+    ['sweepWaitlist', () => sweepWaitlist()],
     ['refunds', () => processRefunds()],
     ['outbox', () => processOutboxBatch(transport)],
     ['purgeRateLimits', () => purgeExpiredBuckets()],

@@ -44,7 +44,7 @@ describe('catalogue public', () => {
     expect(res.body).toMatchObject({ salesOpen: true, contactEmail: 'contact@a.fr', rules: { transferEnabled: true } });
   });
 
-  it('disponibilité AVAILABLE / LOW (≤ 10 %) / SOLD_OUT, et SOLD_OUT tant qu’une liste d’attente existe', async () => {
+  it('disponibilité AVAILABLE / LOW (≤ 10 %) / SOLD_OUT, et SOLD_OUT si une demande en attente tient dans les places libres', async () => {
     const { eventId, ticketTypeIds } = await createEvent(a, {
       ticketTypes: [{ name: 'A', capacity: 100, priceCents: 1000 }, { name: 'B', capacity: 100, priceCents: 1000 }, { name: 'C', capacity: 100, priceCents: 1000 }],
       publish: true,
@@ -55,8 +55,12 @@ describe('catalogue public', () => {
     const res = await api().get(`/api/v1/events/${eventId}`).expect(200);
     expect((res.body.ticketTypes as { availability: string }[]).map((t) => t.availability)).toEqual(['AVAILABLE', 'LOW', 'SOLD_OUT']);
     expect(res.body.coverAvailability).toBe('AVAILABLE');
-    // Des places restent en A, mais une personne attend : complet pour le public.
+    // Une demande en attente trop grosse pour les 11 places libres ne bloque pas le public (B4.1 M3)…
     await getDb().waitlistEntry.create({ data: { ticketTypeId: ticketTypeIds[0]!, eventId, userId: a.scanner.id, quantity: 20 } });
+    const big = await api().get(`/api/v1/events/${eventId}`).expect(200);
+    expect(big.body.ticketTypes[0].availability).toBe('AVAILABLE');
+    // … mais une demande qui tient dans les places libres les réserve à la liste d'attente.
+    await getDb().waitlistEntry.create({ data: { ticketTypeId: ticketTypeIds[0]!, eventId, userId: a.manager.id, quantity: 5 } });
     const after = await api().get(`/api/v1/events/${eventId}`).expect(200);
     expect(after.body.ticketTypes[0].availability).toBe('SOLD_OUT');
     expect(after.body.coverAvailability).toBe('LOW');

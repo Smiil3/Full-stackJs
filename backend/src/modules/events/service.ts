@@ -1,6 +1,8 @@
 import type { Event, OrganizationSettings, Prisma, Role, TicketType } from '../../generated/prisma/client.js';
 import { diff, writeAudit } from '../../lib/audit.js';
 import { clock } from '../../lib/clock.js';
+import { distributeWaitlist, releaseOffer } from '../waitlist/distribute.js';
+import { cancelOrderForEvent } from '../orders/cancel.js';
 import { transaction, type Tx } from '../../lib/db.js';
 import { errors, type FieldError } from '../../lib/errors.js';
 import { iso } from '../../lib/schemas.js';
@@ -261,6 +263,36 @@ export async function publishEvent(orgId: string, actorId: string, eventId: stri
   });
 }
 
+/**
+ * Annulation d'un événement (OWNER) : commandes payées remboursées intégralement (frais compris), commandes
+ * en attente annulées, liste d'attente close, acheteurs prévenus, audit. Ordre des verrous : events → orders
+ * → ticket_types ; les réservations concurrentes (FOR SHARE sur l'événement) attendent puis voient CANCELLED.
+ */
+export async function cancelEvent(orgId: string, actorId: string, eventId: string, reason: string) {
+  return transaction(async (tx) => {
+    if (!(await repo.lockEvent(tx, orgId, eventId))) throw errors.notFound();
+    const { count } = await tx.event.updateMany({
+      where: { id: eventId, orgId, status: { not: 'CANCELLED' } },
+      data: { status: 'CANCELLED', cancelledAt: clock.now(), cancelReason: reason },
+    });
+    if (count !== 1) throw errors.state('INVALID_STATE', 'Cet événement est déjà annulé.');
+    const orders = await tx.order.findMany({
+      where: { eventId, status: { in: ['PENDING_PAYMENT', 'AWAITING_TRANSFER', 'PAID'] } },
+      select: { id: true, status: true },
+      orderBy: { id: 'asc' },
+    });
+    for (const o of orders) await cancelOrderForEvent(tx, o.id, reason);
+    const offered = await tx.waitlistEntry.findMany({ where: { eventId, status: 'OFFERED' }, orderBy: { ticketTypeId: 'asc' } });
+    for (const entry of offered) await releaseOffer(tx, entry);
+    await tx.waitlistEntry.updateMany({ where: { eventId, status: { in: ['WAITING', 'OFFERED'] } }, data: { status: 'EXPIRED' } });
+    await writeAudit(tx, {
+      orgId, actorId, action: 'event.cancel', target: `event:${eventId}`,
+      meta: { reason, paidOrders: orders.filter((o) => o.status === 'PAID').length, pendingOrders: orders.filter((o) => o.status !== 'PAID').length },
+    });
+    return load(tx, orgId, eventId);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Types de places
 // ---------------------------------------------------------------------------
@@ -333,6 +365,8 @@ export async function updateTicketType(orgId: string, actorId: string, eventId: 
         UPDATE "ticket_types" SET "capacity" = ${body.capacity}, "updatedAt" = now()
         WHERE "id" = ${ticketTypeId}::uuid AND "eventId" = ${eventId}::uuid AND "sold" + "held" <= ${body.capacity}`;
       if (changed !== 1) throw errors.conflict('La capacité ne peut pas être inférieure aux places vendues ou réservées.', { sold: current.sold, held: current.held });
+      // Hausse de capacité : les nouvelles places vont d'abord à la liste d'attente.
+      if (body.capacity > current.capacity) await distributeWaitlist(tx, ticketTypeId);
     }
     const data: Prisma.TicketTypeUpdateInput = { ...early };
     if (body.name !== undefined) data.name = body.name.trim();

@@ -19,12 +19,13 @@ export function priceAt(tt: Pick<TicketType, 'priceCents' | 'earlyPriceCents' | 
 export type Availability = 'AVAILABLE' | 'LOW' | 'SOLD_OUT';
 
 /**
- * Disponibilité publique, sans chiffre exact. Un type avec des personnes en liste d'attente est
- * « complet » pour le public : les places libérées leur reviennent d'abord.
+ * Disponibilité publique, sans chiffre exact. Si une personne en liste d'attente peut être servie avec les
+ * places libres (plus petite demande en attente ≤ places libres), le type est « complet » pour le public :
+ * ces places lui reviennent d'abord.
  */
-export function availabilityOf(tt: Pick<TicketType, 'capacity' | 'sold' | 'held'>, waiting: number): Availability {
+export function availabilityOf(tt: Pick<TicketType, 'capacity' | 'sold' | 'held'>, smallestWaiting: number | null): Availability {
   const remaining = tt.capacity - tt.sold - tt.held;
-  if (remaining <= 0 || waiting > 0) return 'SOLD_OUT';
+  if (remaining <= 0 || (smallestWaiting !== null && smallestWaiting <= remaining)) return 'SOLD_OUT';
   return remaining * 10 <= tt.capacity ? 'LOW' : 'AVAILABLE';
 }
 

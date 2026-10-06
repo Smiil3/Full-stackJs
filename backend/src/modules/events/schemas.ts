@@ -99,3 +99,4 @@ export const eventAdminResponse = Joi.object({
   createdAt: isoDateOutput, updatedAt: isoDateOutput,
 });
 export const eventAdminPage = pageOf(eventAdminResponse);
+export const cancelEventBody = Joi.object<{ reason: string }>({ reason: text({ multiline: true }).min(1).max(500).required() });

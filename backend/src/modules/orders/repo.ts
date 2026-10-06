@@ -74,7 +74,11 @@ export async function reserve(tx: Tx, eventId: string, ticketTypeId: string, qua
     UPDATE "ticket_types" SET "held" = "held" + ${quantity}, "updatedAt" = now()
     WHERE "id" = ${ticketTypeId}::uuid AND "eventId" = ${eventId}::uuid
       AND "sold" + "held" + ${quantity} <= "capacity"
-      AND NOT EXISTS (SELECT 1 FROM "waitlist_entries" w WHERE w."ticketTypeId" = ${ticketTypeId}::uuid AND w."status" = 'WAITING')
+      -- Priorité à la liste d'attente : bloqué seulement si une personne en attente pourrait être servie
+      -- avec les places libres (une demande trop grosse ne bloque ni les suivantes ni le public).
+      AND NOT EXISTS (SELECT 1 FROM "waitlist_entries" w
+                      WHERE w."ticketTypeId" = ${ticketTypeId}::uuid AND w."status" = 'WAITING'
+                        AND w."quantity" <= "capacity" - "sold" - "held")
     RETURNING "id"`;
   return rows.length === 1;
 }
