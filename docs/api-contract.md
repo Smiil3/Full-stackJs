@@ -1,7 +1,7 @@
 # Contrat d'API — Billetterie « Les Nuits de la Garonne »
 
 > **Source de vérité commune front / back.** Toute modification passe par le PO (session `fullstack-js`) : demander via une ligne `NEED: changement de contrat …`. Ne jamais diverger silencieusement.
-> Version : 1.8 — 2026-10-06 (voir §11 Historique)
+> Version : 1.9 — 2026-10-06 (voir §11 Historique)
 
 ## 1. Conventions
 
@@ -120,6 +120,7 @@ type Order = { id; eventId; eventTitle; eventStartsAt; eventTimezone; status: Or
 | `POST /orders/:orderId/cancel` | Bearer | — | 200 `Order`. Non payée ⇒ `CANCELLED`. Payée ⇒ `REFUNDED` avec `refundAmountCents` · 409 `CANCELLATION_CLOSED`/`INVALID_STATE` |
 
 Prix, tarif early, frais et total sont **toujours calculés par le serveur** ; le client n'envoie jamais de prix.
+**Idempotency-Key** : une clé = une commande, pour toujours (portée : l'acheteur). Rejouer une clé dont la commande a expiré renvoie cette commande `EXPIRED` : toute nouvelle tentative d'achat utilise une **nouvelle** clé. L'empreinte du body ignore l'ordre des `items`.
 Après paiement, le PSP redirige vers `${FRONT_URL}/orders/:orderId?payment=success|failed` ; le front **poll** `GET /orders/:orderId` (toutes les 2 s, max 60 s) jusqu'à `PAID` — la redirection ne prouve rien, seul le webhook fait foi.
 
 ## 5. Billets (acheteur)
@@ -260,6 +261,7 @@ type EventStats = { eventId; generatedAt; currency: 'EUR';
 - En-têtes de sécurité via helmet ; CORS : origine `FRONT_URL` uniquement, `credentials: true`.
 
 ## 11. Historique
+- **1.9** (2026-10-06) : portée et cycle de vie de l'Idempotency-Key précisés.
 - **1.8** (2026-10-06) : `GET /admin/orgs` paginé.
 - **1.7** (2026-10-06) : report d'événement (OWNER, motif, droit au remboursement intégral) ; invariants de dates ; ré-authentification + notification pour changement bancaire ; mail au membre ajouté ; `GET /orgs/:orgId/events*` réservé MANAGER+, nouvel endpoint `GET /orgs/:orgId/checkin/events` pour SCANNER ; `page` ≤ 1000 ; libellé admin dans l'audit.
 - **1.6** (2026-10-06) : `Order.refundPreviewCents` + formule de remboursement explicite.
