@@ -6,7 +6,7 @@ describe('safeRedirectPath (anti open-redirect)', () => {
     ['/me/tickets', '/me/tickets'],
     ['/orders/123?payment=success', '/orders/123?payment=success'],
     ['/events/abc#types', '/events/abc#types'],
-    ['/a/../b', '/b'],
+    ['/events/abc?q=a%20b', '/events/abc?q=a%20b'],
   ])('accepte le chemin interne %s', (input, expected) => {
     expect(safeRedirectPath(input)).toBe(expected);
   });
@@ -31,6 +31,20 @@ describe('safeRedirectPath (anti open-redirect)', () => {
     '',
     '%E0%A4%A',
     `/${'a'.repeat(600)}`,
+    // Revue F1.1 (H1) : segments point normalisés par new URL() en `//evil.com`
+    '/.//evil.com',
+    '/..//evil.com',
+    '/a/..//evil.com',
+    '/%2e//evil.com',
+    '/%2E%2E//evil.com',
+    '/%252e//evil.com',
+    '/a/%2e%2e//evil.com',
+    '/./evil',
+    '/a/../b',
+    '/a/.',
+    '/..',
+    '/%2e%2e',
+    '/%2e%2e%2f%2fevil.com',
   ])('refuse %s', (input) => {
     expect(safeRedirectPath(input)).toBe('/');
   });

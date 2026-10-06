@@ -1,35 +1,42 @@
 /**
  * Anti open-redirect : n'accepte QUE des chemins internes à l'application.
  * Refuse : URL absolues (https://, javascript:, data:…), protocol-relative (//evil, /\evil),
- * caractères de contrôle, encodages détournés (%2F%2F, %5C), et tout ce qui ne commence pas par "/".
+ * caractères de contrôle, antislash, segments `.` / `..` (y compris encodés %2e, double encodage)
+ * — car `new URL()` les normalise : `/.//evil.com` deviendrait `//evil.com`.
+ * La SORTIE est revérifiée avec les mêmes règles.
  */
 const FALLBACK = '/';
+const MAX_LENGTH = 512;
 
-export function safeRedirectPath(raw: string | null | undefined, fallback: string = FALLBACK): string {
-  if (typeof raw !== 'string' || raw.length === 0 || raw.length > 512) return fallback;
-
-  // Décodage itératif borné pour démasquer "%2F%2Fevil.com" ou des doubles encodages.
-  let decoded = raw;
-  for (let i = 0; i < 3; i++) {
+function decodeFully(raw: string): string | null {
+  let current = raw;
+  for (let i = 0; i < 4; i++) {
     let next: string;
     try {
-      next = decodeURIComponent(decoded);
+      next = decodeURIComponent(current);
     } catch {
-      return fallback;
+      return null;
     }
-    if (next === decoded) break;
-    decoded = next;
+    if (next === current) return current;
+    current = next;
   }
+  return null; // encodage imbriqué anormalement profond
+}
 
-  for (const candidate of [raw, decoded]) {
-    if (!candidate.startsWith('/')) return fallback;
-    if (candidate.startsWith('//') || candidate.startsWith('/\\')) return fallback;
-    if (candidate.includes('\\')) return fallback;
-    // eslint-disable-next-line no-control-regex -- on cherche justement les caractères de contrôle
-    if (/[\u0000-\u001f\u007f]/.test(candidate)) return fallback;
-  }
+function isSafeInternal(candidate: string): boolean {
+  if (!candidate.startsWith('/') || candidate.startsWith('//')) return false;
+  if (candidate.includes('\\')) return false;
+  // eslint-disable-next-line no-control-regex -- on cherche justement les caractères de contrôle
+  if (/[\u0000-\u001f\u007f\u2028\u2029]/.test(candidate)) return false;
+  const path = candidate.split(/[?#]/, 1)[0] ?? '';
+  return !path.split('/').some((segment) => segment === '.' || segment === '..');
+}
 
-  // Vérification finale par le parseur d'URL du navigateur : l'origine doit rester la nôtre.
+export function safeRedirectPath(raw: string | null | undefined, fallback: string = FALLBACK): string {
+  if (typeof raw !== 'string' || raw.length === 0 || raw.length > MAX_LENGTH) return fallback;
+  const decoded = decodeFully(raw);
+  if (decoded === null || !isSafeInternal(raw) || !isSafeInternal(decoded)) return fallback;
+
   const base = 'https://app.invalid';
   let url: URL;
   try {
@@ -37,8 +44,11 @@ export function safeRedirectPath(raw: string | null | undefined, fallback: strin
   } catch {
     return fallback;
   }
-  if (url.origin !== base) return fallback;
-  return `${url.pathname}${url.search}${url.hash}`;
+  const out = `${url.pathname}${url.search}${url.hash}`;
+  if (url.origin !== base || !isSafeInternal(out)) return fallback;
+  const outDecoded = decodeFully(out);
+  if (outDecoded === null || !isSafeInternal(outDecoded)) return fallback;
+  return out;
 }
 
 /** Construit `/login?next=<chemin courant>` sans jamais y mettre une URL externe. */
