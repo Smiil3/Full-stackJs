@@ -3,6 +3,7 @@ import 'fake-indexeddb/auto';
 import { cleanup } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll } from 'vitest';
 import { __resetClientForTests } from '../api/client';
+import { __resetServerClock } from '../api/serverClock';
 import { resetMockDb } from '../mocks/core';
 import { server } from '../mocks/server';
 
@@ -23,6 +24,7 @@ afterEach(() => {
   server.resetHandlers();
   resetMockDb();
   __resetClientForTests();
+  __resetServerClock();
 });
 afterAll(() => {
   server.close();

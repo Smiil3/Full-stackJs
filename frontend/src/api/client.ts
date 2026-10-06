@@ -1,5 +1,6 @@
 import { ApiError, isApiError, isErrorCode } from './errors';
 import { parseAuthSession } from './guards';
+import { recordServerDate } from './serverClock';
 import type { AuthSession, ErrorDetails } from './types';
 import { clearAccessToken, getAccessToken, setAccessToken } from '../auth/tokenStore';
 
@@ -185,6 +186,7 @@ async function rawRequest<T>(path: string, opts: RequestOptions, token: string |
     if (opts.signal?.aborted) throw e; // annulation volontaire (TanStack Query) : on propage telle quelle
     throw new ApiError({ status: 0, code: 'NETWORK_ERROR', message: 'network' });
   }
+  recordServerDate(res.headers.get('Date'));
   try {
     if (!res.ok) throw await toApiError(res);
     if (res.status === 204) return undefined as T;

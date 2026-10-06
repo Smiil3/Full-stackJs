@@ -80,6 +80,16 @@ describe('page commande', () => {
     expect(await screen.findByRole('link', { name: 'Refaire une réservation' })).toBeInTheDocument();
   });
 
+  it('H3 : compte à rebours sur l’horloge du SERVEUR ; « Payer » reste actif (le serveur tranche)', async () => {
+    const order = await createOrder(); // expire dans 15 min (horloge serveur du mock = locale)
+    const serverAhead = new Date(Date.now() + 20 * 60_000).toUTCString(); // téléphone en retard de 20 min
+    const { recordServerDate } = await import('../../api/serverClock');
+    recordServerDate(serverAhead);
+    await renderApp(`/orders/${order.id}`);
+    expect(await screen.findByText('délai écoulé')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Payer/ })).toBeEnabled();
+  });
+
   it('INVALID_STATE au paiement ⇒ message', async () => {
     const user = userEvent.setup();
     const order = await createOrder();

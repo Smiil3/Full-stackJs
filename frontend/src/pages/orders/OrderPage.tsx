@@ -125,7 +125,7 @@ export function OrderPage() {
         <div className="stack">
           <Countdown until={order.expiresAt} label="Places réservées encore" onExpire={() => void refetch()} />
           {!polling ? (
-            <button type="button" className="btn btn--block" onClick={pay} disabled={checkout.isPending || Date.parse(order.expiresAt) <= now}>
+            <button type="button" className="btn btn--block" onClick={pay} disabled={checkout.isPending}>
               {checkout.isPending ? 'Redirection vers le paiement…' : `Payer ${formatCents(order.totalCents)} par carte`}
             </button>
           ) : null}
