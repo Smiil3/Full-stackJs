@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { getDb } from '../../src/lib/db.js';
-import { api } from '../helpers.js';
+import { PASSWORD, api } from '../helpers.js';
 import { createEvent, eventBody, orgWithStaff, setStock, type OrgFixture } from '../fixtures.js';
 
 let a: OrgFixture;
@@ -42,14 +42,14 @@ describe('événements (back-office)', () => {
     const plain = await createEvent(a);
     const custom = await createEvent(a, { body: { overrides: { refundPercent: 50, maxPerOrder: 2 } } });
     await api().patch(`/api/v1/orgs/${a.id}/settings`).set(a.owner.auth).send({ refundPercent: 80, cardHoldMinutes: 30 }).expect(200);
-    const p = await api().get(ev(`/${plain.eventId}`)).set(a.scanner.auth).expect(200);
+    const p = await api().get(ev(`/${plain.eventId}`)).set(a.manager.auth).expect(200);
     expect(p.body.effectiveRules).toMatchObject({ refundPercent: 80, cardHoldMinutes: 30, maxPerOrder: 6 });
-    const c = await api().get(ev(`/${custom.eventId}`)).set(a.scanner.auth).expect(200);
+    const c = await api().get(ev(`/${custom.eventId}`)).set(a.manager.auth).expect(200);
     expect(c.body.overrides).toMatchObject({ refundPercent: 50, maxPerOrder: 2, cardHoldMinutes: null });
     expect(c.body.effectiveRules).toMatchObject({ refundPercent: 50, maxPerOrder: 2, cardHoldMinutes: 30 });
     // Retour à l'héritage : surcharge remise à null.
     await api().patch(ev(`/${custom.eventId}`)).set(a.manager.auth).send({ overrides: { refundPercent: null } }).expect(200);
-    const back = await api().get(ev(`/${custom.eventId}`)).set(a.scanner.auth).expect(200);
+    const back = await api().get(ev(`/${custom.eventId}`)).set(a.manager.auth).expect(200);
     expect(back.body.effectiveRules.refundPercent).toBe(80);
     expect(back.body.overrides.maxPerOrder).toBe(2);
   });
@@ -66,7 +66,7 @@ describe('événements (back-office)', () => {
     const before = await api().get(ev(`/${eventId}`)).set(a.manager.auth).expect(200);
     expect(before.body.effectiveRules.transferEnabled).toBe(false);
     await api().patch(`/api/v1/orgs/${a.id}/settings`).set(a.owner.auth)
-      .send({ bank: { beneficiary: 'A', iban: 'FR7630006000011234567890189', bic: 'AGRIFRPP' } }).expect(200);
+      .send({ bank: { beneficiary: 'A', iban: 'FR7630006000011234567890189', bic: 'AGRIFRPP' }, currentPassword: PASSWORD }).expect(200);
     const after = await api().get(ev(`/${eventId}`)).set(a.manager.auth).expect(200);
     expect(after.body.effectiveRules.transferEnabled).toBe(true);
   });
@@ -96,13 +96,13 @@ describe('événements (back-office)', () => {
   it('liste paginée filtrable par statut', async () => {
     await createEvent(a);
     await createEvent(a, { ticketTypes: [{ name: 'T', capacity: 5, priceCents: 0 }], publish: true });
-    const all = await api().get(ev('?pageSize=1')).set(a.scanner.auth).expect(200);
+    const all = await api().get(ev('?pageSize=1')).set(a.manager.auth).expect(200);
     expect(all.body).toMatchObject({ page: 1, pageSize: 1, total: 2 });
     expect(all.body.items).toHaveLength(1);
-    const published = await api().get(ev('?status=PUBLISHED')).set(a.scanner.auth).expect(200);
+    const published = await api().get(ev('?status=PUBLISHED')).set(a.manager.auth).expect(200);
     expect(published.body.total).toBe(1);
-    await api().get(ev('?pageSize=101')).set(a.scanner.auth).expect(400);
-    await api().get(ev('?status=ARCHIVED')).set(a.scanner.auth).expect(400);
+    await api().get(ev('?pageSize=101')).set(a.manager.auth).expect(400);
+    await api().get(ev('?status=ARCHIVED')).set(a.manager.auth).expect(400);
   });
 });
 

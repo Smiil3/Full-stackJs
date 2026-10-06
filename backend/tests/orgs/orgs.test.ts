@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { getDb } from '../../src/lib/db.js';
-import { api, createUser, loggedInUser } from '../helpers.js';
+import { PASSWORD, api, createUser, loggedInUser } from '../helpers.js';
 import { createEvent, orgWithStaff, type OrgFixture } from '../fixtures.js';
 
 const VALID_IBAN = 'FR76 3000 6000 0112 3456 7890 189';
@@ -54,9 +54,14 @@ describe('isolation entre collectifs (IDOR)', () => {
 });
 
 describe('rôles', () => {
-  it('SCANNER : lecture du collectif et des événements, pas des réglages ni des membres (403)', async () => {
+  it('SCANNER : collectif et événements à contrôler (sans chiffres), pas les ventes, réglages ni membres (403)', async () => {
     await api().get(`/api/v1/orgs/${a.id}`).set(a.scanner.auth).expect(200);
-    await api().get(`/api/v1/orgs/${a.id}/events`).set(a.scanner.auth).expect(200);
+    const { eventId } = await createEvent(a, { ticketTypes: [{ name: 'T', capacity: 10, priceCents: 1000 }], publish: true });
+    await api().get(`/api/v1/orgs/${a.id}/events`).set(a.scanner.auth).expect(403);
+    await api().get(`/api/v1/orgs/${a.id}/events/${eventId}`).set(a.scanner.auth).expect(403);
+    const checkin = await api().get(`/api/v1/orgs/${a.id}/checkin/events`).set(a.scanner.auth).expect(200);
+    expect(checkin.body.items).toHaveLength(1);
+    expect(Object.keys(checkin.body.items[0] as object).sort()).toEqual(['endsAt', 'id', 'isOnline', 'startsAt', 'status', 'timezone', 'title', 'venue']);
     const res = await api().get(`/api/v1/orgs/${a.id}/settings`).set(a.scanner.auth);
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe('FORBIDDEN');
@@ -111,12 +116,12 @@ describe('réglages du collectif', () => {
 
   it('IBAN invalide refusé ; IBAN valide stocké chiffré et jamais renvoyé en clair', async () => {
     const bad = await api().patch(`/api/v1/orgs/${a.id}/settings`).set(a.owner.auth)
-      .send({ bank: { beneficiary: 'Collectif A', iban: 'FR76 3000 6000 0112 3456 7890 188', bic: 'AGRIFRPP' } });
+      .send({ bank: { beneficiary: 'Collectif A', iban: 'FR76 3000 6000 0112 3456 7890 188', bic: 'AGRIFRPP' }, currentPassword: PASSWORD });
     expect(bad.status).toBe(400);
     await api().patch(`/api/v1/orgs/${a.id}/settings`).set(a.owner.auth)
       .send({ bank: { beneficiary: 'Collectif A', iban: VALID_IBAN } }).expect(400);
     const ok = await api().patch(`/api/v1/orgs/${a.id}/settings`).set(a.owner.auth)
-      .send({ bank: { beneficiary: 'Collectif A', iban: VALID_IBAN, bic: 'AGRIFRPP' } }).expect(200);
+      .send({ bank: { beneficiary: 'Collectif A', iban: VALID_IBAN, bic: 'AGRIFRPP' }, currentPassword: PASSWORD }).expect(200);
     expect(ok.body.bank).toEqual({ beneficiary: 'Collectif A', ibanMasked: 'FR76 •••• •••• 0189', bic: 'AGRIFRPP' });
     const plain = VALID_IBAN.replace(/\s/g, '');
     const responses = [

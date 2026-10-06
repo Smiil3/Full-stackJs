@@ -7,6 +7,7 @@ import { orgEventsRouter } from './modules/events/routes.js';
 import { adminRouter } from './modules/admin/routes.js';
 import { catalogRouter } from './modules/catalog/routes.js';
 import { ordersRouter } from './modules/orders/routes.js';
+import { orgCheckinRouter } from './modules/checkin/routes.js';
 
 /** Routeur principal `/api/v1` : chaque module y monte ses routes. */
 export function buildApiRouter(limiters: Limiters): Router {
@@ -17,6 +18,7 @@ export function buildApiRouter(limiters: Limiters): Router {
   router.use('/admin', adminRouter());
   router.use('/orgs/:orgId', requireAuth);
   router.use('/orgs/:orgId/events', orgEventsRouter());
+  router.use('/orgs/:orgId/checkin', orgCheckinRouter());
   router.use('/orgs/:orgId', orgsRouter());
   return router;
 }

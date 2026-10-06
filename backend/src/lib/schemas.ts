@@ -12,10 +12,19 @@ const CONTROL = /^[^\u0000-\u001F\u007F-\u009F\u061C\u200E\u200F\u202A-\u202E\u2
 // eslint-disable-next-line no-control-regex -- idem, \t et \n exclus de la plage
 const CONTROL_MULTILINE = /^[^\u0000-\u0008\u000B-\u001F\u007F-\u009F\u061C\u200E\u200F\u202A-\u202E\u2066-\u2069\uFEFF]*$/u;
 
-export function text(options: { multiline?: boolean } = {}): Joi.StringSchema {
-  return Joi.string()
+/**
+ * Par défaut, les espaces de début / fin sont retirés AVANT les règles de longueur suivantes
+ * (un titre « ␣␣␣ » est vide ⇒ refusé). `trim: false` pour les secrets (mots de passe).
+ */
+export function text(options: { multiline?: boolean; trim?: boolean } = {}): Joi.StringSchema {
+  const base = Joi.string()
     .pattern(options.multiline ? CONTROL_MULTILINE : CONTROL, 'texte sans caractère de contrôle')
-    .messages({ 'string.pattern.name': '{{#label}} contient des caractères interdits' });
+    .messages({ 'string.pattern.name': '{{#label}} contient des caractères interdits', 'string.blank': '{{#label}} ne peut pas être vide' });
+  if (options.trim === false) return base;
+  return base.custom((value: string, helpers) => {
+    const trimmed = value.trim();
+    return trimmed === '' ? helpers.error('string.blank') : trimmed;
+  });
 }
 
 /** UUID canonique (v4 pour nos identifiants, mais on accepte toute version RFC 4122 en entrée). */
@@ -42,7 +51,7 @@ export const email = text()
   .messages({ 'string.pattern.name': '{{#label}} doit être une adresse email ASCII' });
 
 export const pageQuery = {
-  page: Joi.number().integer().min(1).max(100_000).default(1),
+  page: Joi.number().integer().min(1).max(1000).default(1),
   pageSize: Joi.number().integer().min(1).max(100).default(20),
 };
 

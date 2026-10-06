@@ -1,8 +1,18 @@
 import type { Prisma } from '../../generated/prisma/client.js';
 import { getDb } from '../../lib/db.js';
 
+export type PublicSettings = Prisma.OrganizationSettingsGetPayload<{ select: typeof settingsSelect }>;
+
+// Réglages : uniquement les champs nécessaires aux règles publiques (jamais l'IBAN, même chiffré).
+const settingsSelect = {
+  orgId: true, cardHoldMinutes: true, transferHoldHours: true, transferEnabled: true, cancellationDeadlineHours: true,
+  selfCancellationEnabled: true, refundPercent: true, serviceFeeRefundable: true, maxPerOrder: true, maxPerUser: true,
+  waitlistOfferMinutes: true, waitlistEnabled: true, serviceFeeFixedCents: true, serviceFeeBasisPoints: true,
+  contactEmail: true, bankBeneficiary: true, bankBic: true, bankIbanMasked: true,
+} satisfies Prisma.OrganizationSettingsSelect;
+
 const include = {
-  organization: { select: { id: true, name: true, slug: true, settings: true } },
+  organization: { select: { id: true, name: true, slug: true, settings: { select: settingsSelect } } },
   ticketTypes: { orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }] },
 } satisfies Prisma.EventInclude;
 
@@ -24,8 +34,9 @@ export function listPublished(filter: { orgSlug?: string; from?: Date; to?: Date
   ]);
 }
 
-export function findPublished(eventId: string) {
-  return getDb().event.findFirst({ where: { id: eventId, status: 'PUBLISHED' }, include });
+/** Détail public : publié, et pas terminé depuis plus de `maxAgeDays` jours. */
+export function findPublished(eventId: string, endedAfter: Date) {
+  return getDb().event.findFirst({ where: { id: eventId, status: 'PUBLISHED', endsAt: { gt: endedAfter } }, include });
 }
 
 /** Nombre d'entrées en attente par type (les places libérées leur reviennent avant le public). */

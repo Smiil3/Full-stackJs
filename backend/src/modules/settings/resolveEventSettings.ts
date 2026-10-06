@@ -22,6 +22,14 @@ export interface EffectiveRules {
 /** Règles exposées au public (contrat : EventRulesPublic). */
 export type PublicRules = Omit<EffectiveRules, 'serviceFeeRefundable' | 'waitlistOfferMinutes' | 'bankConfigured'>;
 
+/** Réglages du collectif utiles à la résolution (jamais besoin de l'IBAN, même chiffré). */
+export type SettingsForRules = Pick<
+  OrganizationSettings,
+  | 'cardHoldMinutes' | 'transferHoldHours' | 'transferEnabled' | 'cancellationDeadlineHours' | 'selfCancellationEnabled'
+  | 'refundPercent' | 'serviceFeeRefundable' | 'maxPerOrder' | 'maxPerUser' | 'waitlistOfferMinutes' | 'waitlistEnabled'
+  | 'serviceFeeFixedCents' | 'serviceFeeBasisPoints' | 'bankBeneficiary' | 'bankIbanMasked' | 'bankBic'
+>;
+
 export type EventOverrideFields = Pick<
   Event,
   | 'cardHoldMinutes' | 'transferHoldHours' | 'transferEnabled' | 'cancellationDeadlineHours' | 'selfCancellationEnabled'
@@ -39,7 +47,7 @@ export const OVERRIDE_KEYS = [
  * Point de résolution UNIQUE des réglages, utilisé par tous les services (réservation, annulation,
  * liste d'attente, virement, calcul du total). Les valeurs sont ensuite figées sur la commande.
  */
-export function resolveEventSettings(org: OrganizationSettings, event: EventOverrideFields): EffectiveRules {
+export function resolveEventSettings(org: SettingsForRules, event: EventOverrideFields): EffectiveRules {
   const maxPerUser = event.maxPerUser ?? org.maxPerUser;
   return {
     cardHoldMinutes: event.cardHoldMinutes ?? org.cardHoldMinutes,
@@ -56,7 +64,8 @@ export function resolveEventSettings(org: OrganizationSettings, event: EventOver
     waitlistEnabled: event.waitlistEnabled ?? org.waitlistEnabled,
     serviceFeeFixedCents: event.serviceFeeFixedCents ?? org.serviceFeeFixedCents,
     serviceFeeBasisPoints: event.serviceFeeBasisPoints ?? org.serviceFeeBasisPoints,
-    bankConfigured: org.bankBeneficiary !== null && org.bankIbanEncrypted !== null && org.bankBic !== null,
+    // La forme masquée n'existe que si un IBAN chiffré a été enregistré.
+    bankConfigured: org.bankBeneficiary !== null && org.bankIbanMasked !== null && org.bankBic !== null,
   };
 }
 

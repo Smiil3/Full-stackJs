@@ -6,7 +6,7 @@ import { checkPasswordPolicy, PASSWORD_MAX_BYTES } from '../../lib/passwordPolic
  * Mot de passe d'un NOUVEAU secret : 12 à 128 points de code, ≤ 256 octets, pas un mot de passe courant
  * (pas de règle de composition, cf. recommandations ANSSI / NIST).
  */
-export const password = text()
+export const password = text({ trim: false })
   .max(PASSWORD_MAX_BYTES)
   .custom((value: string, helpers) => {
     const problem = checkPasswordPolicy(value);
@@ -32,12 +32,12 @@ export interface ChangePasswordBody { currentPassword: string; newPassword: stri
 
 export const registerBody = Joi.object<RegisterBody>({ email: email.required(), password: password.required(), displayName: displayName.required() });
 // Au login, aucune règle de longueur fine : on ne révèle pas la politique, on borne seulement la taille.
-export const loginBody = Joi.object<LoginBody>({ email: email.required(), password: text().min(1).max(PASSWORD_MAX_BYTES).required() });
+export const loginBody = Joi.object<LoginBody>({ email: email.required(), password: text({ trim: false }).min(1).max(PASSWORD_MAX_BYTES).required() });
 export const emailBody = Joi.object<EmailBody>({ email: email.required() });
 export const tokenBody = Joi.object<TokenBody>({ token: mailToken.required() });
 export const resetBody = Joi.object<ResetBody>({ token: mailToken.required(), password: password.required() });
 export const changePasswordBody = Joi.object<ChangePasswordBody>({
-  currentPassword: text().min(1).max(PASSWORD_MAX_BYTES).required(),
+  currentPassword: text({ trim: false }).min(1).max(PASSWORD_MAX_BYTES).required(),
   newPassword: password.required(),
 });
 

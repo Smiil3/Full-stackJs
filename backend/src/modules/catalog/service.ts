@@ -1,4 +1,4 @@
-import type { Event, OrganizationSettings, TicketType } from '../../generated/prisma/client.js';
+import type { Event, TicketType } from '../../generated/prisma/client.js';
 import { clock } from '../../lib/clock.js';
 import { errors } from '../../lib/errors.js';
 import { availabilityOf, bestAvailability, priceAt } from '../../lib/pricing.js';
@@ -7,7 +7,7 @@ import { resolveEventSettings, toPublicRules } from '../settings/resolveEventSet
 import * as repo from './repo.js';
 
 type CatalogEvent = Event & {
-  organization: { id: string; name: string; slug: string; settings: OrganizationSettings | null };
+  organization: { id: string; name: string; slug: string; settings: repo.PublicSettings | null };
   ticketTypes: TicketType[];
 };
 
@@ -30,7 +30,13 @@ function summary(e: CatalogEvent, waiting: Map<string, number>, now: Date) {
   };
 }
 
+/** Un événement terminé depuis plus de 30 jours disparaît du détail public. */
+const PUBLIC_RETENTION_MS = 30 * 24 * 3600_000;
+
 export async function listEvents(filter: { orgSlug?: string; from?: string; to?: string }, page: number, pageSize: number) {
+  if (filter.from && filter.to && new Date(filter.from).getTime() > new Date(filter.to).getTime()) {
+    throw errors.validation([{ path: 'to', message: '« to » doit être postérieur ou égal à « from ».' }]);
+  }
   const [rows, total] = await repo.listPublished(
     {
       ...(filter.orgSlug ? { orgSlug: filter.orgSlug } : {}),
@@ -47,7 +53,7 @@ export async function listEvents(filter: { orgSlug?: string; from?: string; to?:
 
 /** Détail public : prix courants (early calculé serveur), disponibilité sans chiffre exact, règles effectives. */
 export async function getEvent(eventId: string) {
-  const e = await repo.findPublished(eventId);
+  const e = await repo.findPublished(eventId, new Date(clock.now().getTime() - PUBLIC_RETENTION_MS));
   if (!e?.organization.settings) throw errors.notFound();
   const settings = e.organization.settings;
   const waiting = await repo.waitingCounts(e.ticketTypes.map((t) => t.id));

@@ -4,7 +4,7 @@ import { getDb } from '../../src/lib/db.js';
 import { testClock } from '../../src/lib/clock.js';
 import { expireOrders } from '../../src/jobs/expireOrders.js';
 import { decryptOutboxPayload } from '../../src/lib/outbox.js';
-import { api, bearerFor, createUser, loggedInUser, type LoggedIn } from '../helpers.js';
+import { PASSWORD, api, bearerFor, createUser, loggedInUser, type LoggedIn } from '../helpers.js';
 import { createEvent, orgWithStaff, setStock, type OrgFixture } from '../fixtures.js';
 
 let org: OrgFixture;
@@ -198,7 +198,7 @@ describe('règles de vente', () => {
     expect(unavailable.status).toBe(422);
     expect(unavailable.body.error.code).toBe('PAYMENT_METHOD_UNAVAILABLE');
     await api().patch(`/api/v1/orgs/${org.id}/settings`).set(org.owner.auth)
-      .send({ transferHoldHours: 48, bank: { beneficiary: 'Collectif', iban: 'FR7630006000011234567890189', bic: 'AGRIFRPP' } }).expect(200);
+      .send({ transferHoldHours: 48, bank: { beneficiary: 'Collectif', iban: 'FR7630006000011234567890189', bic: 'AGRIFRPP' }, currentPassword: PASSWORD }).expect(200);
     const res = await order(buyer.auth, body).expect(201);
     expect(res.body.status).toBe('AWAITING_TRANSFER');
     expect(res.body.transferInstructions).toEqual({

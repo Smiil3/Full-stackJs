@@ -52,3 +52,17 @@ Décisions non bloquantes prises pendant l'implémentation (option la plus sûre
 - **2026-10-06 — Suppression d'un type de place refusée s'il a des ventes, des places bloquées ou une liste d'attente, et pour le dernier type d'un événement publié.**
 - **2026-10-06 — Réduction de capacité par UPDATE conditionnel `sold + held <= capacity`.** — Atomique face à une réservation concurrente (pas de lecture puis écriture).
 - **2026-10-06 — Création d'événement : fin dans le futur obligatoire ; dates d'entrée avec fuseau explicite ; fuseau IANA vérifié par `Intl.supportedValuesOf`.**
+
+## B3.1 — Revue multi-collectifs
+
+- **2026-10-06 — Report d'événement (contrat 1.7).** — Détecté quand `startsAt` ou `endsAt` change alors qu'il existe des commandes PENDING_PAYMENT / AWAITING_TRANSFER / PAID : OWNER seulement (403 pour un MANAGER, contrôle avant le motif), `rescheduleReason` obligatoire. Commandes PAID : `refundPercent = 100`, `serviceFeeRefundable = true` (frais compris), `cancellableUntil = max(ancienne limite, nouveau début − délai figé)` où le délai figé = ancien début − ancienne limite ; si l'annulation était désactivée (limite null), on accorde le délai effectif actuel de l'événement (le droit au remboursement doit être exerçable). Mail à chaque acheteur actif, AuditLog `event.reschedule`.
+- **2026-10-06 — `earlyUntil ≤ salesEndAt`** à la création / modification d'un type (400) et revalidé quand les dates de l'événement changent (409 CONFLICT avec la liste des types concernés : l'organisateur corrige d'abord ses tarifs).
+- **2026-10-06 — Suppression de type : `FOR UPDATE` sur la ligne `ticket_types` avant les comptages ; P2003 ⇒ 409.**
+- **2026-10-06 — Tout SQL brut sur `ticket_types` porte la clé parente `eventId`** (défense en profondeur).
+- **2026-10-06 — Changement bancaire : `currentPassword` obligatoire (et interdit sans `bank`), vérifié avec le compteur / verrou du login ; mail à tous les OWNER.** Les coordonnées restent figées sur les commandes AWAITING_TRANSFER existantes (testé).
+- **2026-10-06 — Ajout de membre : mail d'information à la personne ajoutée. L'oracle d'énumération (404 si le compte n'existe pas / n'est pas vérifié) est accepté pour un OWNER** : il ne révèle que l'existence d'un compte vérifié, à un utilisateur authentifié et propriétaire d'un collectif, et la personne est prévenue par mail de tout ajout.
+- **2026-10-06 — `page` ≤ 1000 partout ; `from ≤ to` au catalogue ; le catalogue ne charge que les réglages nécessaires (jamais l'IBAN chiffré) ; détail public 404 pour un événement terminé depuis plus de 30 jours.**
+- **2026-10-06 — SCANNER : plus d'accès à `GET /orgs/:orgId/events*` (chiffres de vente) ; `GET /orgs/:orgId/checkin/events` sans aucun chiffre (événements publiés terminés depuis moins de 24 h).**
+- **2026-10-06 — Textes : espaces de début / fin retirés avant les règles de longueur (un texte vide après trim est refusé) ; jamais pour les mots de passe.**
+- **2026-10-06 — Audit : `actorEmail = "Administrateur plateforme"` pour un admin non membre du collectif (son email n'est pas divulgué), `null` pour une action système.**
+- **2026-10-06 — `GET /admin/orgs` paginé (contrat 1.8), tri nom puis id.**

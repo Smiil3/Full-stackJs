@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { getDb } from '../../src/lib/db.js';
-import { api } from '../helpers.js';
+import { PASSWORD, api } from '../helpers.js';
 import { createEvent, orgWithStaff, setStock, type OrgFixture } from '../fixtures.js';
 
 let a: OrgFixture;
@@ -34,7 +34,7 @@ describe('catalogue public', () => {
     await api().get(`/api/v1/events/${draft.eventId}`).expect(404);
     await api().get('/api/v1/events/pas-un-uuid').expect(400);
     await api().patch(`/api/v1/orgs/${a.id}/settings`).set(a.owner.auth)
-      .send({ bank: { beneficiary: 'A', iban: 'FR7630006000011234567890189', bic: 'AGRIFRPP' }, contactEmail: 'contact@a.fr' }).expect(200);
+      .send({ bank: { beneficiary: 'A', iban: 'FR7630006000011234567890189', bic: 'AGRIFRPP' }, currentPassword: PASSWORD, contactEmail: 'contact@a.fr' }).expect(200);
     const pub = await createEvent(a, { ticketTypes: [{ name: 'Fosse', capacity: 100, priceCents: 1500 }], publish: true });
     const res = await api().get(`/api/v1/events/${pub.eventId}`).expect(200);
     const raw = JSON.stringify(res.body);
