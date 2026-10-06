@@ -20,8 +20,7 @@
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",
     "db:seed": "tsx prisma/seed.ts",
-    "keys:generate": "tsx scripts/generate-keys.ts",
-    "postinstall": "prisma generate"
+    "keys:generate": "tsx scripts/generate-keys.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "7.10.0",

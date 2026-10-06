@@ -18,8 +18,9 @@ API REST (Express 5, TypeScript strict, Prisma + PostgreSQL 16) de la billetteri
 # 1. Services : Postgres dev (5432), Postgres test (5433), Mailpit (SMTP 1025, UI http://localhost:8025)
 docker compose -f ../docker-compose.yml up -d
 
-# 2. Dépendances (génère aussi le client Prisma)
+# 2. Dépendances puis génération du client Prisma (aucun script postinstall)
 npm ci
+npx prisma generate
 
 # 3. Configuration : copier puis renseigner TOUS les secrets (commandes de génération dans le fichier)
 cp .env.example .env
@@ -43,7 +44,10 @@ Trois processus en développement (un terminal chacun) :
 | `npm run dev:worker` | Worker : expirations de réservations et d'offres de liste d'attente, remboursements, envoi des mails (outbox), purge des compteurs | — |
 | `npm run dev:psp` | Prestataire de paiement **simulé** (refuse de démarrer en production) | 4001 |
 
-Production : `npm run build`, puis `npm start` (API) et `npm run start:worker` (worker) ; `npm run db:migrate` à chaque déploiement.
+Production :
+1. Étape de build (dépendances complètes) : `npm ci`, puis `npm run build` (génère le client Prisma et compile dans `dist/`, client Prisma compris ; le PSP simulé est exclu du build).
+2. Migrations, AVANT de démarrer la nouvelle version : `npm run db:migrate`, depuis l'étape de build ou un job dédié — la CLI Prisma est une dépendance de développement, absente de l'image d'exécution.
+3. Image d'exécution : `npm ci --omit=dev` + `dist/` ; démarrage par `npm start` (API) et `npm run start:worker` (worker).
 
 ## Scripts
 
