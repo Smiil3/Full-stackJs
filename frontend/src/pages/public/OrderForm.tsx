@@ -24,15 +24,21 @@ export function OrderForm({ event, onStale }: { event: EventPublic; onStale: () 
   const { rules } = event;
   const now = useNow(30_000);
 
-  const totalQty = Object.values(quantities).reduce((s, q) => s + q, 0);
-  const subtotal = event.ticketTypes.reduce((s, t) => s + t.currentPriceCents * (quantities[t.id] ?? 0), 0);
+  // Panier DÉRIVÉ des types présents et non épuisés (une quantité restée sur un type devenu
+  // complet ou retiré n'est jamais envoyée), quantité bornée par le plafond par commande.
+  const items = useMemo(
+    () =>
+      event.ticketTypes
+        .filter((t) => t.availability !== 'SOLD_OUT')
+        .map((t) => ({ ticketTypeId: t.id, quantity: Math.min(quantities[t.id] ?? 0, rules.maxPerOrder), price: t.currentPriceCents }))
+        .filter((i) => i.quantity > 0),
+    [event.ticketTypes, quantities, rules.maxPerOrder],
+  );
+  const totalQty = items.reduce((s, i) => s + i.quantity, 0);
+  const subtotal = items.reduce((s, i) => s + i.price * i.quantity, 0);
   const fee = totalQty > 0 ? estimateServiceFeeCents(subtotal, rules.serviceFeeFixedCents, rules.serviceFeeBasisPoints) : 0;
   const effectiveMethod: PaymentMethod = rules.transferEnabled ? method : 'CARD';
 
-  const items = useMemo(
-    () => Object.entries(quantities).filter(([, q]) => q > 0).map(([ticketTypeId, quantity]) => ({ ticketTypeId, quantity })),
-    [quantities],
-  );
 
   const soldOutName = (() => {
     const e = createOrder.error;
@@ -44,12 +50,16 @@ export function OrderForm({ event, onStale }: { event: EventPublic; onStale: () 
     e.preventDefault();
     if (createOrder.isPending || items.length === 0) return;
     createOrder.mutate(
-      { eventId: event.id, paymentMethod: effectiveMethod, items },
+      { eventId: event.id, paymentMethod: effectiveMethod, items: items.map(({ ticketTypeId, quantity }) => ({ ticketTypeId, quantity })) },
       {
         onSuccess: (order) => {
           void navigate(order.status === 'PAID' ? '/me/tickets' : apiPath`/orders/${order.id}`);
         },
         onError: (err) => {
+          if (isApiError(err) && err.code === 'SOLD_OUT') {
+            const soldOut = err.details?.ticketTypeId;
+            if (typeof soldOut === 'string') setQuantities((q) => ({ ...q, [soldOut]: 0 }));
+          }
           if (isApiError(err) && (err.code === 'SOLD_OUT' || err.code === 'SALES_CLOSED')) onStale();
         },
       },
@@ -130,7 +140,7 @@ export function OrderForm({ event, onStale }: { event: EventPublic; onStale: () 
             ) : null}
           </fieldset>
 
-          <section className="card stack" aria-labelledby="titre-recap" aria-live="polite">
+          <section className="card stack" aria-labelledby="titre-recap">
             <h2 id="titre-recap" className="m-0">
               Récapitulatif
             </h2>
@@ -151,7 +161,7 @@ export function OrderForm({ event, onStale }: { event: EventPublic; onStale: () 
                 ) : null}
               </dd>
               <dt>Total</dt>
-              <dd>
+              <dd aria-live="polite">
                 <strong>{formatCents(subtotal + fee)}</strong>
               </dd>
             </dl>
@@ -173,7 +183,7 @@ export function OrderForm({ event, onStale }: { event: EventPublic; onStale: () 
 
           {status === 'authenticated' && user ? (
             user.emailVerified ? (
-              <button type="submit" className="btn btn--block" disabled={createOrder.isPending || totalQty === 0} aria-disabled={createOrder.isPending || totalQty === 0}>
+              <button type="submit" className="btn btn--block" disabled={createOrder.isPending || totalQty === 0}>
                 {createOrder.isPending ? 'Réservation en cours…' : totalQty === 0 ? 'Choisissez vos places' : `Réserver ${totalQty} place${totalQty > 1 ? 's' : ''}`}
               </button>
             ) : (

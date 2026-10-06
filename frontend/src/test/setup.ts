@@ -3,6 +3,7 @@ import 'fake-indexeddb/auto';
 import { cleanup } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll } from 'vitest';
 import { __resetClientForTests } from '../api/client';
+import { runSessionCleanups } from '../auth/sessionCleanup';
 import { __resetServerClock } from '../api/serverClock';
 import { __resetCheckoutLaunched } from '../api/hooks/orders';
 import { resetMockDb } from '../mocks/core';
@@ -20,8 +21,9 @@ if (typeof HTMLCanvasElement !== 'undefined') HTMLCanvasElement.prototype.getCon
   } as unknown as CanvasRenderingContext2D;
 } as unknown as typeof HTMLCanvasElement.prototype.getContext;
 
-afterEach(() => {
+afterEach(async () => {
   cleanup();
+  await runSessionCleanups(); // clés d'idempotence, billets hors-ligne…
   server.resetHandlers();
   resetMockDb();
   __resetClientForTests();

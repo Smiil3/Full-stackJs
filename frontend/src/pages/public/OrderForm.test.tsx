@@ -127,6 +127,37 @@ describe('page événement et commande', () => {
     await waitFor(() => expect(mock.db.calls.get(`GET /events/:eventId`) ?? 0).toBeGreaterThan(before));
   });
 
+  it('H2 : après SOLD_OUT, la quantité du type épuisé n’est plus envoyée (pas de 409 en boucle)', async () => {
+    const user = userEvent.setup();
+    await renderApp(EVENT_URL, { as: BUYER });
+    await chooseFosse(user, '2');
+    const fosse = mock.db.ticketTypes.find((t) => t.id === IDS.ttFosse);
+    if (fosse) fosse.sold = fosse.capacity - fosse.held; // épuisé entre-temps
+    await user.click(screen.getByRole('button', { name: 'Réserver 2 places' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Plus assez de places « Fosse »');
+    expect(await screen.findByRole('button', { name: 'Choisissez vos places' })).toBeDisabled();
+    expect(screen.queryByLabelText('Nombre de places « Fosse »')).toBeNull();
+    expect(mock.db.calls.get('POST /orders')).toBe(1);
+  });
+
+  it('B5 : la clé d’idempotence survit au démontage du formulaire (même panier ⇒ même clé)', async () => {
+    const user = userEvent.setup();
+    const keys = orderKeys();
+    const first = await renderApp(EVENT_URL, { as: BUYER });
+    await chooseFosse(user, '1');
+    injectFault({ route: 'POST /orders', status: 0, code: 'INTERNAL_ERROR', network: true });
+    await user.click(screen.getByRole('button', { name: 'Réserver 1 place' }));
+    await screen.findByRole('alert');
+    first.unmount();
+    await renderApp(EVENT_URL);
+    await chooseFosse(user, '1');
+    await user.click(await screen.findByRole('button', { name: 'Réserver 1 place' }));
+    await screen.findByRole('button', { name: /Payer/ });
+    server.events.removeAllListeners();
+    expect(keys).toHaveLength(2);
+    expect(keys[1]).toBe(keys[0]);
+  });
+
   it('LIMIT_EXCEEDED : plafond et places déjà détenues expliqués', async () => {
     const user = userEvent.setup();
     await renderApp(EVENT_URL, { as: BUYER });
