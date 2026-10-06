@@ -21,6 +21,8 @@ export default defineConfig(
         'error',
         { selector: "MemberExpression[object.name='Math'][property.name='random']", message: 'Math.random est interdit : utiliser node:crypto.' },
         { selector: "MemberExpression[property.name=/^\\$(queryRawUnsafe|executeRawUnsafe)$/]", message: 'Requêtes SQL non paramétrées interdites : utiliser $queryRaw / $executeRaw tagués.' },
+        { selector: "MemberExpression[object.name='req'][property.name=/^(body|query|params)$/]", message: 'Lire l’entrée validée (endpoint() / res.locals.input), jamais req.body / req.query / req.params.' },
+        { selector: "VariableDeclarator[init.name='req'] > ObjectPattern > Property[key.name=/^(body|query|params)$/]", message: 'Lire l’entrée validée (endpoint() / res.locals.input), jamais req.body / req.query / req.params.' },
       ],
       '@typescript-eslint/no-explicit-any': 'error',
       '@typescript-eslint/ban-ts-comment': ['error', { 'ts-ignore': true, 'ts-nocheck': true, 'ts-expect-error': 'allow-with-description' }],
@@ -29,6 +31,16 @@ export default defineConfig(
       '@typescript-eslint/no-misused-promises': ['error', { checksVoidReturn: { arguments: false } }],
       // Faux positifs systématiques sur les accès indexés typés (Record, tableaux) ; les entrées sont validées par Joi.
       'security/detect-object-injection': 'off',
+    },
+  },
+  {
+    // Seul le middleware de validation lit la requête brute.
+    files: ['src/middlewares/validate.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        { selector: "MemberExpression[object.name='Math'][property.name='random']", message: 'Math.random est interdit : utiliser node:crypto.' },
+      ],
     },
   },
   {
