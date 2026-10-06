@@ -1,9 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useRegisterSW } from 'virtual:pwa-register/react';
 import { getDeviceValue, scannerStorageAvailable, setDeviceValue } from '../scanner/db';
+import { startPeriodicUpdate } from '../lib/pwaUpdate';
 
 /** Mise à jour en attente depuis plus longtemps ⇒ bandeau insistant (version à jour avant l'événement). */
 export const UPDATE_INSIST_MS = 24 * 3_600_000;
+
+let stopPeriodicUpdate: (() => void) | null = null;
 
 /**
  * Enregistre le service worker (coquille hors-ligne, indispensable au scanner) et propose la mise à
@@ -16,6 +19,11 @@ export function PwaUpdatePrompt() {
     updateServiceWorker,
   } = useRegisterSW({
     immediate: true,
+    onRegisteredSW(_url: string, registration: ServiceWorkerRegistration | undefined) {
+      if (!registration) return;
+      stopPeriodicUpdate?.();
+      stopPeriodicUpdate = startPeriodicUpdate(registration);
+    },
     onRegisterError(error: unknown) {
       console.warn('Service worker non enregistré', error);
     },

@@ -53,7 +53,7 @@ Uniquement des variables `VITE_*` **non sensibles** : tout ce qu'elles contienne
 | Variable | Défaut | Rôle |
 |---|---|---|
 | `VITE_API_BASE_URL` | `/api/v1` | base de l'API, **chemin relatif obligatoire** (même origine) ; une URL absolue fait échouer le démarrage |
-| `VITE_PSP_ORIGIN` | `http://localhost:4001` en dev | seule origine externe vers laquelle le front redirige (paiement) ; **https obligatoire en production**, sinon l'application refuse de démarrer |
+| `VITE_PSP_ORIGIN` | `http://localhost:4001` en dev | seule origine externe vers laquelle le front redirige (paiement) ; **https obligatoire en production** : sinon `npm run build` est refusé (et l'application refuserait de démarrer) |
 
 Le mot de passe des comptes de démonstration pour les tests de bout en bout est lu dans
 `../.env.e2e` (`SEED_PASSWORD`, fichier ignoré par git), jamais dans le dépôt.

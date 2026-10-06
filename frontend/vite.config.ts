@@ -1,5 +1,5 @@
 /// <reference types="vitest/config" />
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import { readFileSync } from 'node:fs';
@@ -29,6 +29,19 @@ export default defineConfig(({ mode, command }) => {
   // Le mode mock (API simulée par MSW) n'a aucun sens en production : on refuse de le construire.
   if (mode === 'mock' && command === 'build') {
     throw new Error('Build refusé : le mode « mock » est réservé au serveur de développement.');
+  }
+  // Build de production : l'origine du prestataire de paiement doit être en https (sinon, l'application
+  // refuserait de démarrer une fois déployée — autant échouer dès le build).
+  if (mode === 'production' && command === 'build') {
+    const psp = loadEnv(mode, fileURLToPath(new URL('.', import.meta.url)), 'VITE_').VITE_PSP_ORIGIN ?? '';
+    let ok = false;
+    try {
+      const u = new URL(psp);
+      ok = u.protocol === 'https:' && u.origin === psp.replace(/\/$/, '');
+    } catch {
+      ok = false;
+    }
+    if (!ok) throw new Error('Build refusé : VITE_PSP_ORIGIN doit être l’origine https du prestataire de paiement (ex. https://pay.psp.example).');
   }
   return {
   define: {

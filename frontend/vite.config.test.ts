@@ -27,6 +27,22 @@ describe('en-têtes de sécurité (revue F1.1 — M7)', () => {
     expect(securityHeaders(false)['Permissions-Policy']).toContain('camera=(self)');
   });
 
+  it('F6-B7 : build de production refusé si VITE_PSP_ORIGIN n’est pas une origine https', () => {
+    const previous = process.env.VITE_PSP_ORIGIN;
+    const build = () => config({ mode: 'production', command: 'build', isSsrBuild: false, isPreview: false });
+    try {
+      for (const bad of ['http://localhost:4001', 'http://pay.psp.example', 'https://pay.psp.example/chemin', 'pas-une-url']) {
+        process.env.VITE_PSP_ORIGIN = bad;
+        expect(build, bad).toThrow(/VITE_PSP_ORIGIN/);
+      }
+      process.env.VITE_PSP_ORIGIN = 'https://pay.psp.example';
+      expect(build).not.toThrow();
+    } finally {
+      if (previous === undefined) delete process.env.VITE_PSP_ORIGIN;
+      else process.env.VITE_PSP_ORIGIN = previous;
+    }
+  });
+
   it('F6-B1 : index.html n’envoie aucun Referer (même politique que l’en-tête)', () => {
     const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
     const metas = html.match(/<meta name="referrer" content="([^"]+)"/g) ?? [];
