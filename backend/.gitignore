@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+keys/
+src/generated/
+.env
+.env.*
+!.env.example
+*.log
+.vitest/

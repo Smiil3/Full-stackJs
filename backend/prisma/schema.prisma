@@ -1,0 +1,498 @@
+// Billetterie « Les Nuits de la Garonne » — schéma de données.
+// Conventions : montants en centimes (Int), dates en timestamptz UTC, identifiants UUID.
+// Les contraintes CHECK et index uniques partiels (non exprimables en Prisma)
+// sont ajoutés à la main dans la migration SQL initiale.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  OWNER
+  MANAGER
+  SCANNER
+}
+
+enum EmailTokenPurpose {
+  VERIFY_EMAIL
+  RESET_PASSWORD
+}
+
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+  CANCELLED
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  AWAITING_TRANSFER
+  PAID
+  EXPIRED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CARD
+  TRANSFER
+}
+
+enum PaymentStatus {
+  SUCCEEDED
+  FAILED
+}
+
+enum RefundStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
+enum TicketStatus {
+  VALID
+  USED
+  CANCELLED
+}
+
+enum CheckInResult {
+  OK
+  ALREADY_USED
+  INVALID
+  CANCELLED
+  WRONG_EVENT
+}
+
+enum WaitlistStatus {
+  WAITING
+  OFFERED
+  CONVERTED
+  EXPIRED
+  LEFT
+}
+
+enum OutboxStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model User {
+  id               String    @id @default(uuid()) @db.Uuid
+  /// Email normalisé (trim + minuscules) à l'écriture.
+  email            String    @unique @db.VarChar(254)
+  passwordHash     String
+  displayName      String    @db.VarChar(80)
+  emailVerifiedAt  DateTime? @db.Timestamptz(3)
+  isPlatformAdmin  Boolean   @default(false)
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime? @db.Timestamptz(3)
+  /// Tout access token émis avant cette date est refusé (changement / reset de mot de passe).
+  tokensValidAfter DateTime  @default(now()) @db.Timestamptz(3)
+  createdAt        DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @db.Timestamptz(3)
+
+  memberships     Membership[]
+  refreshTokens   RefreshToken[]
+  emailTokens     EmailToken[]
+  orders          Order[]
+  waitlistEntries WaitlistEntry[]
+  checkIns        CheckIn[]
+  auditLogs       AuditLog[]
+
+  @@map("users")
+}
+
+model EmailToken {
+  id        String            @id @default(uuid()) @db.Uuid
+  userId    String            @db.Uuid
+  purpose   EmailTokenPurpose
+  /// SHA-256 hex du jeton envoyé par mail ; le jeton clair n'est jamais stocké.
+  tokenHash String            @unique @db.Char(64)
+  expiresAt DateTime          @db.Timestamptz(3)
+  usedAt    DateTime?         @db.Timestamptz(3)
+  createdAt DateTime          @default(now()) @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+  @@map("email_tokens")
+}
+
+model RefreshToken {
+  id           String    @id @default(uuid()) @db.Uuid
+  userId       String    @db.Uuid
+  familyId     String    @db.Uuid
+  /// SHA-256 hex du jeton opaque (256 bits) posé en cookie.
+  tokenHash    String    @unique @db.Char(64)
+  expiresAt    DateTime  @db.Timestamptz(3)
+  revokedAt    DateTime? @db.Timestamptz(3)
+  replacedById String?   @db.Uuid
+  createdAt    DateTime  @default(now()) @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([familyId])
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model Organization {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @db.VarChar(80)
+  slug      String   @unique @db.VarChar(40)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  settings    OrganizationSettings?
+  memberships Membership[]
+  events      Event[]
+  auditLogs   AuditLog[]
+
+  @@map("organizations")
+}
+
+model Membership {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  orgId     String   @db.Uuid
+  role      Role
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, orgId])
+  @@index([orgId, role])
+  @@map("memberships")
+}
+
+/// Réglages par défaut d'un collectif (surchargés éventuellement par événement).
+model OrganizationSettings {
+  orgId                     String  @id @db.Uuid
+  cardHoldMinutes           Int     @default(15)
+  transferHoldHours         Int     @default(72)
+  transferEnabled           Boolean @default(true)
+  cancellationDeadlineHours Int     @default(48)
+  selfCancellationEnabled   Boolean @default(true)
+  refundPercent             Int     @default(100)
+  serviceFeeRefundable      Boolean @default(false)
+  maxPerOrder               Int     @default(6)
+  maxPerUser                Int     @default(6)
+  waitlistOfferMinutes      Int     @default(120)
+  waitlistEnabled           Boolean @default(true)
+  serviceFeeFixedCents      Int     @default(0)
+  serviceFeeBasisPoints     Int     @default(0)
+  defaultTimezone           String  @default("Europe/Paris") @db.VarChar(64)
+  contactEmail              String? @db.VarChar(254)
+  bankBeneficiary           String? @db.VarChar(70)
+  /// IBAN chiffré (AES-256-GCM, clé DATA_ENCRYPTION_KEY) — jamais renvoyé en clair au back-office.
+  bankIbanEncrypted         String?
+  /// Forme masquée pré-calculée (« FR76 •••• •••• 1234 »).
+  bankIbanMasked            String? @db.VarChar(40)
+  bankBic                   String? @db.VarChar(11)
+  updatedAt                 DateTime @updatedAt @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@map("organization_settings")
+}
+
+model Event {
+  id           String      @id @default(uuid()) @db.Uuid
+  orgId        String      @db.Uuid
+  title        String      @db.VarChar(150)
+  description  String?     @db.VarChar(5000)
+  venue        String?     @db.VarChar(150)
+  address      String?     @db.VarChar(300)
+  isOnline     Boolean     @default(false)
+  startsAt     DateTime    @db.Timestamptz(3)
+  endsAt       DateTime    @db.Timestamptz(3)
+  /// Fuseau IANA, pour l'affichage uniquement (tout est stocké en UTC).
+  timezone     String      @db.VarChar(64)
+  status       EventStatus @default(DRAFT)
+  salesStartAt DateTime    @db.Timestamptz(3)
+  salesEndAt   DateTime    @db.Timestamptz(3)
+  cancelledAt  DateTime?   @db.Timestamptz(3)
+  cancelReason String?     @db.VarChar(500)
+
+  // Surcharges des réglages du collectif (null = hérite).
+  cardHoldMinutes           Int?
+  transferHoldHours         Int?
+  transferEnabled           Boolean?
+  cancellationDeadlineHours Int?
+  selfCancellationEnabled   Boolean?
+  refundPercent             Int?
+  maxPerOrder               Int?
+  maxPerUser                Int?
+  waitlistOfferMinutes      Int?
+  waitlistEnabled           Boolean?
+  serviceFeeFixedCents      Int?
+  serviceFeeBasisPoints     Int?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  ticketTypes  TicketType[]
+  orders       Order[]
+  tickets      Ticket[]
+  checkIns     CheckIn[]
+  waitlist     WaitlistEntry[]
+
+  @@index([orgId, startsAt])
+  @@index([status, startsAt])
+  @@map("events")
+}
+
+model TicketType {
+  id              String    @id @default(uuid()) @db.Uuid
+  eventId         String    @db.Uuid
+  name            String    @db.VarChar(80)
+  description     String?   @db.VarChar(1000)
+  capacity        Int
+  /// Places payées (billets émis).
+  sold            Int       @default(0)
+  /// Places bloquées par une commande non payée ou une offre de liste d'attente.
+  held            Int       @default(0)
+  priceCents      Int
+  earlyPriceCents Int?
+  earlyUntil      DateTime? @db.Timestamptz(3)
+  sortOrder       Int       @default(0)
+  createdAt       DateTime  @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime  @updatedAt @db.Timestamptz(3)
+
+  event      Event           @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  orderItems OrderItem[]
+  waitlist   WaitlistEntry[]
+
+  @@index([eventId, sortOrder])
+  @@map("ticket_types")
+}
+
+model Order {
+  id             String        @id @default(uuid()) @db.Uuid
+  userId         String        @db.Uuid
+  eventId        String        @db.Uuid
+  status         OrderStatus
+  paymentMethod  PaymentMethod
+  idempotencyKey String        @db.Uuid
+  /// SHA-256 du corps canonique de la requête, pour détecter une clé réutilisée avec un autre corps.
+  requestHash    String        @db.Char(64)
+  currency       String        @default("EUR") @db.Char(3)
+
+  // Montants et règles figés au moment de la réservation.
+  subtotalCents        Int
+  serviceFeeCents      Int
+  totalCents           Int
+  refundPercent        Int
+  serviceFeeRefundable Boolean
+  cancellableUntil     DateTime? @db.Timestamptz(3)
+  refundAmountCents    Int?
+
+  expiresAt   DateTime? @db.Timestamptz(3)
+  paidAt      DateTime? @db.Timestamptz(3)
+  cancelledAt DateTime? @db.Timestamptz(3)
+
+  // Virement : référence unique et coordonnées figées (IBAN chiffré).
+  transferReference         String? @unique @db.VarChar(20)
+  transferBeneficiary       String? @db.VarChar(70)
+  transferIbanEncrypted     String?
+  transferIbanMasked        String? @db.VarChar(40)
+  transferBic               String? @db.VarChar(11)
+
+  pspSessionId    String? @db.VarChar(100)
+  waitlistEntryId String? @unique @db.Uuid
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  event         Event          @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  waitlistEntry WaitlistEntry? @relation(fields: [waitlistEntryId], references: [id], onDelete: Restrict)
+  items         OrderItem[]
+  payments      Payment[]
+  refunds       Refund[]
+
+  @@unique([userId, idempotencyKey])
+  @@index([status, expiresAt])
+  @@index([eventId, status])
+  @@index([userId, eventId, status])
+  @@map("orders")
+}
+
+model OrderItem {
+  id             String @id @default(uuid()) @db.Uuid
+  orderId        String @db.Uuid
+  ticketTypeId   String @db.Uuid
+  quantity       Int
+  /// Prix unitaire figé (early ou normal) calculé par le serveur.
+  unitPriceCents Int
+  /// Part remboursée de cette ligne (hors frais de service).
+  refundedCents  Int    @default(0)
+
+  order      Order      @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  ticketType TicketType @relation(fields: [ticketTypeId], references: [id], onDelete: Restrict)
+  tickets    Ticket[]
+
+  @@unique([orderId, ticketTypeId])
+  @@index([ticketTypeId])
+  @@map("order_items")
+}
+
+model Payment {
+  id                String        @id @default(uuid()) @db.Uuid
+  orderId           String        @db.Uuid
+  providerPaymentId String        @unique @db.VarChar(100)
+  amountCents       Int
+  currency          String        @db.Char(3)
+  status            PaymentStatus
+  createdAt         DateTime      @default(now()) @db.Timestamptz(3)
+
+  order   Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  refunds Refund[]
+
+  @@index([orderId])
+  @@map("payments")
+}
+
+/// Remboursement demandé dans la transaction métier, exécuté auprès du PSP par le worker.
+model Refund {
+  id               String       @id @default(uuid()) @db.Uuid
+  orderId          String       @db.Uuid
+  paymentId        String       @db.Uuid
+  amountCents      Int
+  status           RefundStatus @default(PENDING)
+  reason           String       @db.VarChar(40)
+  providerRefundId String?      @unique @db.VarChar(100)
+  attempts         Int          @default(0)
+  nextAttemptAt    DateTime     @default(now()) @db.Timestamptz(3)
+  lastError        String?      @db.VarChar(500)
+  createdAt        DateTime     @default(now()) @db.Timestamptz(3)
+  updatedAt        DateTime     @updatedAt @db.Timestamptz(3)
+
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  @@index([status, nextAttemptAt])
+  @@map("refunds")
+}
+
+model WebhookEvent {
+  id              String    @id @default(uuid()) @db.Uuid
+  providerEventId String    @unique @db.VarChar(100)
+  type            String    @db.VarChar(50)
+  receivedAt      DateTime  @default(now()) @db.Timestamptz(3)
+  processedAt     DateTime? @db.Timestamptz(3)
+
+  @@map("webhook_events")
+}
+
+model Ticket {
+  id           String       @id @default(uuid()) @db.Uuid
+  orderItemId  String       @db.Uuid
+  /// Rang du billet dans la ligne de commande : unique(orderItemId, seq) rend la double émission impossible.
+  seq          Int
+  eventId      String       @db.Uuid
+  /// 16 octets aléatoires (crypto.randomBytes) en base64url sans padding (22 caractères).
+  publicId     String       @unique @db.Char(22)
+  status       TicketStatus @default(VALID)
+  usedAt       DateTime?    @db.Timestamptz(3)
+  usedByUserId String?      @db.Uuid
+  usedDeviceId String?      @db.Uuid
+  createdAt    DateTime     @default(now()) @db.Timestamptz(3)
+
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Restrict)
+  event     Event     @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  checkIns  CheckIn[]
+
+  @@unique([orderItemId, seq])
+  @@index([eventId, status])
+  @@map("tickets")
+}
+
+/// Journal des scans (en ligne et synchronisés). scanId unique = idempotence.
+model CheckIn {
+  id         String        @id @default(uuid()) @db.Uuid
+  scanId     String        @unique @db.Uuid
+  eventId    String        @db.Uuid
+  ticketId   String?       @db.Uuid
+  scannerId  String        @db.Uuid
+  deviceId   String        @db.Uuid
+  scannedAt  DateTime      @db.Timestamptz(3)
+  receivedAt DateTime      @default(now()) @db.Timestamptz(3)
+  result     CheckInResult
+  offline    Boolean       @default(false)
+
+  event   Event   @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  ticket  Ticket? @relation(fields: [ticketId], references: [id], onDelete: Restrict)
+  scanner User    @relation(fields: [scannerId], references: [id], onDelete: Restrict)
+
+  @@index([eventId, scannedAt])
+  @@index([ticketId])
+  @@map("check_ins")
+}
+
+model WaitlistEntry {
+  id             String         @id @default(uuid()) @db.Uuid
+  ticketTypeId   String         @db.Uuid
+  eventId        String         @db.Uuid
+  userId         String         @db.Uuid
+  quantity       Int
+  status         WaitlistStatus @default(WAITING)
+  offeredAt      DateTime?      @db.Timestamptz(3)
+  offerExpiresAt DateTime?      @db.Timestamptz(3)
+  createdAt      DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime       @updatedAt @db.Timestamptz(3)
+
+  ticketType TicketType @relation(fields: [ticketTypeId], references: [id], onDelete: Restrict)
+  event      Event      @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Restrict)
+  order      Order?
+
+  @@index([ticketTypeId, status, createdAt, id])
+  @@index([status, offerExpiresAt])
+  @@index([userId])
+  @@map("waitlist_entries")
+}
+
+/// Outbox transactionnelle : insérée dans la même transaction que l'événement métier.
+model EmailOutbox {
+  id            String       @id @default(uuid()) @db.Uuid
+  to            String       @db.VarChar(254)
+  template      String       @db.VarChar(50)
+  /// Données du gabarit ; vidées après envoi (peuvent contenir un lien à jeton).
+  payload       Json
+  status        OutboxStatus @default(PENDING)
+  attempts      Int          @default(0)
+  nextAttemptAt DateTime     @default(now()) @db.Timestamptz(3)
+  lastError     String?      @db.VarChar(500)
+  sentAt        DateTime?    @db.Timestamptz(3)
+  createdAt     DateTime     @default(now()) @db.Timestamptz(3)
+
+  @@index([status, nextAttemptAt])
+  @@map("email_outbox")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  orgId     String?  @db.Uuid
+  actorId   String?  @db.Uuid
+  action    String   @db.VarChar(60)
+  target    String   @db.VarChar(200)
+  meta      Json
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  organization Organization? @relation(fields: [orgId], references: [id], onDelete: Restrict)
+  actor        User?         @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, createdAt])
+  @@map("audit_logs")
+}
