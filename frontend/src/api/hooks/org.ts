@@ -164,8 +164,9 @@ export function useConfirmTransfer(orgId: string, eventId: string) {
 
 /** Statistiques en quasi temps réel : rafraîchies toutes les 5 s tant que l'onglet est visible. */
 export const STATS_POLL_MS = 5000;
-export const useEventStats = (orgId: string, eventId: string) =>
+export const useEventStats = (orgId: string, eventId: string, enabled = true) =>
   useQuery({
+    enabled,
     queryKey: qk.orgEventStats(orgId, eventId),
     queryFn: async ({ signal }): Promise<EventStats> => parseEventStats(await apiRequest<unknown>(`${ev(orgId, eventId)}/stats`, { signal })),
     // Arrêt définitif sur 403 / 404 (droits retirés, événement inexistant) : inutile d'insister.

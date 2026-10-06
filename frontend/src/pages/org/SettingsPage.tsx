@@ -5,12 +5,15 @@ import { useOrgSettings, useUpdateOrgSettings } from '../../api/hooks/org';
 import type { OrgSettings, OrgSettingsPatch } from '../../api/types';
 import { useAuth } from '../../auth/AuthContext';
 import { membershipFor } from '../../auth/roles';
+import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { ErrorAlert } from '../../components/ErrorAlert';
 import { Field } from '../../components/Field';
 import { PageLoader } from '../../components/PageLoader';
 import { bicProblem, ibanProblem, normalizeIban } from '../../lib/iban';
 import { listTimeZones } from '../../lib/time';
 import { formatRule, parseRule, RULE_DEFS, toInput, type RuleKey } from './salesRules';
+
+const formatIban = (iban: string) => iban.replace(/(.{4})/g, '$1 ').trim();
 
 function ReadOnlySettings({ s }: { s: OrgSettings }) {
   return (
@@ -132,7 +135,7 @@ function SettingsForm({ orgId, s }: { orgId: string; s: OrgSettings }) {
 }
 
 /** Coordonnées bancaires : ressaisie COMPLÈTE + mot de passe actuel (contrat v1.7). L'IBAN n'est jamais pré-rempli. */
-function BankForm({ orgId, onDone }: { orgId: string; onDone: () => void }) {
+function BankForm({ orgId, currentIban, onDone }: { orgId: string; currentIban: string | null; onDone: () => void }) {
   const update = useUpdateOrgSettings(orgId, { sensitive: true });
   // L'erreur est conservée à part : la mutation est réinitialisée aussitôt (IBAN + mot de passe effacés du cache).
   const [lastError, setLastError] = useState<unknown>(null);
@@ -143,6 +146,7 @@ function BankForm({ orgId, onDone }: { orgId: string; onDone: () => void }) {
   const [errors, setErrors] = useState<Partial<Record<'beneficiary' | 'iban' | 'bic' | 'password', string>>>({});
   const server = fieldErrors(lastError);
   const wrongPassword = isApiError(lastError) && lastError.code === 'INVALID_CREDENTIALS';
+  const [confirming, setConfirming] = useState(false);
 
   const submit = (e: SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -155,6 +159,11 @@ function BankForm({ orgId, onDone }: { orgId: string; onDone: () => void }) {
     };
     setErrors(errs);
     if (Object.values(errs).some(Boolean) || update.isPending) return;
+    setConfirming(true); // ancien et nouveau compte montrés avant l'envoi
+  };
+
+  const send = () => {
+    setConfirming(false);
     update.mutate(
       { bank: { beneficiary: beneficiary.trim(), iban: normalizeIban(iban), bic: bic.trim().toUpperCase() }, currentPassword: password },
       {
@@ -200,6 +209,27 @@ function BankForm({ orgId, onDone }: { orgId: string; onDone: () => void }) {
           Annuler
         </button>
       </div>
+      <ConfirmDialog
+        open={confirming}
+        title="Changer le compte qui reçoit les virements ?"
+        icon="bank"
+        confirmLabel="Oui, changer le compte"
+        cancelLabel="Garder l’ancien compte"
+        danger
+        busy={update.isPending}
+        onCancel={() => setConfirming(false)}
+        onConfirm={send}
+        consequences={[
+          <>
+            Ancien compte : <span className="mono">{currentIban ?? 'non renseigné'}</span>
+          </>,
+          <>
+            Nouveau compte : <span className="mono">{formatIban(normalizeIban(iban))}</span> ({beneficiary.trim()})
+          </>,
+          'Les virements des prochaines commandes iront sur ce nouveau compte.',
+          'Tous les propriétaires du collectif sont prévenus par e-mail.',
+        ]}
+      />
     </form>
   );
 }
@@ -227,7 +257,7 @@ export function SettingsPage() {
       <BankInfo s={data} />
       {owner ? (
         editingBank ? (
-          <BankForm orgId={orgId} onDone={() => setEditingBank(false)} />
+          <BankForm orgId={orgId} currentIban={data.bank.ibanMasked} onDone={() => setEditingBank(false)} />
         ) : (
           <button type="button" className="btn btn--secondary" onClick={() => setEditingBank(true)}>
             Modifier les coordonnées bancaires

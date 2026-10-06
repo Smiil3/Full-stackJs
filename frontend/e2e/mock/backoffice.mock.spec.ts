@@ -16,7 +16,7 @@ test('back-office OWNER en mode mock', async ({ page }) => {
   await main.getByRole('link', { name: 'Les Nuits de la Garonne' }).click();
   await main.getByRole('link', { name: /Garonne Électrique/ }).click();
   await page.getByRole('link', { name: 'Ventes en temps réel' }).click();
-  await expect(page.getByText(/Mis à jour il y a/)).toBeVisible();
+  await expect(page.getByText(/mis à jour il y a/i)).toBeVisible();
   await page.getByRole('link', { name: 'Réglages' }).click();
   await expect(page.getByText('FR76 •••• •••• 0189')).toBeVisible();
   await page.getByRole('link', { name: 'Journal' }).click();

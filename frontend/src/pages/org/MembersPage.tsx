@@ -136,8 +136,22 @@ export function MembersPage() {
       <ConfirmDialog
         open={removing !== null}
         title="Retirer ce membre ?"
+        icon="users"
         confirmLabel="Retirer"
+        cancelLabel="Garder ce membre"
         danger
+        consequences={
+          removing && !isSelf(removing)
+            ? [
+                removing.role === 'SCANNER'
+                  ? `${removing.displayName} ne pourra plus contrôler les billets à l’entrée.`
+                  : removing.role === 'MANAGER'
+                    ? `${removing.displayName} ne pourra plus gérer les événements, les ventes ni les virements.`
+                    : `${removing.displayName} ne pourra plus gérer les réglages, les membres ni les coordonnées bancaires.`,
+                'Ses actions passées restent dans le journal.',
+              ]
+            : undefined
+        }
         busy={m.remove.isPending}
         onCancel={() => setRemoving(null)}
         onConfirm={() => {
