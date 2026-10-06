@@ -41,21 +41,34 @@ export function encryptString(plain: string, keyring: Keyring, aad: string): str
   return ['v1', keyring.current.id, iv.toString('base64url'), tag.toString('base64url'), ciphertext.toString('base64url')].join('.');
 }
 
+/** Échec de déchiffrement : code interne exploitable dans les logs, sans détail cryptographique. */
+export class CryptoError extends Error {
+  constructor(public readonly code: 'DECRYPT_FORMAT' | 'DECRYPT_UNKNOWN_KEY' | 'DECRYPT_FAILED', message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'CryptoError';
+  }
+}
+
 export function decryptString(payload: string, keyring: Keyring, aad: string): string {
   const parts = payload.split('.');
   const [version, kid, ivB64, tagB64, ctB64] = parts;
   if (parts.length !== 5 || version !== 'v1' || !kid || !KID_RE.test(kid) || !ivB64 || !tagB64 || ctB64 === undefined) {
-    throw new Error('Format chiffré inconnu');
+    throw new CryptoError('DECRYPT_FORMAT', 'Format chiffré inconnu');
   }
   const key = keyring.byId.get(kid);
-  if (!key) throw new Error('Clé de chiffrement inconnue');
+  if (!key) throw new CryptoError('DECRYPT_UNKNOWN_KEY', 'Clé de chiffrement inconnue');
   const iv = Buffer.from(ivB64, 'base64url');
   const tag = Buffer.from(tagB64, 'base64url');
-  if (iv.length !== GCM_IV_BYTES || tag.length !== GCM_TAG_BYTES) throw new Error('IV ou tag invalide');
+  if (iv.length !== GCM_IV_BYTES || tag.length !== GCM_TAG_BYTES) throw new CryptoError('DECRYPT_FORMAT', 'IV ou tag invalide');
   const decipher = createDecipheriv('aes-256-gcm', key, iv, { authTagLength: GCM_TAG_BYTES });
   decipher.setAAD(Buffer.from(aad, 'utf8'));
   decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(Buffer.from(ctB64, 'base64url')), decipher.final()]).toString('utf8');
+  try {
+    return Buffer.concat([decipher.update(Buffer.from(ctB64, 'base64url')), decipher.final()]).toString('utf8');
+  } catch (cause) {
+    // Mauvaise clé, mauvais contexte (AAD) ou donnée altérée : indiscernables, et c'est voulu.
+    throw new CryptoError('DECRYPT_FAILED', 'Déchiffrement impossible (clé, contexte ou donnée invalide)', { cause });
+  }
 }
 
 /** Contextes AAD des champs chiffrés. */

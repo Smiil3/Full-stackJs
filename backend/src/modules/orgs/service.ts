@@ -1,7 +1,6 @@
 import type { OrganizationSettings, Role } from '../../generated/prisma/client.js';
-import { getEnv } from '../../config/env.js';
 import { diff, writeAudit } from '../../lib/audit.js';
-import { aad, encryptString } from '../../lib/crypto.js';
+import { bankCrypto } from '../../lib/bankCrypto.js';
 import { transaction, type Tx } from '../../lib/db.js';
 import { enqueueEmail } from '../../lib/outbox.js';
 import { reauthenticate } from '../auth/service.js';
@@ -84,7 +83,7 @@ export async function updateSettings(orgId: string, actorId: string, patch: Sett
     if (patch.bank) {
       const iban = normalizeIban(patch.bank.iban);
       data.bankBeneficiary = patch.bank.beneficiary.trim();
-      data.bankIbanEncrypted = encryptString(iban, getEnv().dataKeyring, aad.orgBankIban(orgId));
+      data.bankIbanEncrypted = bankCrypto.encryptOrgIban(orgId, iban);
       data.bankIbanMasked = maskIban(iban);
       data.bankBic = patch.bank.bic.toUpperCase();
     }

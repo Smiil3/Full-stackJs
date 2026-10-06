@@ -100,3 +100,34 @@ describe('journalisation (B1.1 M4)', () => {
     expect(Object.keys(s).sort()).toEqual(['code', 'modelName', 'target', 'type']);
   });
 });
+
+describe('diagnostic des erreurs inattendues (bug « type: object »)', () => {
+  it('nom, code interne, message et stack expurgés, sans PII, y compris via pino-http', async () => {
+    await withLogLevel(async () => {
+      const { lines, stream } = capture();
+      const logger = buildLogger(stream);
+      const app = express();
+      app.use(pinoHttp({ logger, serializers: { err: serializeError } }));
+      app.post('/boom', ...endpoint({ response: Joi.object({}) }, async () => {
+        const { CryptoError } = await import('../../src/lib/crypto.js');
+        throw new CryptoError('DECRYPT_FAILED', 'Échec pour victime@exemple.fr IBAN FR7630006000011234567890189');
+      }));
+      app.use(errorHandler);
+      await supertest(app).post('/boom').expect(500);
+      const out = lines.join('');
+      expect(out).toContain('"type":"CryptoError"');
+      expect(out).toContain('"code":"DECRYPT_FAILED"');
+      expect(out).toContain('"message":"Échec pour [email] IBAN [iban]"');
+      expect(out).toContain('"stack"');
+      expect(out).not.toContain('victime@exemple.fr');
+      expect(out).not.toContain('FR7630006000011234567890189');
+      expect(out).not.toContain('"type":"object"');
+    });
+  });
+
+  it('erreur déjà sérialisée par pino (objet avec .raw) : l’erreur d’origine est retrouvée', () => {
+    const original = new TypeError('cassé');
+    const wrapped = Object.defineProperty({ type: 'TypeError' }, 'raw', { value: original, enumerable: false });
+    expect(serializeError(wrapped)).toMatchObject({ type: 'TypeError', message: 'cassé' });
+  });
+});

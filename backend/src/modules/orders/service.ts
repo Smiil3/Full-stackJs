@@ -2,7 +2,9 @@ import { randomUUID } from 'node:crypto';
 import type { Order } from '../../generated/prisma/client.js';
 import { getEnv } from '../../config/env.js';
 import { clock } from '../../lib/clock.js';
-import { aad, decryptString, encryptString, safeEqual, sha256Hex, transferReference } from '../../lib/crypto.js';
+import { safeEqual, sha256Hex, transferReference } from '../../lib/crypto.js';
+import { bankCrypto } from '../../lib/bankCrypto.js';
+import { getLogger } from '../../lib/logger.js';
 import { transaction, type Tx } from '../../lib/db.js';
 import { errors } from '../../lib/errors.js';
 import { formatEuros } from '../../lib/mail/templates.js';
@@ -28,7 +30,7 @@ export function toOrderView(order: repo.OrderWithDetails, scanned: number, viewe
       beneficiary: order.transferBeneficiary ?? '',
       // IBAN en clair uniquement pour l'acheteur concerné ; masqué pour le back-office (contrat 1.2).
       iban: viewer === 'owner'
-        ? decryptString(order.transferIbanEncrypted, getEnv().dataKeyring, aad.orderTransferIban(order.id))
+        ? bankCrypto.decryptOrderIban(order.id, order.transferIbanEncrypted)
         : (order.transferIbanMasked ?? ''),
       bic: order.transferBic ?? '',
       reference: order.transferReference,
@@ -164,11 +166,17 @@ async function reserveAndCreate(tx: Tx, userId: string, idempotencyKey: string, 
   let transfer = {};
   let ibanPlain: string | null = null;
   if (!free && body.paymentMethod === 'TRANSFER' && settings.bankIbanEncrypted) {
-    ibanPlain = decryptString(settings.bankIbanEncrypted, getEnv().dataKeyring, aad.orgBankIban(event.orgId));
+    try {
+      ibanPlain = bankCrypto.decryptOrgIban(event.orgId, settings.bankIbanEncrypted);
+    } catch (err) {
+      // Coordonnées illisibles (donnée corrompue, clé retirée du trousseau…) : virement indisponible, alerte journalisée.
+      getLogger().error({ err, orgId: event.orgId }, 'IBAN du collectif indéchiffrable : virement indisponible');
+      throw errors.unprocessable('PAYMENT_METHOD_UNAVAILABLE', 'Le paiement par virement n’est pas disponible pour cet événement.');
+    }
     transfer = {
       transferReference: transferReference(),
       transferBeneficiary: settings.bankBeneficiary,
-      transferIbanEncrypted: encryptString(ibanPlain, getEnv().dataKeyring, aad.orderTransferIban(orderId)),
+      transferIbanEncrypted: bankCrypto.encryptOrderIban(orderId, ibanPlain),
       transferIbanMasked: settings.bankIbanMasked,
       transferBic: settings.bankBic,
     };
