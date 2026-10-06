@@ -164,3 +164,16 @@ legend { font-weight: 800; padding: 0 var(--space-2); }
 .table th, .table td { text-align: left; padding: var(--space-2); border-bottom: 1px solid var(--color-border); vertical-align: top; }
 .table thead th { font-size: 0.85rem; color: var(--color-muted); }
 .card--attention { border-color: var(--color-danger); border-width: 2px; }
+.camera { position: relative; background: #000; border-radius: var(--radius); overflow: hidden; }
+.camera__video { width: 100%; max-height: 55vh; object-fit: cover; display: block; }
+.grow { flex: 1; min-width: 12rem; }
+.scan-result { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-4); padding: var(--space-5); text-align: center; color: #fff; }
+.scan-result--ok { background: #0b6b2f; }
+.scan-result--ko { background: #a30d24; }
+.scan-result--warn { background: #b35900; }
+.scan-result__title { margin: 0; font-size: clamp(2rem, 10vw, 3.5rem); font-weight: 900; line-height: 1.1; }
+.scan-result__detail { margin: 0; font-size: clamp(1.25rem, 6vw, 2rem); font-weight: 700; }
+.scan-result__mode { margin: 0; font-size: 1rem; opacity: 0.9; }
+.scan-result__actions { display: flex; flex-direction: column; gap: var(--space-3); width: 100%; max-width: 24rem; }
+.scan-result__btn { min-height: 64px; font-size: 1.25rem; background: #fff; color: #111; }
+.scan-result .btn--secondary.scan-result__btn { background: transparent; color: #fff; border-color: #fff; }

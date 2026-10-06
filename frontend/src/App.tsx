@@ -5,6 +5,8 @@ import { createQueryClient } from './api/queryClient';
 import { AuthProvider } from './auth/AuthProvider';
 import { createAppRouter } from './router';
 import { AppErrorBoundary } from './components/AppErrorBoundary';
+// Purge des données du scanner à chaque fin de session, même si l'écran de scan n'a pas été ouvert.
+import './scanner/cleanup';
 
 export function App() {
   const [queryClient] = useState(createQueryClient);

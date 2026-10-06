@@ -34,3 +34,16 @@ export function RequirePlatformAdmin({ children }: { children: ReactNode }) {
   if (!user?.isPlatformAdmin) return <Forbidden />;
   return children;
 }
+
+/**
+ * Contrôle d'accès hors-ligne : connecté ⇒ rôle SCANNER+ requis dans le collectif ; démarrage hors-ligne
+ * (session non restaurable) ⇒ autorisé, car l'écran n'utilise alors QUE les données déjà préparées
+ * sur l'appareil (aucune donnée nouvelle ne peut être obtenue sans session).
+ */
+export function RequireScannerAccess({ children }: { children: ReactNode }) {
+  const { status, user } = useAuth();
+  const { orgId } = useParams();
+  if (status === 'offline') return children;
+  if (!hasOrgRole(user, orgId, 'SCANNER')) return <Forbidden />;
+  return children;
+}

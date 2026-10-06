@@ -11,7 +11,8 @@ export function Layout() {
   const online = useOnline();
   const navigate = useNavigate();
   const canManage = user?.memberships.some((m) => roleAtLeast(m.role, 'MANAGER')) ?? false;
-  const canScan = (user?.memberships.length ?? 0) > 0;
+  // Hors-ligne au démarrage (session non restaurée) : le scanner reste accessible sur les listes préparées.
+  const canScan = (user?.memberships.length ?? 0) > 0 || status === 'offline';
   const navClass = ({ isActive }: { isActive: boolean }) => (isActive ? `${styles.link} ${styles.active}` : styles.link);
 
   const onLogout = async () => {
@@ -32,6 +33,11 @@ export function Layout() {
           <NavLink to="/" end className={navClass}>
             Événements
           </NavLink>
+          {!user && canScan ? (
+            <NavLink to="/scan" className={navClass}>
+              Scanner
+            </NavLink>
+          ) : null}
           {user ? (
             <>
               <NavLink to="/me/tickets" className={navClass}>

@@ -1,5 +1,6 @@
 import { createBrowserRouter, type RouteObject } from 'react-router';
-import { RequireAuth, RequireOrgRole, RequirePlatformAdmin } from './auth/guards';
+import { RequireAuth, RequireOrgRole, RequirePlatformAdmin, RequireScannerAccess } from './auth/guards';
+import { Outlet as ScannerOutlet } from 'react-router';
 import { ValidIds } from './auth/ValidIds';
 import { Layout } from './components/Layout';
 import { RouteError } from './components/RouteError';
@@ -74,6 +75,29 @@ export const routes: RouteObject[] = [
           { path: 'refunds', element: <RefundsPage /> },
           { path: 'members', element: <MembersPage /> },
           { path: 'audit', element: <RequireOrgRole min="OWNER"><AuditPage /></RequireOrgRole> },
+        ],
+      },
+      // Contrôle d'accès (PWA hors-ligne) : chargé à la demande (lecteur QR volumineux), précaché par le service worker.
+      {
+        path: 'scan',
+        element: <RequireAuth allowOffline><ScannerOutlet /></RequireAuth>,
+        children: [
+          { index: true, lazy: async () => ({ Component: (await import('./scanner/ui/ScannerHomePage')).ScannerHomePage }) },
+          {
+            path: ':orgId/:eventId',
+            lazy: async () => {
+              const { ScannerPage } = await import('./scanner/ui/ScannerPage');
+              return {
+                Component: () => (
+                  <ValidIds>
+                    <RequireScannerAccess>
+                      <ScannerPage />
+                    </RequireScannerAccess>
+                  </ValidIds>
+                ),
+              };
+            },
+          },
         ],
       },
       { path: 'admin', element: <RequireAuth><RequirePlatformAdmin><AdminOrgsPage /></RequirePlatformAdmin></RequireAuth> },
