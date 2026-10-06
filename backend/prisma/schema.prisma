@@ -325,6 +325,8 @@ model Order {
   transferIbanMasked        String? @db.VarChar(40)
   transferBic               String? @db.VarChar(11)
 
+  /// Échecs consécutifs du worker d'expiration (au-delà du seuil : commande écartée et signalée, le lot continue).
+  expireFailures  Int     @default(0)
   pspSessionId    String? @db.VarChar(100)
   /// URL de paiement de la session PSP en cours (checkout idempotent : même URL renvoyée).
   pspSessionUrl   String? @db.VarChar(500)

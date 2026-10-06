@@ -277,7 +277,8 @@ describe('expiration des réservations', () => {
     expect(blocked.status).toBe(409);
     // Pas encore échue : rien ne bouge.
     expect((await expireOrders()).expired).toBe(0);
-    const { expired, ticketTypeIds: released } = await expireOrders(new Date(Date.now() + 16 * 60_000));
+    await getDb().order.update({ where: { id: res.body.id as string }, data: { expiresAt: new Date(Date.now() - 60_000) } });
+    const { expired, ticketTypeIds: released } = await expireOrders();
     expect(expired).toBe(1);
     expect(released).toEqual([ticketTypeIds[0]]);
     const after = await api().get(`/api/v1/orders/${res.body.id as string}`).set(buyer.auth).expect(200);
@@ -288,14 +289,15 @@ describe('expiration des réservations', () => {
     expect(await getDb().emailOutbox.count({ where: { to: buyer.email, template: 'orderExpired' } })).toBe(1);
   });
 
-  it('deux workers en parallèle : chaque commande n’est expirée qu’une fois', async () => {
+  it('trois workers en parallèle (SKIP LOCKED) : chaque commande n’est expirée qu’une fois', async () => {
     const { eventId, ticketTypeIds } = await publishedEvent([{ name: 'A', capacity: 50, priceCents: 1000 }]);
     for (let i = 0; i < 5; i += 1) {
       const u = await createUser();
       await order(await bearerFor(u.id), { eventId, paymentMethod: 'CARD', items: [{ ticketTypeId: ticketTypeIds[0]!, quantity: 2 }] }).expect(201);
     }
-    const later = new Date(Date.now() + 3600_000);
-    const results = await Promise.all([expireOrders(later), expireOrders(later), expireOrders(later)]);
+    await getDb().order.updateMany({ data: { expiresAt: new Date(Date.now() - 60_000) } });
+    // Sans verrou consultatif : seul FOR UPDATE SKIP LOCKED répartit le travail entre workers.
+    const results = await Promise.all([expireOrders(), expireOrders(), expireOrders()]);
     expect(results.reduce((n, r) => n + r.expired, 0)).toBe(5);
     const tt = await getDb().ticketType.findUniqueOrThrow({ where: { id: ticketTypeIds[0]! } });
     expect(tt.held).toBe(0);
