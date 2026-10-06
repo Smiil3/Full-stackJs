@@ -13,13 +13,17 @@ export function formatCents(cents: number): string {
 
 type Parsed = { ok: true; value: number } | { ok: false };
 
-/** Analyse « 12 », « 12,5 », « 12.50 », « 1 234,56 » en entier mis à l'échelle de `decimals` chiffres. */
+/**
+ * Analyse « 12 », « 12,5 », « 12.50 », « 1 234,56 » en entier mis à l'échelle de `decimals` chiffres.
+ * Strict : séparateur de milliers = espace (normale, insécable ou fine) par groupes de 3 exactement,
+ * un seul séparateur décimal suivi d'au moins un chiffre. « 1 5 », « 5, », « 1.234,5 » sont refusés.
+ */
 function parseScaledDecimal(raw: string, decimals: number, max: number): Parsed {
-  const s = raw.trim().replace(/[\s\u00a0\u202f]/g, '').replace(',', '.');
-  const re = new RegExp(`^(\\d{1,9})(?:\\.(\\d{0,${decimals}}))?$`);
+  const s = raw.trim().replace(/[\u00a0\u202f]/g, ' ');
+  const re = new RegExp(`^(\\d{1,3}(?: \\d{3})+|\\d{1,9})(?:[.,](\\d{1,${decimals}}))?$`);
   const m = re.exec(s);
   if (!m) return { ok: false };
-  const intPart = Number(m[1]);
+  const intPart = Number((m[1] ?? '').replace(/ /g, ''));
   const frac = (m[2] ?? '').padEnd(decimals, '0');
   const value = intPart * 10 ** decimals + (frac ? Number(frac) : 0);
   if (!Number.isSafeInteger(value) || value > max) return { ok: false };
