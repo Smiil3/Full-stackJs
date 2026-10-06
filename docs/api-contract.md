@@ -1,7 +1,7 @@
 # Contrat d'API — Billetterie « Les Nuits de la Garonne »
 
 > **Source de vérité commune front / back.** Toute modification passe par le PO (session `fullstack-js`) : demander via une ligne `NEED: changement de contrat …`. Ne jamais diverger silencieusement.
-> Version : 1.10 — 2026-10-06 (voir §11 Historique)
+> Version : 1.11 — 2026-10-06 (voir §11 Historique)
 
 ## 1. Conventions
 
@@ -262,7 +262,7 @@ Un remboursement de commande payée par virement est toujours `MANUAL_REQUIRED`.
 - **Webhook** vers le back : `POST /api/v1/webhooks/psp`, body brut JSON
   ```json
   { "id": "evt_…", "type": "payment.succeeded" | "payment.failed" | "refund.succeeded", "created": 1760000000,
-    "data": { "paymentId": "pay_…", "sessionId": "cs_…", "orderId": "…", "amountCents": 3000, "currency": "EUR" } }
+    "data": { "paymentId": "pay_…", "sessionId": "cs_…", "orderId": "…", "amountCents": 3000, "currency": "EUR", "refundId": "re_… (refund.succeeded uniquement)" } }
   ```
   En-tête `Psp-Signature: t=<unix>,v1=<hex HMAC-SHA256(PSP_WEBHOOK_SECRET, t + "." + rawBody)>`.
   Réponses : 400 **uniquement** si la signature est invalide, l'horodatage hors tolérance (5 min) ou le corps n'est pas du JSON. **Une fois la signature valide, réponse 200 `{ received: true }` dans tous les cas métier** (doublon, type inconnu, champ inconnu dans `data`, commande inconnue, montant/devise/session incohérents, stock incohérent) : un paiement authentifié n'est **jamais perdu**. Toute somme encaissée qui ne donne pas de billets est enregistrée (`Payment`) puis remboursée automatiquement (`Refund` motif `UNEXPECTED_PAYMENT`, `LATE_PAYMENT` ou `DUPLICATE_PAYMENT`) avec log `error` et AuditLog. 5xx uniquement sur panne réelle (le PSP réessaie).
@@ -270,9 +270,11 @@ Un remboursement de commande payée par virement est toujours `MANUAL_REQUIRED`.
 
 ## 10. Divers
 - `GET /health` → 200 `{ status: 'ok' }` (sans info de version).
+- Taille maximale des corps JSON : 10 ko partout, **sauf** `POST …/checkin/sync` (256 ko, route authentifiée et limitée) ; webhook PSP : 64 ko en brut.
 - En-têtes de sécurité via helmet ; CORS : origine `FRONT_URL` uniquement, `credentials: true`.
 
 ## 11. Historique
+- **1.11** (2026-10-06) : `data.refundId` sur `refund.succeeded` ; limites de taille de corps explicitées (sync 256 ko).
 - **1.10** (2026-10-06) : webhook — 200 pour tout événement signé (paiement jamais perdu, remboursement auto des anomalies) ; suivi des remboursements (§7.3 bis) ; `refundsToProcess` dans les stats.
 - **1.9** (2026-10-06) : portée et cycle de vie de l'Idempotency-Key précisés.
 - **1.8** (2026-10-06) : `GET /admin/orgs` paginé.
