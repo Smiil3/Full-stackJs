@@ -48,6 +48,13 @@ async function scanManually(user: ReturnType<typeof userEvent.setup>, code: stri
   await user.click(screen.getByRole('button', { name: 'Vérifier' }));
 }
 
+/** « Scanner le suivant » n'est actif qu'après le délai de garde (F6-H3). */
+async function clickNext(user: ReturnType<typeof userEvent.setup>, dialog: HTMLElement) {
+  const next = within(dialog).getByRole('button', { name: 'Scanner le suivant' });
+  await waitFor(() => expect(next).toBeEnabled(), { timeout: 3000 });
+  await user.click(next);
+}
+
 async function openRescue(user: ReturnType<typeof userEvent.setup>) {
   await renderApp(RESCUE, { as: 'scanner@nuits.test' });
   await user.click(await screen.findByRole('button', { name: 'Préparer l’entrée hors-ligne' }));
@@ -77,7 +84,7 @@ describe('scanner — mode par défaut EN LIGNE', () => {
     expect(ko).toHaveTextContent(/DÉJÀ UTILISÉ à \d{2}:\d{2}/);
     await new Promise((r) => setTimeout(r, 3000));
     expect(screen.getByRole('alertdialog')).toHaveTextContent('DÉJÀ UTILISÉ'); // toujours là
-    await user.click(within(ko).getByRole('button', { name: 'Scanner le suivant' }));
+    await clickNext(user, ko);
     expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(await pendingCount()).toBe(0); // rien en file en mode en ligne
   });
@@ -133,7 +140,7 @@ describe('scanner — mode SECOURS hors-ligne', () => {
     await scanManually(user, qr1 ?? '');
     r = await screen.findByRole('alertdialog');
     expect(r).toHaveTextContent('DÉJÀ UTILISÉ');
-    await user.click(within(r).getByRole('button', { name: 'Scanner le suivant' }));
+    await clickNext(user, r);
     await scanManually(user, qr2 ?? '');
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull(), { timeout: 4000 });
     expect(await screen.findByText(/scans en attente de synchro/)).toHaveTextContent('2 scans');
@@ -157,6 +164,49 @@ describe('scanner — mode SECOURS hors-ligne', () => {
     await user.dblClick(admit);
     expect(await screen.findByRole('alertdialog')).toHaveTextContent('OK');
     expect(await pendingCount()).toBe(1);
+  });
+
+  it('F6-H3 : douchette « code+Entrée » répétée ⇒ jamais « Laisser entrer », refus pas fermé avant 1,5 s', async () => {
+    const user = userEvent.setup();
+    await buyConcert(1);
+    await openRescue(user);
+    const { signQr, randomPublicId } = await import('../../mocks/crypto');
+    const late = await signQr(IDS.eventConcert, randomPublicId());
+    setOnline(false);
+    await user.click(screen.getByLabelText('Saisie manuelle du code'));
+    await user.keyboard(`${late}{Enter}`);
+    const r = await screen.findByRole('alertdialog');
+    expect(r).toHaveClass('scan-result--warn');
+    expect(document.activeElement?.id).toBe('scan-result-title'); // focus sur le titre, pas sur le bouton
+    // La douchette continue d'envoyer des codes suivis d'Entrée, pendant puis après le délai de garde.
+    await user.keyboard(`${late}{Enter}`);
+    await user.keyboard(' ');
+    await new Promise((res) => setTimeout(res, 1700));
+    await user.keyboard(`${late}{Enter}`);
+    within(r).getByRole('button', { name: 'Laisser entrer' }).focus();
+    await user.keyboard('{Enter}');
+    await user.keyboard(' ');
+    expect(screen.getByRole('alertdialog')).toHaveClass('scan-result--warn'); // toujours en attente de décision
+    expect(await pendingCount()).toBe(0); // personne n'est entré
+    await user.click(within(r).getByRole('button', { name: 'Laisser entrer' })); // un vrai tap
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('OK');
+    expect(await pendingCount()).toBe(1);
+  });
+
+  it('F6-H3 : un refus ignore Entrée pendant 1,5 s puis se ferme', async () => {
+    const user = userEvent.setup();
+    await renderApp(ONLINE_ONLY, { as: 'scanner@nuits.test' });
+    await user.click(await screen.findByLabelText('Saisie manuelle du code'));
+    await user.keyboard('NG1.faux{Enter}');
+    const r = await screen.findByRole('alertdialog');
+    expect(r).toHaveTextContent('INVALIDE');
+    await user.keyboard('NG1.autre{Enter}');
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('INVALIDE'); // pas fermé
+    expect(within(r).getByRole('button', { name: 'Scanner le suivant' })).toBeDisabled();
+    await new Promise((res) => setTimeout(res, 1700));
+    await user.keyboard('{Enter}');
+    expect(screen.queryByRole('alertdialog')).toBeNull();
   });
 
   it('conflit affiché, à valider par « J’ai pris connaissance »', async () => {
