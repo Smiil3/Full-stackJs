@@ -16,7 +16,7 @@ export interface WebhookEvent {
   id: string;
   type: 'payment.succeeded' | 'payment.failed' | 'refund.succeeded';
   created: number;
-  data: { paymentId: string; sessionId?: string; orderId: string; amountCents: number; currency: string };
+  data: { paymentId: string; sessionId?: string; orderId: string; amountCents: number; currency: string; refundId?: string };
 }
 
 /** Livraison d'un webhook (HTTP en dev ; injectée en test pour viser l'application en mémoire). */
@@ -53,6 +53,8 @@ export interface MockPsp {
   emit(event: WebhookEvent): Promise<void>;
   sessions: Map<string, Session>;
   refunds: Map<string, { id: string; paymentId: string; amountCents: number }>;
+  /** Pour les tests : déclare un paiement encaissé (hors page de paiement), pour pouvoir le rembourser. */
+  registerPayment(paymentId: string, orderId: string, amountCents: number): void;
 }
 
 export function createMockPsp(options: MockPspOptions): MockPsp {
@@ -60,7 +62,8 @@ export function createMockPsp(options: MockPspOptions): MockPsp {
   const sessions = new Map<string, Session>();
   const sessionsByKey = new Map<string, string>();
   const refunds = new Map<string, { id: string; paymentId: string; amountCents: number }>();
-  const paymentsById = new Map<string, Session>();
+  const paymentsById = new Map<string, { orderId: string; amountCents: number }>();
+  const refundedByPayment = new Map<string, number>();
 
   const emit = async (event: WebhookEvent): Promise<void> => {
     const raw = JSON.stringify(event);
@@ -76,7 +79,15 @@ export function createMockPsp(options: MockPspOptions): MockPsp {
 
   const app = express();
   app.disable('x-powered-by');
-  app.use(helmet({ contentSecurityPolicy: { useDefaults: false, directives: { defaultSrc: ["'none'"], styleSrc: ["'unsafe-inline'"], formAction: ["'self'"], frameAncestors: ["'none'"] } } }));
+  // form-action couvre aussi la redirection 303 qui suit la soumission (Chromium) : on autorise exactement
+  // les origines de retour configurées (le front), sans joker.
+  const redirectOrigins = options.allowedRedirectOrigins.map((o) => new URL(o).origin);
+  app.use(helmet({
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: { defaultSrc: ["'none'"], styleSrc: ["'unsafe-inline'"], formAction: ["'self'", ...redirectOrigins], frameAncestors: ["'none'"] },
+    },
+  }));
   app.use(express.json({ limit: '10kb' }));
   app.use(express.urlencoded({ extended: false, limit: '1kb' }));
 
@@ -163,7 +174,7 @@ ${s.status === 'open'
     }
     s.status = 'paid';
     s.paymentId = id('pay');
-    paymentsById.set(s.paymentId, s);
+    paymentsById.set(s.paymentId, { orderId: s.orderId, amountCents: s.amountCents });
     const event = paymentEvent(s, 'payment.succeeded');
     if (action === 'pay-delayed') {
       setTimeout(() => void emit(event).catch(() => undefined), options.delayedWebhookMs ?? 30_000).unref();
@@ -187,18 +198,37 @@ ${s.status === 'open'
     }
     const already = refunds.get(key);
     if (already) {
+      // Idempotence stricte : même clé + corps différent ⇒ conflit.
+      if (already.paymentId !== value.paymentId || already.amountCents !== value.amountCents) {
+        res.status(409).json({ error: 'idempotency_conflict' });
+        return;
+      }
       res.status(200).json({ id: already.id, status: 'succeeded' });
       return;
     }
-    const session = paymentsById.get(value.paymentId);
+    const payment = paymentsById.get(value.paymentId);
+    if (!payment) {
+      res.status(404).json({ error: 'unknown_payment' });
+      return;
+    }
+    const refunded = refundedByPayment.get(value.paymentId) ?? 0;
+    if (refunded + value.amountCents > payment.amountCents) {
+      res.status(422).json({ error: 'amount_exceeds_payment' });
+      return;
+    }
+    refundedByPayment.set(value.paymentId, refunded + value.amountCents);
     const refund = { id: id('re'), paymentId: value.paymentId, amountCents: value.amountCents };
     refunds.set(key, refund);
     res.status(201).json({ id: refund.id, status: 'succeeded' });
     await emit({
       id: id('evt'), type: 'refund.succeeded', created: Math.floor(Date.now() / 1000),
-      data: { paymentId: value.paymentId, orderId: session?.orderId ?? '00000000-0000-4000-8000-000000000000', amountCents: value.amountCents, currency: 'EUR' },
+      data: { paymentId: value.paymentId, refundId: refund.id, orderId: payment.orderId, amountCents: value.amountCents, currency: 'EUR' },
     }).catch(() => undefined);
   });
 
-  return { app, emit, sessions, refunds };
+  const registerPayment = (paymentId: string, orderId: string, amountCents: number) => {
+    paymentsById.set(paymentId, { orderId, amountCents });
+  };
+
+  return { app, emit, sessions, refunds, registerPayment };
 }

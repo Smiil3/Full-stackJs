@@ -7,7 +7,7 @@ import { processRefunds } from '../../src/jobs/processRefunds.js';
 import { createMockPsp } from '../../src/mock-psp/app.js';
 import { api, lastMail, loggedInUser, PASSWORD, type LoggedIn } from '../helpers.js';
 import { createEvent, orgWithStaff, setStock, type OrgFixture } from '../fixtures.js';
-import { paymentEvent, postWebhook, startPsp, type PspHarness } from '../psp.js';
+import { openSession, paymentEvent, postWebhook, startPsp, type PspHarness } from '../psp.js';
 
 let org: OrgFixture;
 let buyer: LoggedIn;
@@ -95,7 +95,7 @@ describe('webhook de paiement', () => {
 
   it('même webhook livré 10 fois en concurrence ⇒ un seul jeu de billets, toujours 200', async () => {
     const { orderId, total, ttId } = await cardOrder(2);
-    const event = paymentEvent(orderId, total);
+    const event = paymentEvent(orderId, total, { sessionId: await openSession(orderId, buyer.auth) });
     const results = await Promise.all(Array.from({ length: 10 }, () => postWebhook(event)));
     expect(results.map((r) => r.status)).toEqual(Array(10).fill(200));
     expect(await ticketsOf(orderId)).toBe(2);
@@ -104,16 +104,14 @@ describe('webhook de paiement', () => {
     expect(await getDb().emailOutbox.count({ where: { template: 'orderConfirmed' } })).toBe(1);
   });
 
-  it('signature invalide, horodatage périmé, montant / devise faux ⇒ 400 sans aucun effet', async () => {
+  it('signature invalide, horodatage périmé, corps altéré ou non JSON ⇒ 400 sans aucun effet', async () => {
     const { orderId, total } = await cardOrder(1);
-    const good = paymentEvent(orderId, total);
+    const good = paymentEvent(orderId, total, { sessionId: await openSession(orderId, buyer.auth) });
     await postWebhook(good, { secret: 'X'.repeat(43) }).expect(400);
     await postWebhook(good, { signature: 't=1,v1=abc' }).expect(400);
     await postWebhook(good, { timestamp: Math.floor(Date.now() / 1000) - 301 }).expect(400);
     await postWebhook(good, { timestamp: Math.floor(Date.now() / 1000) + 301 }).expect(400);
-    await postWebhook(paymentEvent(orderId, total - 1)).expect(400);
-    await postWebhook(paymentEvent(orderId, total, { currency: 'USD' })).expect(400);
-    await postWebhook('{"pas":"un événement"}').expect(400);
+    await postWebhook('{"pas":"un événement"').expect(400);
     // Corps modifié après signature.
     const raw = JSON.stringify(good);
     const { signatureHeader } = await import('../../src/lib/pspSignature.js');
@@ -123,6 +121,25 @@ describe('webhook de paiement', () => {
     expect(await getDb().payment.count()).toBe(0);
     // L'événement légitime est ensuite accepté.
     await postWebhook(good).expect(200);
+    expect((await orderOf(orderId)).status).toBe('PAID');
+  });
+
+  it('montant ou devise incohérents ⇒ 200, paiement enregistré puis remboursé (jamais perdu), commande inchangée', async () => {
+    const { orderId, total } = await cardOrder(1);
+    const sessionId = await openSession(orderId, buyer.auth);
+    await postWebhook(paymentEvent(orderId, total - 1, { sessionId })).expect(200);
+    await postWebhook(paymentEvent(orderId, total, { sessionId, currency: 'USD' })).expect(200);
+    expect((await orderOf(orderId)).status).toBe('PENDING_PAYMENT');
+    const refunds = await getDb().refund.findMany({ where: { orderId }, orderBy: { amountCents: 'asc' } });
+    expect(refunds.map((r) => [r.reason, r.amountCents, r.status])).toEqual([
+      ['UNEXPECTED_PAYMENT', total - 1, 'PENDING'],
+      ['UNEXPECTED_PAYMENT', total, 'PENDING'],
+    ]);
+    expect(await getDb().payment.count({ where: { orderId, status: 'SUCCEEDED' } })).toBe(2);
+    expect(await getDb().auditLog.count({ where: { action: 'payment.auto_refund' } })).toBe(2);
+    expect(await lastMail(buyer.email, 'unexpectedPaymentRefunded')).not.toBeNull();
+    // La commande reste payable normalement.
+    await postWebhook(paymentEvent(orderId, total, { sessionId })).expect(200);
     expect((await orderOf(orderId)).status).toBe('PAID');
   });
 
@@ -152,16 +169,19 @@ describe('webhook de paiement', () => {
     expect(refund).toMatchObject({ status: 'PENDING', amountCents: total, reason: 'LATE_PAYMENT' });
     expect(await lastMail(buyer.email, 'latePaymentRefunded')).not.toBeNull();
     // Le worker exécute le remboursement auprès du PSP (idempotent par id de remboursement).
-    expect(await processRefunds()).toEqual({ succeeded: 1, failed: 0 });
+    const payment = await getDb().payment.findFirstOrThrow({ where: { orderId } });
+    h.psp.registerPayment(payment.providerPaymentId, orderId, total);
+    expect(await processRefunds()).toEqual({ succeeded: 1, manual: 0 });
     expect((await getDb().refund.findFirstOrThrow({ where: { orderId } })).status).toBe('SUCCEEDED');
     expect(h.psp.refunds.size).toBe(1);
-    expect(await processRefunds()).toEqual({ succeeded: 0, failed: 0 });
+    expect(await processRefunds()).toEqual({ succeeded: 0, manual: 0 });
   });
 
   it('second paiement (autre paymentId) sur une commande déjà payée ⇒ remboursé automatiquement, audit, mail', async () => {
     const { orderId, total } = await cardOrder(1);
-    await postWebhook(paymentEvent(orderId, total)).expect(200);
-    await postWebhook(paymentEvent(orderId, total)).expect(200);
+    const sessionId = await openSession(orderId, buyer.auth);
+    await postWebhook(paymentEvent(orderId, total, { sessionId })).expect(200);
+    await postWebhook(paymentEvent(orderId, total, { sessionId })).expect(200);
     const order = await orderOf(orderId);
     expect(order.status).toBe('PAID');
     expect(await ticketsOf(orderId)).toBe(1);
@@ -243,6 +263,16 @@ describe('virement manuel', () => {
 });
 
 describe('PSP simulé', () => {
+  it('CSP de la page de paiement : form-action autorise exactement l’origine du front (redirection après paiement)', async () => {
+    const { orderId } = await cardOrder(1);
+    const res = await checkout(orderId).expect(200);
+    const page = await supertest(h.server).get(new URL(res.body.redirectUrl as string).pathname).expect(200);
+    const csp = page.headers['content-security-policy'] as string;
+    expect(csp).toContain("form-action 'self' http://localhost:5173");
+    expect(csp).not.toMatch(/form-action[^;]*\*/);
+    expect(csp).toContain("default-src 'none'");
+  });
+
   it('refuse de démarrer en production et exige sa clé d’API', async () => {
     expect(() => createMockPsp({ apiKey: 'x', webhookSecret: 'y', publicUrl: 'http://x', allowedRedirectOrigins: [], deliver: () => Promise.resolve(), nodeEnv: 'production' }))
       .toThrow(/production/);
