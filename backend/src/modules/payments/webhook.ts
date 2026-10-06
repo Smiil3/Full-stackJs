@@ -5,7 +5,7 @@ import { errors } from '../../lib/errors.js';
 import { getLogger } from '../../lib/logger.js';
 import { verifySignature } from '../../lib/pspSignature.js';
 import { consumeQuota } from '../../lib/rateLimitStore.js';
-import { loadOrderForUpdate, refundUnexpectedPayment, settleHeldOrder, tryResettleExpiredOrder } from './settle.js';
+import { loadOrderForUpdate, refundUnexpectedPayment, settleHeldOrder, settleLateHeldOrder, tryResettleExpiredOrder } from './settle.js';
 
 interface PspEnvelope {
   id: string;
@@ -22,7 +22,7 @@ const envelopeSchema = Joi.object<PspEnvelope>({
   data: Joi.object().unknown(true).required(),
 }).unknown(true);
 
-interface PaymentData {
+export interface PaymentData {
   paymentId: string;
   orderId: string;
   amountCents: number;
@@ -38,8 +38,9 @@ const paymentDataSchema = Joi.object<PaymentData>({
   sessionId: Joi.string().max(100),
 }).unknown(true);
 
-const refundDataSchema = Joi.object<{ refundId?: string; paymentId: string }>({
+const refundDataSchema = Joi.object<{ refundId?: string; paymentId: string; idempotencyKey?: string }>({
   refundId: Joi.string().pattern(/^re_[A-Za-z0-9_-]{1,64}$/),
+  idempotencyKey: Joi.string().max(100),
   paymentId: Joi.string().max(100).required(),
 }).unknown(true);
 
@@ -125,10 +126,20 @@ function paymentData(event: PspEnvelope): PaymentData | null {
 async function onPaymentSucceeded(tx: Tx, event: PspEnvelope): Promise<void> {
   const data = paymentData(event);
   if (!data) return;
+  // L'horodatage signé du PSP dit si le paiement a eu lieu avant ou après l'échéance de la commande.
+  await applySucceededPayment(tx, data, new Date(event.created * 1000));
+}
+
+/**
+ * Paiement réussi (webhook ou rapprochement) : billets, ou enregistrement + remboursement automatique.
+ * `paidAt` null ⇒ paiement réputé dans les délais (session consultée : le PSP refuse tout paiement après l'échéance).
+ */
+export async function applySucceededPayment(tx: Tx, data: PaymentData, paidAt: Date | null): Promise<void> {
+  // Commande verrouillée AVANT la recherche du paiement : webhook et rapprochement simultanés sont sérialisés.
+  const order = UUID_RE.test(data.orderId) ? await loadOrderForUpdate(tx, data.orderId) : null;
   // Un paiement d'abord signalé en échec puis réussi (même paymentId) est traité normalement.
   const existing = await tx.payment.findUnique({ where: { providerPaymentId: data.paymentId } });
   if (existing?.status === 'SUCCEEDED') return;
-  const order = UUID_RE.test(data.orderId) ? await loadOrderForUpdate(tx, data.orderId) : null;
   const paymentFields = { amountCents: data.amountCents, currency: data.currency, status: 'SUCCEEDED' as const, orderId: order?.id ?? null };
   const payment = existing
     ? await tx.payment.update({ where: { id: existing.id }, data: paymentFields })
@@ -138,11 +149,15 @@ async function onPaymentSucceeded(tx: Tx, event: PspEnvelope): Promise<void> {
     await refundUnexpectedPayment(tx, null, payment, 'UNEXPECTED_PAYMENT', 'commande inconnue');
     return;
   }
+  // Toute session ouverte pour la commande reste valable (historique) : un refus suivi d'un succès sur la même
+  // session n'est pas remboursé à tort ; une session d'une autre commande, si.
+  const knownSession = data.sessionId !== undefined
+    && (await tx.pspSession.count({ where: { id: data.sessionId, orderId: order.id } })) === 1;
   const mismatch =
     data.currency !== order.currency ? 'devise incohérente'
     : data.amountCents !== order.totalCents ? 'montant incohérent'
     : order.paymentMethod !== 'CARD' ? 'commande non payable par carte'
-    : order.status === 'PENDING_PAYMENT' && (!order.pspSessionId || data.sessionId !== order.pspSessionId) ? 'session de paiement inconnue pour cette commande'
+    : !knownSession ? 'session de paiement inconnue pour cette commande'
     : null;
   // Événement annulé : un paiement d'une commande non payée n'aboutira jamais à des billets ⇒ remboursé.
   if (order.event.status === 'CANCELLED' && order.status !== 'PAID') {
@@ -154,13 +169,22 @@ async function onPaymentSucceeded(tx: Tx, event: PspEnvelope): Promise<void> {
     return;
   }
   switch (order.status) {
-    case 'PENDING_PAYMENT':
-      if (!(await settleHeldOrder(tx, order, 'PENDING_PAYMENT'))) {
-        await refundUnexpectedPayment(tx, order, payment, 'UNEXPECTED_PAYMENT', 'stock bloqué incohérent');
+    case 'PENDING_PAYMENT': {
+      const late = paidAt !== null && order.expiresAt !== null && paidAt > order.expiresAt;
+      if (!late) {
+        if (!(await settleHeldOrder(tx, order, 'PENDING_PAYMENT'))) {
+          await refundUnexpectedPayment(tx, order, payment, 'UNEXPECTED_PAYMENT', 'stock bloqué incohérent');
+        }
+        return;
       }
+      // Échéance dépassée mais le worker n'est pas encore passé : mêmes règles qu'un paiement tardif.
+      const outcome = await settleLateHeldOrder(tx, order, 'PENDING_PAYMENT');
+      if (outcome === 'refused') await refundUnexpectedPayment(tx, order, payment, 'LATE_PAYMENT', 'paiement après l’échéance, règles de vente non respectées');
+      if (outcome === 'inconsistent') await refundUnexpectedPayment(tx, order, payment, 'UNEXPECTED_PAYMENT', 'stock bloqué incohérent');
       return;
+    }
     case 'EXPIRED':
-      if (!(await tryResettleExpiredOrder(tx, order))) await refundUnexpectedPayment(tx, order, payment, 'LATE_PAYMENT', 'paiement après expiration, places indisponibles');
+      if (!(await tryResettleExpiredOrder(tx, order))) await refundUnexpectedPayment(tx, order, payment, 'LATE_PAYMENT', 'paiement après expiration, règles de vente non respectées');
       return;
     case 'PAID':
       await refundUnexpectedPayment(tx, order, payment, 'DUPLICATE_PAYMENT', 'commande déjà payée');
@@ -190,15 +214,22 @@ async function onPaymentFailed(tx: Tx, event: PspEnvelope): Promise<void> {
 
 async function onRefundSucceeded(tx: Tx, event: PspEnvelope): Promise<void> {
   const result = refundDataSchema.validate(event.data, { convert: false });
-  const refundId = result.error ? undefined : result.value.refundId;
+  const value = result.error ? undefined : result.value;
+  const refundId = value?.refundId;
   if (!refundId) {
     getLogger().warn({ eventId: event.id }, 'refund.succeeded sans identifiant de remboursement : ignoré');
     return;
   }
-  // Appariement par identifiant PSP (jamais par montant) ; un succès tardif régularise aussi un MANUAL_REQUIRED / FAILED.
+  // Clé d'idempotence = id de notre remboursement : rapproche aussi un remboursement dont la réponse PSP a été perdue.
+  const key = value.idempotencyKey;
+  const ownId = key !== undefined && UUID_RE.test(key) ? key : null;
+  // Appariement par identifiant (jamais par montant) ; un succès tardif régularise aussi un MANUAL_REQUIRED / FAILED.
   const { count } = await tx.refund.updateMany({
-    where: { providerRefundId: refundId, status: { in: ['PENDING', 'MANUAL_REQUIRED', 'FAILED'] } },
-    data: { status: 'SUCCEEDED' },
+    where: {
+      OR: ownId ? [{ providerRefundId: refundId }, { id: ownId, providerRefundId: null }] : [{ providerRefundId: refundId }],
+      status: { in: ['PENDING', 'MANUAL_REQUIRED', 'FAILED'] },
+    },
+    data: { status: 'SUCCEEDED', providerRefundId: refundId },
   });
   if (count === 0 && !(await tx.refund.findUnique({ where: { providerRefundId: refundId } }))) {
     getLogger().warn({ eventId: event.id, refundId }, 'refund.succeeded pour un remboursement inconnu');

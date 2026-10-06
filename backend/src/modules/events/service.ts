@@ -224,21 +224,25 @@ async function applyReschedule(
   tx: Tx, before: EventWithTypes, dates: EventDates, reason: string, settings: OrganizationSettings, actorId: string,
 ): Promise<void> {
   const rules = resolveEventSettings(settings, before);
-  const paid = await tx.order.findMany({
-    where: { eventId: before.id, status: 'PAID' },
-    select: { id: true, cancellableUntil: true },
+  // Commandes payées ET commandes encore en attente de paiement (contrat §7.2) : mêmes droits du report.
+  const active = await tx.order.findMany({
+    where: { eventId: before.id, status: { in: ['PAID', 'PENDING_PAYMENT', 'AWAITING_TRANSFER'] } },
+    select: { id: true, status: true, cancellableUntil: true, expiresAt: true },
   });
-  for (const order of paid) {
+  const paid = active.filter((o) => o.status === 'PAID');
+  for (const order of active) {
     // Délai figé = ancien début − ancienne limite ; à défaut (annulation désactivée), délai effectif actuel.
     const deadlineMs = order.cancellableUntil
       ? before.startsAt.getTime() - order.cancellableUntil.getTime()
       : rules.cancellationDeadlineHours * 3600_000;
     const candidate = dates.startsAt.getTime() - deadlineMs;
     const cancellableUntil = new Date(Math.max(order.cancellableUntil?.getTime() ?? candidate, candidate));
-    // Transition gardée : seule une commande toujours PAID est modifiée.
+    // Une réservation ne peut pas survivre au nouveau début : échéance ramenée au nouveau startsAt.
+    const expiresAt = order.expiresAt && order.expiresAt > dates.startsAt ? dates.startsAt : order.expiresAt;
+    // Transition gardée : seule une commande toujours dans le même statut est modifiée.
     await tx.order.updateMany({
-      where: { id: order.id, status: 'PAID' },
-      data: { cancellableUntil, refundPercent: 100, serviceFeeRefundable: true },
+      where: { id: order.id, status: order.status },
+      data: { cancellableUntil, refundPercent: 100, serviceFeeRefundable: true, ...(order.status === 'PAID' ? {} : { expiresAt }) },
     });
   }
   const buyers = await tx.order.findMany({
@@ -262,6 +266,7 @@ async function applyReschedule(
       to: { startsAt: dates.startsAt, endsAt: dates.endsAt },
       reason,
       paidOrders: paid.length,
+      unpaidOrders: active.length - paid.length,
       notifiedBuyers: buyers.length,
     },
   });

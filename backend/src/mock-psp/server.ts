@@ -34,6 +34,7 @@ function main(): void {
         signal: AbortSignal.timeout(10_000),
       });
       logger.info({ status: res.status }, 'webhook livré');
+      return res.status;
     },
   });
   psp.app.listen(env.psp.port, '127.0.0.1', () => {

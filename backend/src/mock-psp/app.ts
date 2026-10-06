@@ -16,11 +16,14 @@ export interface WebhookEvent {
   id: string;
   type: 'payment.succeeded' | 'payment.failed' | 'refund.succeeded';
   created: number;
-  data: { paymentId: string; sessionId?: string; orderId: string; amountCents: number; currency: string; refundId?: string };
+  data: { paymentId: string; sessionId?: string; orderId: string; amountCents: number; currency: string; refundId?: string; idempotencyKey?: string };
 }
 
-/** Livraison d'un webhook (HTTP en dev ; injectée en test pour viser l'application en mémoire). */
-export type WebhookDeliver = (rawBody: string, signature: string) => Promise<void>;
+/** Livraison d'un webhook (HTTP en dev ; injectée en test) : renvoie le statut HTTP de la réponse. */
+export type WebhookDeliver = (rawBody: string, signature: string) => Promise<number>;
+
+/** Réessais d'un webhook non acquitté (2xx) : 1 s, 5 s, 30 s, 2 min, 10 min (contrat 1.15 §9). */
+export const DEFAULT_RETRY_DELAYS_MS = [1_000, 5_000, 30_000, 120_000, 600_000];
 
 export interface MockPspOptions {
   apiKey: string;
@@ -32,6 +35,7 @@ export interface MockPspOptions {
   deliver: WebhookDeliver;
   nodeEnv: string;
   delayedWebhookMs?: number;
+  retryDelaysMs?: number[];
 }
 
 interface Session {
@@ -43,14 +47,18 @@ interface Session {
   cancelUrl: string;
   status: 'open' | 'paid' | 'failed';
   paymentId: string | null;
+  /** Échéance (= échéance de la commande) : au-delà, le paiement est refusé. */
+  expiresAt: number;
 }
 
 const id = (prefix: string) => `${prefix}_${randomBytes(12).toString('base64url')}`;
 
 export interface MockPsp {
   app: Express;
-  /** Pour les tests : envoie un webhook signé arbitraire (rejeu, falsification…). */
+  /** Envoie un webhook signé (avec réessais si non acquitté). Pour les tests : rejeu, falsification… */
   emit(event: WebhookEvent): Promise<void>;
+  /** Livraisons en attente de réessai (tests). */
+  pendingRetries(): number;
   sessions: Map<string, Session>;
   refunds: Map<string, { id: string; paymentId: string; amountCents: number }>;
   /** Pour les tests : déclare un paiement encaissé (hors page de paiement), pour pouvoir le rembourser. */
@@ -65,10 +73,27 @@ export function createMockPsp(options: MockPspOptions): MockPsp {
   const paymentsById = new Map<string, { orderId: string; amountCents: number }>();
   const refundedByPayment = new Map<string, number>();
 
-  const emit = async (event: WebhookEvent): Promise<void> => {
+  const retryDelays = options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
+  let pending = 0;
+  /** Livraison avec réessais : signature recalculée à chaque tentative (horodatage frais). */
+  const emit = async (event: WebhookEvent, attempt = 0): Promise<void> => {
     const raw = JSON.stringify(event);
-    await options.deliver(raw, signatureHeader(options.webhookSecret, raw));
+    let status: number;
+    try {
+      status = await options.deliver(raw, signatureHeader(options.webhookSecret, raw));
+    } catch {
+      status = 0;
+    }
+    if (status >= 200 && status < 300) return;
+    const delay = retryDelays[attempt];
+    if (delay === undefined) return;
+    pending += 1;
+    setTimeout(() => {
+      pending -= 1;
+      void emit(event, attempt + 1);
+    }, delay).unref();
   };
+  const isExpired = (s: Session) => Date.now() >= s.expiresAt;
 
   const paymentEvent = (s: Session, type: WebhookEvent['type']): WebhookEvent => ({
     id: id('evt'),
@@ -114,11 +139,12 @@ export function createMockPsp(options: MockPspOptions): MockPsp {
     currency: Joi.string().valid('EUR').required(),
     successUrl: Joi.string().uri({ scheme: ['http', 'https'] }).max(500).required(),
     cancelUrl: Joi.string().uri({ scheme: ['http', 'https'] }).max(500).required(),
+    expiresAt: Joi.string().isoDate().required(),
   });
 
   app.post('/v1/checkout-sessions', requireApiKey, (req, res) => {
     const validated = sessionSchema.validate(req.body as unknown, { allowUnknown: false });
-    const value = validated.value as Omit<Session, 'id' | 'status' | 'paymentId'> | undefined;
+    const value = validated.value as (Omit<Session, 'id' | 'status' | 'paymentId' | 'expiresAt'> & { expiresAt: string }) | undefined;
     if (validated.error || !value || !redirectAllowed(value.successUrl) || !redirectAllowed(value.cancelUrl)) {
       res.status(400).json({ error: 'invalid_request' });
       return;
@@ -126,14 +152,25 @@ export function createMockPsp(options: MockPspOptions): MockPsp {
     // Idempotence : même Idempotency-Key ⇒ même session (checkout rejoué ou concurrent).
     const key = typeof req.headers['idempotency-key'] === 'string' ? req.headers['idempotency-key'].slice(0, 100) : null;
     const existing = key ? sessions.get(sessionsByKey.get(key) ?? '') : undefined;
-    if (existing && existing.status === 'open' && existing.amountCents === value.amountCents) {
+    if (existing && existing.status === 'open' && !isExpired(existing) && existing.amountCents === value.amountCents) {
       res.status(200).json({ id: existing.id, url: `${options.publicUrl}/checkout/${existing.id}` });
       return;
     }
-    const session: Session = { ...value, id: id('cs'), status: 'open', paymentId: null };
+    const session: Session = { ...value, id: id('cs'), status: 'open', paymentId: null, expiresAt: new Date(value.expiresAt).getTime() };
     sessions.set(session.id, session);
     if (key) sessionsByKey.set(key, session.id);
     res.status(201).json({ id: session.id, url: `${options.publicUrl}/checkout/${session.id}` });
+  });
+
+  // Consultation d'une session (rapprochement par le backend, filet si un webhook a été perdu).
+  app.get('/v1/checkout-sessions/:sessionId', requireApiKey, (req: Request<{ sessionId: string }>, res) => {
+    const s = sessions.get(req.params.sessionId);
+    if (!s) {
+      res.status(404).json({ error: 'unknown_session' });
+      return;
+    }
+    const status = s.status === 'open' && isExpired(s) ? 'expired' : s.status;
+    res.json({ id: s.id, status, paymentId: s.paymentId, amountCents: s.amountCents, currency: s.currency });
   });
 
   app.get('/checkout/:sessionId', (req, res) => {
@@ -149,7 +186,9 @@ export function createMockPsp(options: MockPspOptions): MockPsp {
 <h1 style="font-size:20px">Paiement simulé</h1>
 <p>Commande <code>${escapeHtml(s.orderId)}</code></p>
 <p>Montant : <strong>${escapeHtml((s.amountCents / 100).toFixed(2))} ${escapeHtml(s.currency)}</strong></p>
-${s.status === 'open'
+${s.status === 'open' && isExpired(s)
+    ? '<p>Session expirée : la réservation a dépassé son échéance.</p>'
+    : s.status === 'open'
     ? action('pay', 'Payer') + action('fail', 'Refuser') + action('pay-twice', 'Payer + envoyer le webhook 2 fois') + action('pay-delayed', 'Payer + webhook retardé 30 s')
     : `<p>Session déjà traitée (${escapeHtml(s.status)}).</p>`}
 </body></html>`);
@@ -164,6 +203,11 @@ ${s.status === 'open'
     }
     if (s.status !== 'open') {
       res.redirect(303, s.status === 'paid' ? s.successUrl : s.cancelUrl);
+      return;
+    }
+    // Session échue : paiement refusé (une réservation expirée ne peut pas être payée après coup).
+    if (isExpired(s)) {
+      res.redirect(303, s.cancelUrl);
       return;
     }
     if (action === 'fail') {
@@ -222,13 +266,24 @@ ${s.status === 'open'
     res.status(201).json({ id: refund.id, status: 'succeeded' });
     await emit({
       id: id('evt'), type: 'refund.succeeded', created: Math.floor(Date.now() / 1000),
-      data: { paymentId: value.paymentId, refundId: refund.id, orderId: payment.orderId, amountCents: value.amountCents, currency: 'EUR' },
+      data: { paymentId: value.paymentId, refundId: refund.id, idempotencyKey: key, orderId: payment.orderId, amountCents: value.amountCents, currency: 'EUR' },
     }).catch(() => undefined);
+  });
+
+  // Consultation d'un remboursement par clé d'idempotence (le backend vérifie avant de passer en manuel).
+  app.get('/v1/refunds', requireApiKey, (req, res) => {
+    const key = typeof req.query['idempotencyKey'] === 'string' ? req.query['idempotencyKey'].slice(0, 100) : '';
+    const refund = refunds.get(key);
+    if (!refund) {
+      res.status(404).json({ error: 'unknown_refund' });
+      return;
+    }
+    res.json({ id: refund.id, status: 'succeeded', paymentId: refund.paymentId, amountCents: refund.amountCents });
   });
 
   const registerPayment = (paymentId: string, orderId: string, amountCents: number) => {
     paymentsById.set(paymentId, { orderId, amountCents });
   };
 
-  return { app, emit, sessions, refunds, registerPayment };
+  return { app, emit: (event) => emit(event), pendingRetries: () => pending, sessions, refunds, registerPayment };
 }

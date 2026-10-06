@@ -98,14 +98,15 @@ describe('un paiement authentifié n’est jamais perdu (B5.1 H1 / H3 / M1 / M2)
 });
 
 describe('séquences de paiement (B5.1 H2 / M3)', () => {
-  it('payment.failed puis payment.succeeded pour le même paymentId ⇒ payée', async () => {
+  it('payment.failed puis payment.succeeded pour le même paymentId sur la MÊME session ⇒ payée, aucun remboursement (B9 M2)', async () => {
     const { orderId, total } = await cardOrder(1);
     const sessionId = await openSession(orderId, buyer.auth);
     await postWebhook(paymentEvent(orderId, total, { type: 'payment.failed', paymentId: 'pay_meme', sessionId })).expect(200);
-    // Le refus a libéré la session : une nouvelle est ouverte, puis le PSP confirme finalement le même paiement.
-    const second = await openSession(orderId, buyer.auth);
-    await postWebhook(paymentEvent(orderId, total, { paymentId: 'pay_meme', sessionId: second })).expect(200);
+    // Le refus a libéré la session côté commande (nouvelle tentative possible), mais elle reste dans l'historique.
+    expect((await orderOf(orderId)).pspSessionId).toBeNull();
+    await postWebhook(paymentEvent(orderId, total, { paymentId: 'pay_meme', sessionId })).expect(200);
     expect((await orderOf(orderId)).status).toBe('PAID');
+    expect(await getDb().refund.count()).toBe(0);
     expect(await getDb().payment.findFirstOrThrow({ where: { providerPaymentId: 'pay_meme' } })).toMatchObject({ status: 'SUCCEEDED' });
   });
 
@@ -206,9 +207,10 @@ describe('validation de virement (B5.1 M6)', () => {
   const confirm = (orderId: string, total: number) =>
     api().post(`/api/v1/orgs/${org.id}/orders/${orderId}/confirm-transfer`).set(org.manager.auth).send({ receivedAmountCents: total });
 
-  it('échéance dépassée (worker pas encore passé) ⇒ 409 ORDER_EXPIRED ; événement annulé ⇒ 409 SALES_CLOSED', async () => {
+  it('échéance dépassée (worker pas encore passé) et ventes closes ⇒ 409 ORDER_EXPIRED ; événement annulé ⇒ 409 SALES_CLOSED', async () => {
     const a = await transferOrder();
     await getDb().order.update({ where: { id: a.orderId }, data: { expiresAt: new Date(Date.now() - 1000) } });
+    await getDb().event.update({ where: { id: a.eventId }, data: { salesEndAt: new Date(Date.now() - 500) } });
     const res = await confirm(a.orderId, a.total);
     expect(res.status).toBe(409);
     expect(res.body.error.code).toBe('ORDER_EXPIRED');

@@ -4,6 +4,7 @@ import supertest from 'supertest';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getDb } from '../../src/lib/db.js';
 import { createApp } from '../../src/app.js';
+import { RECONCILE_GRACE_MS } from '../../src/jobs/reconcilePayments.js';
 import { expireOrders, MAX_EXPIRE_FAILURES } from '../../src/jobs/expireOrders.js';
 import { referenceGenerator, requestHash } from '../../src/modules/orders/service.js';
 import { isTransientTxError, withTxRetry } from '../../src/lib/txRetry.js';
@@ -83,8 +84,10 @@ describe('expiration robuste (B4.1 H1 / M5)', () => {
       const u = await createUser();
       const res = await order(await bearerFor(u.id), { eventId, paymentMethod: 'CARD', items: [{ ticketTypeId: ticketTypeIds[0]!, quantity: 2 }] }).expect(201);
       const orderId = res.body.id as string;
-      // Session ouverte (simulée) avant l'échéance.
-      await getDb().order.update({ where: { id: orderId }, data: { pspSessionId: `cs_test${round}`, pspSessionUrl: 'http://127.0.0.1/x', expiresAt: new Date(Date.now() - 60_000) } });
+      // Session ouverte (simulée) avant l'échéance ; PSP injoignable et délai de rapprochement dépassé : l'expiration a lieu.
+      const expiresAt = new Date(Date.now() - RECONCILE_GRACE_MS - 60_000);
+      await getDb().order.update({ where: { id: orderId }, data: { pspSessionId: `cs_test${round}`, pspSessionUrl: 'http://127.0.0.1/x', expiresAt } });
+      await getDb().pspSession.create({ data: { id: `cs_test${round}`, orderId, attempt: 0, expiresAt } });
       const [, hook] = await Promise.all([expireOrders(), postWebhook(paymentEvent(orderId, res.body.totalCents as number, { sessionId: `cs_test${round}` }))]);
       expect(hook.status).toBe(200);
       const final = await getDb().order.findUniqueOrThrow({ where: { id: orderId } });

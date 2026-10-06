@@ -23,16 +23,27 @@ import type { CreateOrderBody } from './schemas.js';
 
 type Viewer = 'owner' | 'admin';
 
+/** IBAN en clair pour l'acheteur ; donnée illisible ⇒ instructions masquées + alerte, jamais une 500. */
+function ownerIban(orderId: string, encrypted: string): string | null {
+  try {
+    return bankCrypto.decryptOrderIban(orderId, encrypted);
+  } catch (err) {
+    getLogger().error({ err, orderId }, 'IBAN de commande indéchiffrable : instructions de virement indisponibles');
+    return null;
+  }
+}
+
 /** Représentation contractuelle d'une commande (jamais l'objet Prisma brut). */
 export function toOrderView(order: repo.OrderWithDetails, scanned: number, viewer: Viewer, now: Date = clock.now()) {
   let transferInstructions = null;
-  if (order.status === 'AWAITING_TRANSFER' && order.transferReference && order.transferIbanEncrypted && order.expiresAt) {
+  const iban = order.status === 'AWAITING_TRANSFER' && order.transferIbanEncrypted
+    ? (viewer === 'owner' ? ownerIban(order.id, order.transferIbanEncrypted) : (order.transferIbanMasked ?? ''))
+    : null;
+  if (order.status === 'AWAITING_TRANSFER' && order.transferReference && iban !== null && order.expiresAt) {
     transferInstructions = {
       beneficiary: order.transferBeneficiary ?? '',
       // IBAN en clair uniquement pour l'acheteur concerné ; masqué pour le back-office (contrat 1.2).
-      iban: viewer === 'owner'
-        ? bankCrypto.decryptOrderIban(order.id, order.transferIbanEncrypted)
-        : (order.transferIbanMasked ?? ''),
+      iban,
       bic: order.transferBic ?? '',
       reference: order.transferReference,
       amountCents: order.totalCents,
@@ -283,9 +294,12 @@ export async function checkout(userId: string, orderId: string): Promise<{ redir
   const now = clock.now();
   const expired = order.status === 'EXPIRED' || (order.status === 'PENDING_PAYMENT' && order.expiresAt !== null && order.expiresAt <= now);
   if (expired) throw errors.state('ORDER_EXPIRED', 'La réservation a expiré.');
-  if (order.status !== 'PENDING_PAYMENT' || order.paymentMethod !== 'CARD') {
+  if (order.status !== 'PENDING_PAYMENT' || order.paymentMethod !== 'CARD' || !order.expiresAt) {
     throw errors.state('INVALID_STATE', 'Cette commande ne peut pas être payée par carte.');
   }
+  // Événement plus en vente (annulé, commencé, dépublié) : pas de nouveau paiement.
+  const event = await getDb().event.findUniqueOrThrow({ where: { id: order.eventId }, select: { status: true, startsAt: true } });
+  if (event.status !== 'PUBLISHED' || now >= event.startsAt) throw errors.state('SALES_CLOSED', 'Les ventes sont closes pour cet événement.');
   if (order.pspSessionUrl) return { redirectUrl: order.pspSessionUrl };
   const env = getEnv();
   const session = await getPspClient().createCheckoutSession({
@@ -296,11 +310,20 @@ export async function checkout(userId: string, orderId: string): Promise<{ redir
     cancelUrl: `${env.frontUrl}/orders/${order.id}?payment=failed`,
     // Une clé par tentative : après un refus, la session est oubliée et la tentative suivante en ouvre une nouvelle.
     idempotencyKey: `${order.id}:${order.checkoutAttempt}`,
+    // La session expire avec la réservation : impossible de payer après l'échéance.
+    expiresAt: order.expiresAt,
   });
+  const expiresAt = order.expiresAt;
   return transaction(async (tx) => {
     const { count } = await tx.order.updateMany({
       where: { id: order.id, userId, status: 'PENDING_PAYMENT', pspSessionUrl: null, checkoutAttempt: order.checkoutAttempt },
       data: { pspSessionId: session.id, pspSessionUrl: session.url },
+    });
+    // Historique : un paiement sur cette session reste rattaché à la commande même après une nouvelle tentative.
+    await tx.pspSession.upsert({
+      where: { id: session.id },
+      create: { id: session.id, orderId: order.id, attempt: order.checkoutAttempt, expiresAt, createdAt: now },
+      update: {},
     });
     if (count === 1) return { redirectUrl: session.url };
     // Appel concurrent déjà enregistré : on renvoie la session stockée.

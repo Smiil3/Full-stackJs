@@ -145,10 +145,11 @@ describe('webhook de paiement', () => {
 
   it('paiement après expiration, places encore disponibles ⇒ re-réservation et billets', async () => {
     const { orderId, total, ttId } = await cardOrder(2, 10);
+    const sessionId = await openSession(orderId, buyer.auth);
     await getDb().order.update({ where: { id: orderId }, data: { expiresAt: new Date(Date.now() - 1000) } });
     await expireOrders();
     expect((await orderOf(orderId)).status).toBe('EXPIRED');
-    await postWebhook(paymentEvent(orderId, total)).expect(200);
+    await postWebhook(paymentEvent(orderId, total, { sessionId })).expect(200);
     expect((await orderOf(orderId)).status).toBe('PAID');
     expect(await ticketsOf(orderId)).toBe(2);
     const tt = await getDb().ticketType.findUniqueOrThrow({ where: { id: ttId } });
@@ -157,10 +158,11 @@ describe('webhook de paiement', () => {
 
   it('paiement après expiration, plus de places ⇒ remboursement automatique intégral + mail', async () => {
     const { orderId, total, ttId } = await cardOrder(2, 2);
+    const sessionId = await openSession(orderId, buyer.auth);
     await getDb().order.update({ where: { id: orderId }, data: { expiresAt: new Date(Date.now() - 1000) } });
     await expireOrders();
     await setStock(ttId, 2, 0); // places revendues entre-temps
-    await postWebhook(paymentEvent(orderId, total)).expect(200);
+    await postWebhook(paymentEvent(orderId, total, { sessionId })).expect(200);
     const order = await orderOf(orderId);
     expect(order.status).toBe('REFUNDED');
     expect(order.refundAmountCents).toBe(total);
@@ -235,14 +237,16 @@ describe('virement manuel', () => {
     expect(again.body.error.code).toBe('INVALID_STATE');
   });
 
-  it('commande expirée ⇒ 409 ORDER_EXPIRED ; SCANNER ⇒ 403 ; autre collectif ⇒ 404', async () => {
-    const { orderId, total } = await transferOrder();
+  it('commande expirée et places revendues ⇒ 409 ORDER_EXPIRED ; SCANNER ⇒ 403 ; autre collectif ⇒ 404', async () => {
+    const { orderId, total, ttId } = await transferOrder();
     const other = await orgWithStaff('autre-collectif-pay');
     await api().post(`/api/v1/orgs/${other.id}/orders/${orderId}/confirm-transfer`).set(other.manager.auth).send({ receivedAmountCents: total }).expect(404);
     await api().post(`/api/v1/orgs/${org.id}/orders/${orderId}/confirm-transfer`).set(org.scanner.auth).send({ receivedAmountCents: total }).expect(403);
     expect((await orderOf(orderId)).status).toBe('AWAITING_TRANSFER');
     await getDb().order.update({ where: { id: orderId }, data: { expiresAt: new Date(Date.now() - 1000) } });
     await expireOrders();
+    const tt = await getDb().ticketType.findUniqueOrThrow({ where: { id: ttId } });
+    await setStock(ttId, tt.capacity, 0); // places revendues entre-temps
     const res = await api().post(`/api/v1/orgs/${org.id}/orders/${orderId}/confirm-transfer`).set(org.manager.auth).send({ receivedAmountCents: total });
     expect(res.status).toBe(409);
     expect(res.body.error.code).toBe('ORDER_EXPIRED');
@@ -274,7 +278,7 @@ describe('PSP simulé', () => {
   });
 
   it('refuse de démarrer en production et exige sa clé d’API', async () => {
-    expect(() => createMockPsp({ apiKey: 'x', webhookSecret: 'y', publicUrl: 'http://x', allowedRedirectOrigins: [], deliver: () => Promise.resolve(), nodeEnv: 'production' }))
+    expect(() => createMockPsp({ apiKey: 'x', webhookSecret: 'y', publicUrl: 'http://x', allowedRedirectOrigins: [], deliver: () => Promise.resolve(200), nodeEnv: 'production' }))
       .toThrow(/production/);
     await supertest(h.server).post('/v1/checkout-sessions').send({}).expect(401);
     await supertest(h.server).post('/v1/checkout-sessions').set('Authorization', `Bearer ${process.env['PSP_API_KEY']!}`)

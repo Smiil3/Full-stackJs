@@ -25,7 +25,7 @@ export async function startPsp(): Promise<PspHarness> {
   const deliveries: { status: number; body: unknown }[] = [];
   // Livraisons de webhooks en cours (le mock en émet après avoir répondu) : attendues avant la fermeture,
   // sinon elles débordent sur le nettoyage de la base du test suivant.
-  const inflight = new Set<Promise<void>>();
+  const inflight = new Set<Promise<number>>();
   const server = createServer();
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -39,9 +39,10 @@ export async function startPsp(): Promise<PspHarness> {
     nodeEnv: 'test',
     delayedWebhookMs: 50,
     deliver: (raw, signature) => {
-      const p = (async () => {
+      const p = (async (): Promise<number> => {
         const res = await supertest(app).post('/api/v1/webhooks/psp').set('Content-Type', 'application/json').set('Psp-Signature', signature).send(raw);
         deliveries.push({ status: res.status, body: res.body });
+        return res.status;
       })();
       inflight.add(p);
       void p.finally(() => inflight.delete(p));

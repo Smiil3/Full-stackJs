@@ -345,6 +345,7 @@ model Order {
   items         OrderItem[]
   payments      Payment[]
   refunds       Refund[]
+  pspSessions   PspSession[]
 
   @@unique([userId, idempotencyKey])
   @@index([status, expiresAt])
@@ -544,4 +545,21 @@ model RateLimitBucket {
 
   @@index([resetAt])
   @@map("rate_limit_buckets")
+}
+
+/// Historique des sessions de paiement d'une commande : un paiement est rattaché à la commande si sa session
+/// lui appartient, même après un refus qui a fait ouvrir une nouvelle session.
+model PspSession {
+  id        String   @id @db.VarChar(100)
+  orderId   String   @db.Uuid
+  attempt   Int
+  expiresAt DateTime @db.Timestamptz(3)
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  /// Dernière consultation de la session auprès du PSP (rapprochement).
+  checkedAt DateTime? @db.Timestamptz(3)
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@index([orderId])
+  @@map("psp_sessions")
 }

@@ -8,7 +8,9 @@ import { getLogger } from '../../lib/logger.js';
 import { formatEuros } from '../../lib/mail/templates.js';
 import { enqueueEmail } from '../../lib/outbox.js';
 import { formatWithZone } from '../../lib/time.js';
-import { heldToSold } from '../orders/repo.js';
+import { alreadyOwned, heldToSold, lockBuyerEvent, releaseHeld } from '../orders/repo.js';
+import { resolveEventSettings } from '../settings/resolveEventSettings.js';
+import { distributeMany, lockWaitlistEntries } from '../waitlist/distribute.js';
 import { issueTickets } from '../tickets/issue.js';
 
 export const orderForSettlement = {
@@ -61,12 +63,38 @@ export async function settleHeldOrder(tx: Tx, order: SettlementOrder, from: Orde
 }
 
 /**
- * Paiement arrivé APRÈS expiration : les places ont été libérées. On les reprend si elles sont encore
- * disponibles (mêmes règles qu'une réservation : capacité et priorité de la liste d'attente), sinon false.
+ * Paiement reçu APRÈS l'échéance (contrat §4 « Paiement tardif ») : toutes les règles de vente sont
+ * revérifiées à cet instant — ventes ouvertes, événement ni commencé ni annulé, plafond par personne.
+ * La capacité est vérifiée par l'appelant (places encore bloquées, ou reprises sans priorité de la liste d'attente).
+ * Le verrou (acheteur, événement) est pris APRÈS le verrou de commande : la réservation ne verrouille jamais
+ * une commande existante, aucun cycle n'est donc possible ; il rend le plafond par personne exact.
+ */
+async function lateSaleAllowed(tx: Tx, order: SettlementOrder, countedInOwned: boolean): Promise<boolean> {
+  await lockBuyerEvent(tx, order.userId, order.eventId);
+  const event = await tx.event.findUniqueOrThrow({ where: { id: order.eventId }, include: { organization: { select: { settings: true } } } });
+  const now = clock.now();
+  if (event.status !== 'PUBLISHED' || now < event.salesStartAt || now >= event.salesEndAt || now >= event.startsAt) return false;
+  if (!event.organization.settings) return false;
+  const rules = resolveEventSettings(event.organization.settings, event);
+  const quantity = order.items.reduce((n, i) => n + i.quantity, 0);
+  // Une commande encore en attente est déjà comptée dans les places détenues.
+  const owned = (await alreadyOwned(tx, order.userId, order.eventId)) - (countedInOwned ? quantity : 0);
+  return owned + quantity <= rules.maxPerUser;
+}
+
+/** Paiement en retard sur une commande encore en attente (le worker n'est pas encore passé) : places toujours bloquées. */
+export async function settleLateHeldOrder(tx: Tx, order: SettlementOrder, from: OrderStatus): Promise<'settled' | 'refused' | 'inconsistent'> {
+  if (!(await lateSaleAllowed(tx, order, true))) return 'refused';
+  return (await settleHeldOrder(tx, order, from)) ? 'settled' : 'inconsistent';
+}
+
+/**
+ * Paiement arrivé APRÈS expiration : les places ont été libérées. On les reprend si toutes les règles de vente
+ * sont encore respectées (voir lateSaleAllowed) et les places disponibles sans priorité de la liste d'attente,
+ * sinon false. Le prix reste celui figé sur la commande.
  */
 export async function tryResettleExpiredOrder(tx: Tx, order: SettlementOrder): Promise<boolean> {
-  // Seule une commande carte peut être « rattrapée » par un paiement carte tardif.
-  if (order.paymentMethod !== 'CARD' || order.event.status !== 'PUBLISHED' || clock.now() >= order.event.startsAt) return false;
+  if (!(await lateSaleAllowed(tx, order, false))) return false;
   // Types verrouillés dans l'ordre des id (même ordre que la réservation).
   for (const item of order.items) {
     const rows = await tx.$queryRaw<{ ok: boolean }[]>`
@@ -140,8 +168,15 @@ export async function refundUnexpectedPayment(
   const amount = await recordRefund(tx, { orderId: order?.id ?? null, paymentId: payment.id, providerPaymentId: payment.providerPaymentId, amountCents: payment.amountCents, reason });
   getLogger().error({ orderId: order?.id ?? null, paymentId: payment.id, reason, detail }, 'paiement encaissé sans billets : remboursement automatique');
   if (order) {
-    if (reason === 'LATE_PAYMENT' && order.status === 'EXPIRED') {
-      await transition(tx, order.id, ['EXPIRED'], { status: 'REFUNDED', refundAmountCents: amount, cancelledAt: clock.now() });
+    if (reason === 'LATE_PAYMENT' && (order.status === 'EXPIRED' || order.status === 'PENDING_PAYMENT')) {
+      await transition(tx, order.id, [order.status], { status: 'REFUNDED', refundAmountCents: amount, cancelledAt: clock.now() });
+      if (order.status === 'PENDING_PAYMENT') {
+        // Réservation refusée après l'échéance : ses places sont libérées et proposées à la liste d'attente.
+        const typeIds = order.items.map((i) => i.ticketTypeId);
+        await lockWaitlistEntries(tx, typeIds);
+        for (const item of order.items) await releaseHeld(tx, order.eventId, item.ticketTypeId, item.quantity);
+        await distributeMany(tx, typeIds);
+      }
       for (const item of order.items) {
         await tx.orderItem.update({ where: { id: item.id }, data: { refundedCents: item.unitPriceCents * item.quantity } });
       }

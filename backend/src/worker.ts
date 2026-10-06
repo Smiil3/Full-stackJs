@@ -9,6 +9,7 @@ import { processOutboxBatch } from './lib/outbox.js';
 import { purgeExpiredBuckets } from './lib/rateLimitStore.js';
 import { expireOrders } from './jobs/expireOrders.js';
 import { processRefunds } from './jobs/processRefunds.js';
+import { reconcileRecentSessions } from './jobs/reconcilePayments.js';
 import { processEventCancellations } from './jobs/processEventCancellations.js';
 import { expireWaitlistOffers, sweepWaitlist } from './modules/waitlist/service.js';
 
@@ -39,8 +40,10 @@ const stop = new AbortController();
 
 async function tick(): Promise<void> {
   const jobs: [string, () => Promise<unknown>][] = [
-    ['expireOrders', () => expireOrders()],
+    // Annulations d'abord : une commande d'un événement annulé est remboursée / annulée, jamais simplement expirée.
     ['eventCancellations', () => processEventCancellations()],
+    ['reconcilePayments', () => reconcileRecentSessions()],
+    ['expireOrders', () => expireOrders()],
     ['expireWaitlistOffers', () => expireWaitlistOffers()],
     ['sweepWaitlist', () => sweepWaitlist()],
     ['refunds', () => processRefunds()],

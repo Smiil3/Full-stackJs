@@ -1,3 +1,4 @@
+import { clock } from '../lib/clock.js';
 import { getDb } from '../lib/db.js';
 import { getLogger } from '../lib/logger.js';
 import { getPspClient, PspError } from '../lib/psp.js';
@@ -12,6 +13,34 @@ function isPermanent(err: unknown): boolean {
   return err instanceof PspError && err.status >= 400 && err.status < 500 && ![408, 409, 425, 429].includes(err.status);
 }
 
+/** Délai avant de reconsulter un remboursement que le PSP a accepté mais pas encore exécuté. */
+const PENDING_RECHECK_MS = 10 * 60_000;
+
+/**
+ * Réponse du PSP interprétée selon son statut, jamais supposée réussie :
+ * succeeded ⇒ SUCCEEDED ; pending ⇒ reste PENDING (identifiant noté, webhook ou nouvel essai idempotent) ;
+ * failed ou inconnu ⇒ MANUAL_REQUIRED.
+ */
+async function recordOutcome(
+  row: { id: string; attempts: number }, result: { id: string; status: string },
+): Promise<'succeeded' | 'pending' | 'manual'> {
+  const db = getDb();
+  if (result.status === 'succeeded') {
+    await db.refund.updateMany({ where: { id: row.id, status: 'PENDING' }, data: { status: 'SUCCEEDED', providerRefundId: result.id, lastError: null } });
+    return 'succeeded';
+  }
+  if (result.status === 'pending' && row.attempts < MAX_REFUND_ATTEMPTS) {
+    await db.refund.updateMany({
+      where: { id: row.id, status: 'PENDING' },
+      data: { providerRefundId: result.id, nextAttemptAt: new Date(clock.now().getTime() + PENDING_RECHECK_MS), lastError: 'PSP pending' },
+    });
+    return 'pending';
+  }
+  await db.refund.updateMany({ where: { id: row.id, status: 'PENDING' }, data: { status: 'MANUAL_REQUIRED', providerRefundId: result.id, lastError: `PSP ${result.status}`.slice(0, 200) } });
+  getLogger().error({ refundId: row.id, status: result.status }, 'remboursement refusé ou bloqué par le PSP : à traiter manuellement');
+  return 'manual';
+}
+
 /**
  * Exécute les remboursements en attente auprès du PSP.
  * 1. Transaction courte : sélection `FOR UPDATE SKIP LOCKED`, bail (nextAttemptAt repoussé) et tentative
@@ -22,18 +51,19 @@ function isPermanent(err: unknown): boolean {
  */
 export async function processRefunds(): Promise<{ succeeded: number; manual: number }> {
   const db = getDb();
+  // Une seule horloge : celle de l'application, qui pose aussi les échéances.
+  const now = clock.now();
   const leased = await db.$transaction(async (tx) => {
     const rows = await tx.$queryRaw<{ id: string; amountCents: number; attempts: number; providerPaymentId: string }[]>`
       SELECT r."id", r."amountCents", r."attempts", p."providerPaymentId"
       FROM "refunds" r JOIN "payments" p ON p."id" = r."paymentId"
-      -- Tolérance de 2 s : échéance posée par l'application, comparée à l'horloge de la base.
-      WHERE r."status" = 'PENDING' AND r."nextAttemptAt" <= now() + interval '2 seconds'
+      WHERE r."status" = 'PENDING' AND r."nextAttemptAt" <= ${now}
       ORDER BY r."nextAttemptAt", r."id"
       LIMIT ${BATCH}
       FOR UPDATE OF r SKIP LOCKED`;
     if (rows.length > 0) {
       await tx.$executeRaw`
-        UPDATE "refunds" SET "attempts" = "attempts" + 1, "nextAttemptAt" = now() + make_interval(secs => ${LEASE_MS / 1000}), "updatedAt" = now()
+        UPDATE "refunds" SET "attempts" = "attempts" + 1, "nextAttemptAt" = ${new Date(now.getTime() + LEASE_MS)}, "updatedAt" = ${now}
         WHERE "id" = ANY(${rows.map((r) => r.id)}::uuid[])`;
     }
     return rows.map((r) => ({ ...r, attempts: r.attempts + 1 }));
@@ -45,19 +75,27 @@ export async function processRefunds(): Promise<{ succeeded: number; manual: num
     try {
       try {
         const result = await getPspClient().createRefund({ paymentId: row.providerPaymentId, amountCents: row.amountCents, idempotencyKey: row.id });
-        await db.refund.updateMany({
-          where: { id: row.id, status: 'PENDING' },
-          data: { status: 'SUCCEEDED', providerRefundId: result.id, lastError: null },
-        });
-        succeeded += 1;
+        const outcome = await recordOutcome(row, result);
+        if (outcome === 'succeeded') succeeded += 1;
+        if (outcome === 'manual') manual += 1;
       } catch (err) {
         const reason = err instanceof PspError ? `PSP ${err.status}` : err instanceof Error ? err.name : 'Error';
+        if (!isPermanent(err) && row.attempts >= MAX_REFUND_ATTEMPTS) {
+          // Essais épuisés sur erreurs réseau : la réponse a pu être perdue alors que le remboursement est fait.
+          const found = await getPspClient().findRefund(row.id).catch(() => null);
+          if (found) {
+            const outcome = await recordOutcome(row, found);
+            if (outcome === 'succeeded') succeeded += 1;
+            if (outcome === 'manual') manual += 1;
+            continue;
+          }
+        }
         if (isPermanent(err) || row.attempts >= MAX_REFUND_ATTEMPTS) {
           await db.refund.updateMany({ where: { id: row.id, status: 'PENDING' }, data: { status: 'MANUAL_REQUIRED', lastError: reason } });
           manual += 1;
           getLogger().error({ refundId: row.id, reason, attempts: row.attempts }, 'remboursement à traiter manuellement par l’organisateur');
         } else {
-          await db.refund.updateMany({ where: { id: row.id, status: 'PENDING' }, data: { nextAttemptAt: new Date(Date.now() + backoffMs(row.attempts)), lastError: reason } });
+          await db.refund.updateMany({ where: { id: row.id, status: 'PENDING' }, data: { nextAttemptAt: new Date(clock.now().getTime() + backoffMs(row.attempts)), lastError: reason } });
         }
       }
     } catch (err) {

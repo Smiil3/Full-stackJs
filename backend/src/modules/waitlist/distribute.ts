@@ -12,11 +12,16 @@ export function salesOpen(event: { status: string; salesStartAt: Date; salesEndA
   return event.status === 'PUBLISHED' && now >= event.salesStartAt && now < event.salesEndAt && now < event.startsAt;
 }
 
+/** Durée maximale de l'accumulation de places pour la tête de file (anti-gel des ventes). */
+export const MAX_ACCUMULATION_MINUTES = 30;
+
 /**
  * Distribue les places libres d'un type de place à la liste d'attente (contrat 1.14 §6), FIFO (createdAt, id) :
- * - la TÊTE de file est servie en priorité : si sa demande dépasse les places libres, celles-ci s'accumulent pour
- *   elle (bloquées : ni offertes aux suivants ni vendues au public) pendant au plus `waitlistOfferMinutes` ;
- *   passé ce délai, elle est sautée (elle garde son rang : elle sera servie dès que sa demande tiendra) ;
+ * - la TÊTE de file (et elle seule) est servie en priorité : si sa demande dépasse les places libres, celles-ci
+ *   s'accumulent pour elle (bloquées : ni offertes aux suivants ni vendues au public) UNE fois, pendant
+ *   min(`waitlistOfferMinutes`, 30 min) ; passé ce délai, elle est sautée (rang conservé : servie dès que sa
+ *   demande tiendra). Les entrées suivantes trop grosses sont sautées sans accumuler : N comptes jetables
+ *   ne peuvent pas geler les ventes plus d'une fenêtre ;
  * - une entrée qui ferait dépasser le plafond par personne est écartée (EXPIRED, journalisé) ;
  * - uniquement ventes ouvertes, liste d'attente activée ; une offre bloque ses places pendant le délai de réponse.
  * Appelée dans la transaction qui libère des places, et par le worker. Ordre des verrous : entrées → ticket_types.
@@ -44,13 +49,16 @@ export async function distributeWaitlist(tx: Tx, ticketTypeId: string): Promise<
 
   let free = tt.free;
   let offered = 0;
-  for (const entry of waiting) {
+  for (const [index, entry] of waiting.entries()) {
     if (free <= 0) break;
     if (entry.quantity > free) {
       if (entry.accumulationSkipped) continue;
+      // Seule la tête de file réelle peut accumuler ; une autre demande trop grosse est simplement sautée.
+      if (index > 0) continue;
       if (entry.accumulatingUntil === null) {
         // La tête de file commence à accumuler les places libérées pour elle.
-        await tx.waitlistEntry.update({ where: { id: entry.id }, data: { accumulatingUntil: addMinutes(now, rules.waitlistOfferMinutes) } });
+        const minutes = Math.min(rules.waitlistOfferMinutes, MAX_ACCUMULATION_MINUTES);
+        await tx.waitlistEntry.update({ where: { id: entry.id }, data: { accumulatingUntil: addMinutes(now, minutes) } });
         break;
       }
       if (now < entry.accumulatingUntil) break;
