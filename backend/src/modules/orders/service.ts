@@ -5,7 +5,8 @@ import { clock } from '../../lib/clock.js';
 import { safeEqual, sha256Hex, transferReference } from '../../lib/crypto.js';
 import { bankCrypto } from '../../lib/bankCrypto.js';
 import { getLogger } from '../../lib/logger.js';
-import { transaction, type Tx } from '../../lib/db.js';
+import { getDb, transaction, type Tx } from '../../lib/db.js';
+import { withTxRetry } from '../../lib/txRetry.js';
 import { errors } from '../../lib/errors.js';
 import { formatEuros } from '../../lib/mail/templates.js';
 import { computeServiceFee, lineTotal } from '../../lib/money.js';
@@ -69,53 +70,76 @@ export async function viewOwnOrder(tx: Tx, userId: string, orderId: string, view
   return toOrderView(order, scanned.get(order.id) ?? 0, viewer);
 }
 
+/** Tri binaire des identifiants (déterministe, indépendant de la locale). */
+const byTicketType = (a: { ticketTypeId: string }, b: { ticketTypeId: string }) =>
+  a.ticketTypeId < b.ticketTypeId ? -1 : a.ticketTypeId > b.ticketTypeId ? 1 : 0;
+
 /** Empreinte canonique du corps (items triés) : même clé + corps différent ⇒ IDEMPOTENCY_CONFLICT. */
 export function requestHash(body: CreateOrderBody): string {
-  const items = [...body.items].sort((a, b) => a.ticketTypeId.localeCompare(b.ticketTypeId)).map((i) => [i.ticketTypeId, i.quantity]);
+  const items = [...body.items].sort(byTicketType).map((i) => [i.ticketTypeId, i.quantity]);
   return sha256Hex(JSON.stringify({ eventId: body.eventId, paymentMethod: body.paymentMethod, items }));
 }
 
 type CreateResult = { replayed: boolean; order: ReturnType<typeof toOrderView> };
 
-async function replay(tx: Tx, existing: Order, hash: string, userId: string): Promise<CreateResult> {
+function assertSameRequest(existing: Order, hash: string): void {
   if (!safeEqual(existing.requestHash, hash)) {
     throw errors.state('IDEMPOTENCY_CONFLICT', 'Cette clé d’idempotence a déjà servi pour une autre commande.');
   }
-  return { replayed: true, order: await viewOwnOrder(tx, userId, existing.id) };
 }
 
-function isUniqueViolation(err: unknown): boolean {
-  return typeof err === 'object' && err !== null && 'code' in err && err.code === 'P2002';
+function isUniqueViolationOn(err: unknown, field: string): boolean {
+  if (typeof err !== 'object' || err === null || !('code' in err) || err.code !== 'P2002') return false;
+  const target = (err as { meta?: { target?: unknown } }).meta?.target;
+  return JSON.stringify(target ?? '').includes(field);
 }
+
+/** Générateur de référence de virement (remplaçable en test pour provoquer une collision). */
+export const referenceGenerator = { next: transferReference };
 
 /**
  * Réservation : tout est calculé côté serveur (prix, early, frais, total, échéances) et figé sur la commande.
- * - verrou (acheteur, événement) ⇒ plafond par personne exact même avec des requêtes parallèles ;
- * - réservation par UPDATE conditionnel, types triés par id (pas d'interblocage) ;
- * - commande à 0 € ⇒ PAID immédiatement (mêmes règles : ventes ouvertes, plafonds, idempotence).
+ *
+ * Ordre de verrouillage UNIQUE dans tout le code (aucun cycle possible) :
+ *   verrou consultatif (acheteur, événement) → events → orders → ticket_types (triés par id).
+ * La réservation n'acquiert aucun verrou sur une commande EXISTANTE ; l'expiration, le webhook et
+ * l'annulation verrouillent la commande avant ses types de places.
+ *
+ * - événement verrouillé en partage (FOR SHARE) puis relu : une annulation / un report concurrent
+ *   (FOR UPDATE) est soit vu (SALES_CLOSED / nouvelles dates), soit postérieur et traite cette commande ;
+ * - UPDATE de réservation exécuté le plus tard possible (verrou de ligne tenu le moins longtemps possible) ;
+ * - interblocage / conflit de sérialisation ⇒ nouvel essai borné, puis 409 CONFLICT.
  */
 export async function createOrder(userId: string, idempotencyKey: string, body: CreateOrderBody): Promise<CreateResult> {
   const hash = requestHash(body);
-  try {
-    return await transaction(async (tx) => {
-      await repo.lockBuyerEvent(tx, userId, body.eventId);
-      const existing = await tx.order.findUnique({ where: { userId_idempotencyKey: { userId, idempotencyKey } } });
-      if (existing) return replay(tx, existing, hash, userId);
-      return { replayed: false, order: await reserveAndCreate(tx, userId, idempotencyKey, hash, body) };
-    });
-  } catch (err) {
-    // Même clé envoyée en parallèle pour deux événements différents : la contrainte unique tranche.
-    if (!isUniqueViolation(err)) throw err;
-    return transaction(async (tx) => {
-      const existing = await tx.order.findUnique({ where: { userId_idempotencyKey: { userId, idempotencyKey } } });
+  const outcome = await withTxRetry(async () => {
+    try {
+      return await transaction(async (tx) => {
+        await repo.lockBuyerEvent(tx, userId, body.eventId);
+        const existing = await tx.order.findUnique({ where: { userId_idempotencyKey: { userId, idempotencyKey } } });
+        if (existing) {
+          assertSameRequest(existing, hash);
+          return { replayed: true, orderId: existing.id };
+        }
+        return { replayed: false, orderId: await reserveAndCreate(tx, userId, idempotencyKey, hash, body) };
+      });
+    } catch (err) {
+      // Même clé envoyée en parallèle pour deux événements différents : la contrainte unique tranche.
+      if (!isUniqueViolationOn(err, 'idempotencyKey')) throw err;
+      const existing = await getDb().order.findUnique({ where: { userId_idempotencyKey: { userId, idempotencyKey } } });
       if (!existing) throw err;
-      return replay(tx, existing, hash, userId);
-    });
-  }
+      assertSameRequest(existing, hash);
+      return { replayed: true, orderId: existing.id };
+    }
+  }, (err) => isUniqueViolationOn(err, 'transferReference'));
+  // Lecture de la réponse HORS de la transaction de réservation (aucun verrou tenu).
+  return { replayed: outcome.replayed, order: await transaction((tx) => viewOwnOrder(tx, userId, outcome.orderId)) };
 }
 
-async function reserveAndCreate(tx: Tx, userId: string, idempotencyKey: string, hash: string, body: CreateOrderBody) {
+async function reserveAndCreate(tx: Tx, userId: string, idempotencyKey: string, hash: string, body: CreateOrderBody): Promise<string> {
   const now = clock.now();
+  if (!(await repo.lockEventShared(tx, body.eventId))) throw errors.notFound();
+  // Lecture APRÈS le verrou : statut, dates, types et prix à jour.
   const event = await tx.event.findUnique({
     where: { id: body.eventId },
     include: { ticketTypes: true, organization: { select: { name: true, settings: true } } },
@@ -127,12 +151,13 @@ async function reserveAndCreate(tx: Tx, userId: string, idempotencyKey: string, 
   const settings = event.organization.settings;
   const rules = resolveEventSettings(settings, event);
   const typesById = new Map(event.ticketTypes.map((t) => [t.id, t]));
-  const items = [...body.items].sort((a, b) => a.ticketTypeId.localeCompare(b.ticketTypeId));
-  for (const item of items) if (!typesById.has(item.ticketTypeId)) throw errors.notFound();
+  const items = [...body.items].sort(byTicketType);
+  const lines = items.map((i) => {
+    const tt = typesById.get(i.ticketTypeId);
+    if (!tt) throw errors.notFound();
+    return { ticketTypeId: i.ticketTypeId, quantity: i.quantity, unitPriceCents: priceAt(tt, now).unitPriceCents };
+  });
 
-  if (body.paymentMethod === 'TRANSFER' && !(rules.transferEnabled && rules.bankConfigured)) {
-    throw errors.unprocessable('PAYMENT_METHOD_UNAVAILABLE', 'Le paiement par virement n’est pas disponible pour cet événement.');
-  }
   const quantity = items.reduce((n, i) => n + i.quantity, 0);
   const owned = await repo.alreadyOwned(tx, userId, event.id);
   if (quantity > rules.maxPerOrder) {
@@ -142,30 +167,19 @@ async function reserveAndCreate(tx: Tx, userId: string, idempotencyKey: string, 
     throw errors.unprocessable('LIMIT_EXCEEDED', `Au plus ${rules.maxPerUser} place(s) par personne pour cet événement.`, { max: rules.maxPerUser, alreadyOwned: owned });
   }
 
-  for (const item of items) {
-    if (!(await repo.reserve(tx, event.id, item.ticketTypeId, item.quantity))) {
-      throw errors.state('SOLD_OUT', 'Plus assez de places disponibles.', { ticketTypeId: item.ticketTypeId });
-    }
-  }
-
-  const lines = items.map((i) => {
-    const tt = typesById.get(i.ticketTypeId);
-    if (!tt) throw errors.notFound();
-    return { ticketTypeId: i.ticketTypeId, quantity: i.quantity, unitPriceCents: priceAt(tt, now).unitPriceCents };
-  });
   const subtotalCents = lines.reduce((sum, l) => sum + lineTotal(l.unitPriceCents, l.quantity), 0);
   const serviceFeeCents = computeServiceFee(subtotalCents, rules.serviceFeeFixedCents, rules.serviceFeeBasisPoints);
   const totalCents = subtotalCents + serviceFeeCents;
+  // Commande gratuite : confirmée directement, quel que soit le moyen de paiement choisi (aucun virement attendu).
   const free = totalCents === 0;
   const orderId = randomUUID();
 
-  // Échéance de paiement, jamais au-delà du début de l'événement.
-  const hold = body.paymentMethod === 'CARD' ? addMinutes(now, rules.cardHoldMinutes) : addHours(now, rules.transferHoldHours);
-  const expiresAt = free ? null : new Date(Math.min(hold.getTime(), event.startsAt.getTime()));
-
   let transfer = {};
   let ibanPlain: string | null = null;
-  if (!free && body.paymentMethod === 'TRANSFER' && settings.bankIbanEncrypted) {
+  if (!free && body.paymentMethod === 'TRANSFER') {
+    if (!(rules.transferEnabled && rules.bankConfigured) || !settings.bankIbanEncrypted) {
+      throw errors.unprocessable('PAYMENT_METHOD_UNAVAILABLE', 'Le paiement par virement n’est pas disponible pour cet événement.');
+    }
     try {
       ibanPlain = bankCrypto.decryptOrgIban(event.orgId, settings.bankIbanEncrypted);
     } catch (err) {
@@ -173,13 +187,28 @@ async function reserveAndCreate(tx: Tx, userId: string, idempotencyKey: string, 
       getLogger().error({ err, orgId: event.orgId }, 'IBAN du collectif indéchiffrable : virement indisponible');
       throw errors.unprocessable('PAYMENT_METHOD_UNAVAILABLE', 'Le paiement par virement n’est pas disponible pour cet événement.');
     }
+    let reference = referenceGenerator.next();
+    for (let attempt = 0; attempt < 3 && (await tx.order.count({ where: { transferReference: reference } })) > 0; attempt += 1) {
+      reference = referenceGenerator.next();
+    }
     transfer = {
-      transferReference: transferReference(),
+      transferReference: reference,
       transferBeneficiary: settings.bankBeneficiary,
       transferIbanEncrypted: bankCrypto.encryptOrderIban(orderId, ibanPlain),
       transferIbanMasked: settings.bankIbanMasked,
       transferBic: settings.bankBic,
     };
+  }
+
+  // Échéance de paiement, jamais au-delà du début de l'événement.
+  const hold = body.paymentMethod === 'CARD' ? addMinutes(now, rules.cardHoldMinutes) : addHours(now, rules.transferHoldHours);
+  const expiresAt = free ? null : new Date(Math.min(hold.getTime(), event.startsAt.getTime()));
+
+  // Réservation atomique, le plus tard possible : verrous de ligne ticket_types tenus le minimum de temps.
+  for (const item of items) {
+    if (!(await repo.reserve(tx, event.id, item.ticketTypeId, item.quantity))) {
+      throw errors.state('SOLD_OUT', 'Plus assez de places disponibles.', { ticketTypeId: item.ticketTypeId });
+    }
   }
 
   const order = await tx.order.create({
@@ -199,6 +228,8 @@ async function reserveAndCreate(tx: Tx, userId: string, idempotencyKey: string, 
       cancellableUntil: rules.selfCancellationEnabled ? addHours(event.startsAt, -rules.cancellationDeadlineHours) : null,
       expiresAt,
       paidAt: free ? now : null,
+      // Instant de tarification : createdAt est l'instant exact utilisé pour l'early (auditabilité).
+      createdAt: now,
       ...transfer,
       items: { create: lines },
     },
@@ -227,7 +258,7 @@ async function reserveAndCreate(tx: Tx, userId: string, idempotencyKey: string, 
       deadline: formatWithZone(expiresAt, event.timezone),
     });
   }
-  return viewOwnOrder(tx, userId, order.id);
+  return order.id;
 }
 
 export async function listOrders(userId: string, page: number, pageSize: number) {

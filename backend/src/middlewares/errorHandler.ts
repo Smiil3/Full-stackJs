@@ -1,6 +1,7 @@
 import type { ErrorRequestHandler, RequestHandler } from 'express';
 import { Prisma } from '../generated/prisma/client.js';
 import { AppError, ResponseContractError } from '../lib/errors.js';
+import { isTransientTxError } from '../lib/txRetry.js';
 
 interface ErrorBody {
   error: { code: string; message: string; details?: Record<string, unknown> };
@@ -73,6 +74,12 @@ export const errorHandler: ErrorRequestHandler = (err: unknown, req, res, _next)
       res.status(409).json(body('CONFLICT', 'Conflit d’accès concurrent, veuillez réessayer.'));
       return;
     }
+  }
+  if (isTransientTxError(err)) {
+    // Interblocage / sérialisation hors des chemins rejoués : jamais un 500.
+    req.log.warn({ err }, 'conflit transactionnel transitoire');
+    res.status(409).json(body('CONFLICT', 'Conflit d’accès concurrent, veuillez réessayer.'));
+    return;
   }
   if (err instanceof ResponseContractError) {
     req.log.error({ problems: err.problems }, 'réponse non conforme au contrat');

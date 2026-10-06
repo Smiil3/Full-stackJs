@@ -42,6 +42,15 @@ export async function lockBuyerEvent(tx: Tx, userId: string, eventId: string): P
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${key}, 0))`;
 }
 
+/**
+ * Verrou PARTAGÉ sur l'événement : plusieurs réservations simultanées ne se bloquent pas entre elles,
+ * mais attendent une annulation / un report en cours (FOR UPDATE) et voient son résultat.
+ */
+export async function lockEventShared(tx: Tx, eventId: string): Promise<boolean> {
+  const rows = await tx.$queryRaw<{ id: string }[]>`SELECT "id" FROM "events" WHERE "id" = ${eventId}::uuid FOR SHARE`;
+  return rows.length === 1;
+}
+
 /** Places déjà détenues pour l'événement : commandes actives + offres de liste d'attente en cours. */
 export async function alreadyOwned(tx: Tx, userId: string, eventId: string): Promise<number> {
   const rows = await tx.$queryRaw<{ n: number }[]>`

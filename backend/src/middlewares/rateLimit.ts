@@ -36,7 +36,15 @@ export function buildLimiters(config: RateLimitConfig) {
     emailActions: limiter(config, 'email', 60 * 60_000, 10),
     refresh: limiter(config, 'refresh', 60_000, 30),
     webhook: limiter(config, 'webhook', 60_000, 120),
-    orders: limiter(config, 'orders', 60_000, 20),
+    // Réservation : 60 / min par IP (opérateurs mobiles en CGNAT : beaucoup d'acheteurs derrière une IP)
+    // ET 10 / min par compte (après authentification).
+    orders: limiter(config, 'orders', 60_000, 60),
+    ordersPerUser: limiter(config, 'orders-user', 60_000, 10, {
+      keyGenerator: (_req, res) => {
+        const auth = (res.locals as { auth?: { userId?: string } }).auth;
+        return `user:${auth?.userId ?? 'anonyme'}`;
+      },
+    }),
     scan: limiter(config, 'scan', 60_000, 240),
   };
 }

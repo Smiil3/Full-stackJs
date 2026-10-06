@@ -41,5 +41,7 @@ Object.assign(process.env, {
   PSP_WEBHOOK_URL: 'http://127.0.0.1:4000/api/v1/webhooks/psp',
   // Plancher réduit pour la vitesse de la suite ; un test dédié vérifie le vrai plancher.
   AUTH_RESPONSE_FLOOR_MS: '0',
+  // Valeurs de production : un .env de développement local (multiplicateur e2e) ne doit pas fausser les tests.
+  RATE_LIMIT_MULTIPLIER: '1',
 });
 resetEnvCache();
