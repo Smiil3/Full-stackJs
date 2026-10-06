@@ -57,7 +57,44 @@ Ne pas ouvrir de ticket public. Écrire aux mainteneurs du dépôt en décrivant
 
 ## Frontend
 
-_Section rédigée avec le jalon F5._
+### Périmètre et actifs protégés
+- Session de l'utilisateur (jeton d'accès), données affichées d'un compte et d'un collectif (commandes, IBAN masqués, chiffres de vente, membres), billets (QR = justificatif porteur), décision d'entrée au contrôle d'accès.
+- Acteurs hostiles considérés : site tiers (XSS, clickjacking, CSRF, redirection ouverte), autre compte sur le même appareil, autre onglet ou session simultanée, réponse réseau altérée ou inattendue, appareil de contrôle perdu ou hors-ligne, utilisateur cherchant à fausser un prix ou une décision côté client.
+
+### Authentification et sessions
+- Jeton d'accès conservé **en mémoire uniquement** (jamais localStorage / sessionStorage / IndexedDB / cookie lisible) ; session restaurée au chargement par le cookie HttpOnly de refresh. Le lint interdit `localStorage`, `sessionStorage`, `document.cookie`, `fetch` hors du client API et IndexedDB hors des deux modules dédiés (y compris via `window.` / `globalThis.` / `self.`).
+- Client API unique : `credentials: 'include'`, `Authorization: Bearer`, `X-Requested-With: nuits-web` sur refresh / logout, `cache: 'no-store'`, `redirect: 'error'`, délais bornés. Refresh silencieux sur 401 `UNAUTHENTICATED` avec **une seule promesse partagée** et rejeu unique ; seul 401 `INVALID_REFRESH_TOKEN` déconnecte (pas 403 CSRF, ni réseau, ni 5xx) ; refresh proactif avec plancher (pas de boucle).
+- Compteur de génération de session : un refresh lancé avant un login / logout est ignoré à son retour (aucun jeton réinjecté après déconnexion). Login / refresh / logout sérialisés entre onglets (Web Locks) — la réutilisation d'un refresh token révoquant toute la famille ; login / logout propagés aux autres onglets par BroadcastChannel (type d'événement seulement, jamais de jeton).
+- Réponses de session et d'utilisateur vérifiées à l'exécution (forme, rôles connus, durée de vie bornée) ; corps vide ou mal formé ⇒ erreur, jamais un état d'authentification.
+- Déconnexion, refresh refusé ou changement de compte : cache TanStack Query (requêtes **et** mutations en vol) vidé de façon synchrone avant d'afficher le nouveau compte ; données hors-ligne purgées.
+
+### Autorisations et isolation des collectifs
+- Gardes de routes = confort d'affichage ; l'API décide (404 / 403). Toutes les pages d'un collectif sont remontées à chaque changement de collectif (aucun formulaire — IBAN, mot de passe — ni filtre ne passe de A à B) ; les données « précédentes » affichées pendant un rechargement ne sont gardées que pour le même collectif et le même événement.
+- Paramètres `…Id` des routes validés (UUID) ⇒ 404 locale sans requête ; chaque paramètre de chemin d'API encodé, valeurs vides / `.` / `..` et segments point (même encodés) refusés avant envoi.
+- Coordonnées bancaires : jamais pré-remplies ni affichées en clair, ressaisie complète + mot de passe actuel ; la mutation n'est pas conservée en mémoire (`gcTime: 0`, réinitialisée après envoi).
+
+### Entrées, sorties et surface HTTP
+- Aucun `dangerouslySetInnerHTML`, `innerHTML`, `insertAdjacentHTML`, `document.write`, `eval` (interdits par le lint) ; textes saisis par les organisateurs affichés en texte (`white-space: pre-line`), détails d'audit en JSON texte, QR dessinés en `<canvas>`.
+- Messages d'erreur tirés du **code** contractuel, jamais du message brut du serveur ; tables de libellés lues avec leurs seules clés propres (`Object.hasOwn`, pas de `constructor` / `__proto__` depuis l'URL ou le serveur).
+- Redirections : `?next=` limité aux chemins internes (segments `.`/`..`, `//`, `\`, contrôles, double encodage refusés ; sortie revérifiée) ; redirection vers le prestataire de paiement seulement vers notre origine ou `VITE_PSP_ORIGIN` (https obligatoire en production, démarrage refusé sinon) ; `VITE_API_BASE_URL` obligatoirement relative.
+- Jetons des liens email retirés de la barre d'adresse dès la lecture ; vérification d'email déclenchée par un bouton (pas au chargement : les antivirus de messagerie ouvrent les liens).
+- Variables d'environnement : uniquement `VITE_*` non sensibles. Le mode API simulée (MSW) n'existe qu'en développement : `vite build --mode mock` échoue, aucun code de simulation dans `dist/` (vérifié).
+- En-têtes (`security-headers.ts`, `deploy/`) : CSP sans `unsafe-*` (`default-src 'self'`, `script-src 'self'`, `style-src 'self'`, `connect-src 'self'`, `frame-ancestors 'none'`, `object-src 'none'`, `base-uri 'none'`, `form-action 'self'`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Permissions-Policy: camera=(self)…`, COOP, `X-Frame-Options: DENY`, HSTS (nginx). Assouplissement réservé au serveur de développement (React Refresh, HMR) ; l'aperçu du build et les tests PWA tournent avec la CSP de production.
+
+### Argent, commandes et billets
+- Le client n'envoie jamais de prix ; frais et total affichés avant validation sont une estimation, le montant définitif vient de l'API ; montant remboursé = `refundPreviewCents` calculé par le serveur.
+- Conversions € ⇒ centimes et % ⇒ points de base par analyse de chaîne (aucun flottant), saisies ambiguës refusées.
+- `Idempotency-Key` UUID obligatoire (refus avant envoi sinon), une par tentative, conservée par (compte, contenu du panier) jusqu'à confirmation, nouvelle clé après expiration ; bouton désactivé pendant l'envoi.
+- Retour du prestataire `?payment=success` : la commande n'est jamais considérée payée sur la foi de l'URL (polling jusqu'à `PAID`) ; tant qu'un paiement attend confirmation, aucun second bouton « Payer ».
+- Échéances (réservation, offre de liste d'attente, annulation) calculées sur l'horloge du serveur (en-tête `Date`, médiane glissante) ; le serveur tranche (`ORDER_EXPIRED`).
+- Actions sensibles confirmées explicitement : annulation de commande (montant), validation de virement (récapitulatif), annulation d'événement (titre recopié + motif), report (motif, acheteurs prévenus), rétrogradation / retrait de membre, activation du mode secours.
+
+### Contrôle d'accès (scanner)
+- **En ligne par défaut** : seule la réponse du serveur fait entrer ; réessais avec le même `scanId` (budget ≈ 10 s) ; sans réponse ⇒ « Vérification impossible », personne n'entre. Tout refus reste affiché jusqu'à un appui.
+- **Mode secours** (si l'OWNER l'a activé pour l'événement) : bandeau permanent de risque ; vérification locale de la signature Ed25519 avec la clé du seul snapshot authentifié (WebCrypto, repli logiciel), format QR strict, contrôle de l'événement ; lecture + marquage + mise en file dans une transaction IndexedDB sous verrou inter-onglets (un billet n'entre qu'une fois par appareil) ; liste jamais rétrogradée « utilisé ⇒ valide » ; contrôle local refusé avec une liste de plus de 24 h ou après la fin + 24 h ; 403 ⇒ liste effacée.
+- Stockage local minimal : identifiant public, type, initiales, statut, clé publique (pas d'email, de nom ni de jeton). File de passages non transmis **jamais purgée** tant qu'elle n'est pas synchronisée (empreinte SHA-256 du compte, retransmise à la reconnexion du même compte, purge automatique fin + 24 h) ; déconnexion avec file non vide ⇒ double avertissement.
+- Billets de l'acheteur conservés pour l'affichage hors-ligne : liés à une empreinte du compte, refusés à tout autre compte, purgés à la déconnexion avec reprise d'une purge interrompue.
+- Service worker : coquille applicative seulement, **aucune réponse d'API mise en cache** ; mise à jour à la demande (bandeau insistant après 24 h).
 
 ## Limites connues et risques acceptés
 
@@ -72,6 +109,9 @@ _Section rédigée avec le jalon F5._
 - **Pas de double authentification (MFA)** pour les organisateurs.
 - **Horloge des appareils** : les horodatages de scans hors-ligne sont bornés mais déclaratifs (journal), et `deviceId` n'a aucune valeur de preuve.
 - **Plafond par personne** : il s'applique par compte ; plusieurs comptes d'une même personne ne sont pas détectés.
+- **Navigateur de l'acheteur** : la liste de billets gardée hors-ligne (QR = justificatifs porteurs) reste lisible sur un appareil non verrouillé jusqu'à la déconnexion ; une capture du QR permet d'entrer une fois (le second passage est refusé).
+- **Sans Web Locks** (navigateurs anciens) : la sérialisation inter-onglets du refresh et du scan n'existe pas ; un refresh simultané dans deux onglets peut alors révoquer la session (reconnexion nécessaire).
+- **Hors-ligne au démarrage** : l'accès au scanner repose sur le dernier compte validé en ligne sur l'appareil (pas de vérification serveur possible tant que le réseau est absent).
 
 ## Check-list de mise en production
 
@@ -87,4 +127,7 @@ _Section rédigée avec le jalon F5._
 - [ ] SMTP authentifié et chiffré (`SMTP_SECURE=true` ou STARTTLS côté relais) ; `MAIL_FROM` sur un domaine aligné SPF/DKIM/DMARC (les mails de reset et de virement sont des cibles d'hameçonnage).
 - [ ] Worker démarré et supervisé ; alerte sur les remboursements `MANUAL_REQUIRED` et les commandes en échec d'expiration.
 - [ ] Sauvegardes chiffrées de PostgreSQL, accès base restreint.
+- [ ] Build front : `VITE_PSP_ORIGIN` = origine https du prestataire (démarrage refusé sinon), `VITE_API_BASE_URL` relatif ; jamais `--mode mock`.
+- [ ] Servir `frontend/dist` avec `frontend/deploy/nginx.conf.example` et le snippet `nuits-security-headers.conf` inclus dans chaque bloc `location` qui ajoute un en-tête ; `sw.js`, `index.html` et `manifest.webmanifest` sans cache long.
+- [ ] Après chaque déploiement : vérifier l'invite de mise à jour sur un appareil de contrôle avant l'ouverture des portes, et rafraîchir la liste hors-ligne si le mode secours est activé.
 - [ ] `npm audit --omit=dev` sans vulnérabilité haute ou critique sur les deux applications.
