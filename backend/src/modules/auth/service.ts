@@ -7,6 +7,7 @@ import { randomToken, sha256Hex } from '../../lib/crypto.js';
 import { ACCESS_TOKEN_TTL_SECONDS, signAccessToken } from '../../lib/jwt.js';
 import { enqueueEmail } from '../../lib/outbox.js';
 import { addMinutes } from '../../lib/time.js';
+import { withResponseFloor } from '../../lib/timing.js';
 import { normalizeEmail } from '../../lib/email.js';
 import * as repo from './repo.js';
 
@@ -44,10 +45,28 @@ export interface SessionResult {
 
 
 let dummyHash: Promise<string> | null = null;
-/** Hash factice : un email inconnu coûte le même temps de calcul qu'un email connu (anti-énumération par timing). */
+/**
+ * Hash factice : un email inconnu coûte le même temps de calcul qu'un email connu (anti-énumération
+ * par timing). Calculé au démarrage (warmUpAuth) ; une promesse en échec n'est jamais gardée en cache.
+ */
 function getDummyHash(): Promise<string> {
-  dummyHash ??= argon2.hash(randomToken(32), ARGON2_OPTIONS);
+  if (!dummyHash) {
+    const pending = argon2.hash(randomToken(32), ARGON2_OPTIONS);
+    dummyHash = pending;
+    pending.catch(() => {
+      if (dummyHash === pending) dummyHash = null;
+    });
+  }
   return dummyHash;
+}
+
+/** À appeler au démarrage : précalcule le hash factice (la première requête n'est pas plus lente). */
+export async function warmUpAuth(): Promise<void> {
+  await getDummyHash();
+}
+
+function floor<T>(fn: () => Promise<T>): Promise<T> {
+  return withResponseFloor(getEnv().authResponseFloorMs, fn);
 }
 
 export function hashPassword(password: string): Promise<string> {
@@ -141,7 +160,11 @@ async function buildSession(userId: string, refreshToken: string): Promise<Sessi
  *   remplacés, anciens liens de vérification invalidés, sessions révoquées, nouveau lien envoyé.
  *   Un attaquant qui aurait inscrit l'adresse de sa victime perd tout accès dès qu'elle s'inscrit.
  */
-export async function register(input: { email: string; password: string; displayName: string }): Promise<void> {
+export function register(input: { email: string; password: string; displayName: string }): Promise<void> {
+  return floor(() => registerInner(input));
+}
+
+async function registerInner(input: { email: string; password: string; displayName: string }): Promise<void> {
   const email = normalizeEmail(input.email);
   const passwordHash = await hashPassword(input.password);
   const displayName = input.displayName.trim();
@@ -191,7 +214,11 @@ export async function verifyEmail(token: string): Promise<void> {
   if (!ok) throw errors.validation([{ path: 'token', message: 'Lien invalide ou expiré.' }], 'Lien invalide ou expiré.');
 }
 
-export async function resendVerification(rawEmail: string): Promise<void> {
+export function resendVerification(rawEmail: string): Promise<void> {
+  return floor(() => resendVerificationInner(rawEmail));
+}
+
+async function resendVerificationInner(rawEmail: string): Promise<void> {
   const email = normalizeEmail(rawEmail);
   await transaction(async (tx) => {
     const user = await tx.user.findUnique({ where: { email } });
@@ -285,7 +312,11 @@ export async function logout(rawToken: string | undefined): Promise<void> {
   });
 }
 
-export async function forgotPassword(rawEmail: string): Promise<void> {
+export function forgotPassword(rawEmail: string): Promise<void> {
+  return floor(() => forgotPasswordInner(rawEmail));
+}
+
+async function forgotPasswordInner(rawEmail: string): Promise<void> {
   const email = normalizeEmail(rawEmail);
   await transaction(async (tx) => {
     const user = await tx.user.findUnique({ where: { email } });

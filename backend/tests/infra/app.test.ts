@@ -99,7 +99,7 @@ describe('application', () => {
   it('HSTS activé en production', async () => {
     const saved = { ...process.env };
     try {
-      Object.assign(process.env, { NODE_ENV: 'production', REFRESH_COOKIE_SECURE: 'true' });
+      Object.assign(process.env, { NODE_ENV: 'production', REFRESH_COOKIE_SECURE: 'true', AUTH_RESPONSE_FLOOR_MS: '400' });
       resetEnvCache();
       const res = await supertest(createApp()).get('/health');
       expect(res.headers['strict-transport-security']).toMatch(/max-age=31536000/);
@@ -183,7 +183,7 @@ describe('validation des réponses (contrat de sortie)', () => {
   it('en production : les champs non déclarés (passwordHash) sont retirés', () => {
     const saved = { ...process.env };
     try {
-      Object.assign(process.env, { NODE_ENV: 'production', REFRESH_COOKIE_SECURE: 'true' });
+      Object.assign(process.env, { NODE_ENV: 'production', REFRESH_COOKIE_SECURE: 'true', AUTH_RESPONSE_FLOOR_MS: '400' });
       resetEnvCache();
       const out: unknown = checkResponse(Joi.object({ id: Joi.string(), email: Joi.string() }), { id: '1', email: 'a@b.fr', passwordHash: '$argon2id$x' });
       expect(out).toEqual({ id: '1', email: 'a@b.fr' });
@@ -254,9 +254,9 @@ describe('configuration — secrets (B1.1 H1)', () => {
   const base = () => ({ ...process.env });
   it('refuse toute valeur d’exemple CHANGE_ME, quel que soit NODE_ENV', () => {
     for (const nodeEnv of ['development', 'test']) {
-      expect(() => parseEnv({ ...base(), NODE_ENV: nodeEnv, JWT_ACCESS_SECRET: 'CHANGE_ME_AT_LEAST_43_RANDOM_CHARACTERS_XXXXXXXXXXXX' })).toThrow(/CHANGE_ME|base64url/);
-      expect(() => parseEnv({ ...base(), NODE_ENV: nodeEnv, PSP_API_KEY: 'change_me_' + 'A'.repeat(50) })).toThrow(/CHANGE_ME/);
-      expect(() => parseEnv({ ...base(), NODE_ENV: nodeEnv, DATABASE_URL: 'postgresql://nuits:CHANGE_ME@127.0.0.1:5432/nuits' })).toThrow(/CHANGE_ME/);
+      expect(() => parseEnv({ ...base(), AUTH_RESPONSE_FLOOR_MS: '400', NODE_ENV: nodeEnv, JWT_ACCESS_SECRET: 'CHANGE_ME_AT_LEAST_43_RANDOM_CHARACTERS_XXXXXXXXXXXX' })).toThrow(/CHANGE_ME|base64url/);
+      expect(() => parseEnv({ ...base(), AUTH_RESPONSE_FLOOR_MS: '400', NODE_ENV: nodeEnv, PSP_API_KEY: 'change_me_' + 'A'.repeat(50) })).toThrow(/CHANGE_ME/);
+      expect(() => parseEnv({ ...base(), AUTH_RESPONSE_FLOOR_MS: '400', NODE_ENV: nodeEnv, DATABASE_URL: 'postgresql://nuits:CHANGE_ME@127.0.0.1:5432/nuits' })).toThrow(/CHANGE_ME/);
     }
   });
   it('exige des secrets distincts (clé API PSP ≠ secret webhook, etc.)', () => {

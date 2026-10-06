@@ -3,6 +3,7 @@ import { EnvValidationError, getEnv } from './config/env.js';
 import { getLogger } from './lib/logger.js';
 import { createApp } from './app.js';
 import { disconnectDb } from './lib/db.js';
+import { warmUpAuth } from './modules/auth/service.js';
 
 function loadEnvOrExit() {
   try {
@@ -18,6 +19,7 @@ function loadEnvOrExit() {
 
 const env = loadEnvOrExit();
 const logger = getLogger();
+await warmUpAuth();
 const server = createApp().listen(env.port, () => {
   // Configuration réseau effective journalisée au démarrage (aucun secret).
   logger.info(

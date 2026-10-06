@@ -39,5 +39,7 @@ Object.assign(process.env, {
   PSP_API_KEY: randomBytes(32).toString('base64url'),
   PSP_WEBHOOK_SECRET: randomBytes(32).toString('base64url'),
   PSP_WEBHOOK_URL: 'http://127.0.0.1:4000/api/v1/webhooks/psp',
+  // Plancher réduit pour la vitesse de la suite ; un test dédié vérifie le vrai plancher.
+  AUTH_RESPONSE_FLOOR_MS: '0',
 });
 resetEnvCache();

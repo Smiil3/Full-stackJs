@@ -504,3 +504,36 @@ describe('pré-détournement de compte (B2.1 H1)', () => {
     expect(after.tokenVersion).toBe(user.tokenVersion + 1);
   });
 });
+
+describe('temps de réponse constant (B2.1 M5)', () => {
+  it('register / forgot / resend : plancher identique quel que soit le cas', async () => {
+    const { resetEnvCache } = await import('../../src/config/env.js');
+    process.env['AUTH_RESPONSE_FLOOR_MS'] = '400';
+    resetEnvCache();
+    try {
+      await createUser({ email: 'timing@test.fr' });
+      const time = async (fn: () => PromiseLike<unknown>) => {
+        const t0 = performance.now();
+        await fn();
+        return performance.now() - t0;
+      };
+      const durations = [
+        await time(() => api().post(`${A}/forgot-password`).send({ email: 'timing@test.fr' })),
+        await time(() => api().post(`${A}/forgot-password`).send({ email: 'absent@test.fr' })),
+        await time(() => api().post(`${A}/resend-verification`).send({ email: 'timing@test.fr' })),
+        await time(() => api().post(`${A}/resend-verification`).send({ email: 'absent@test.fr' })),
+        await time(() => api().post(`${A}/register`).send({ email: 'timing@test.fr', password: PASSWORD, displayName: 'T' })),
+        await time(() => api().post(`${A}/register`).send({ email: 'neuf@test.fr', password: PASSWORD, displayName: 'N' })),
+      ];
+      for (const d of durations) expect(d).toBeGreaterThanOrEqual(395);
+    } finally {
+      process.env['AUTH_RESPONSE_FLOOR_MS'] = '0';
+      resetEnvCache();
+    }
+  });
+
+  it('le plancher ne peut pas être désactivé hors test', async () => {
+    const { parseEnv } = await import('../../src/config/env.js');
+    expect(() => parseEnv({ ...process.env, NODE_ENV: 'development', AUTH_RESPONSE_FLOOR_MS: '0' })).toThrow(/AUTH_RESPONSE_FLOOR_MS/);
+  });
+});

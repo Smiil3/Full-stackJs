@@ -25,6 +25,7 @@ export interface Env {
   mailFrom: string;
   psp: { baseUrl: string; port: number; apiKey: string; webhookSecret: string; webhookUrl: string };
   workerIntervalMs: number;
+  authResponseFloorMs: number;
 }
 
 const httpUrl = Joi.string().uri({ scheme: ['http', 'https'] });
@@ -90,6 +91,10 @@ const schema = Joi.object({
   PSP_WEBHOOK_SECRET: secret256.required(),
   PSP_WEBHOOK_URL: httpUrl.required(),
   WORKER_INTERVAL_MS: Joi.number().integer().min(500).max(600_000).default(5000),
+  // Temps de réponse plancher des actions d'authentification anonymes (anti-oracle de timing).
+  // Réductible uniquement en test, pour garder une suite rapide.
+  AUTH_RESPONSE_FLOOR_MS: Joi.number().integer().max(5000).default(400)
+    .when('NODE_ENV', { is: 'test', then: Joi.number().min(0), otherwise: Joi.number().min(300) }),
 })
   // Les autres variables du système (PATH, HOME…) sont ignorées et non recopiées.
   .unknown(true)
@@ -142,6 +147,7 @@ interface RawEnv {
   PSP_WEBHOOK_SECRET: string;
   PSP_WEBHOOK_URL: string;
   WORKER_INTERVAL_MS: number;
+  AUTH_RESPONSE_FLOOR_MS: number;
 }
 
 export class EnvValidationError extends Error {
@@ -189,6 +195,7 @@ export function parseEnv(source: NodeJS.ProcessEnv): Env {
       webhookUrl: raw.PSP_WEBHOOK_URL,
     },
     workerIntervalMs: raw.WORKER_INTERVAL_MS,
+    authResponseFloorMs: raw.AUTH_RESPONSE_FLOOR_MS,
   };
 }
 
