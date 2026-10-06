@@ -133,17 +133,20 @@ function SettingsForm({ orgId, s }: { orgId: string; s: OrgSettings }) {
 
 /** Coordonnées bancaires : ressaisie COMPLÈTE + mot de passe actuel (contrat v1.7). L'IBAN n'est jamais pré-rempli. */
 function BankForm({ orgId, onDone }: { orgId: string; onDone: () => void }) {
-  const update = useUpdateOrgSettings(orgId);
+  const update = useUpdateOrgSettings(orgId, { sensitive: true });
+  // L'erreur est conservée à part : la mutation est réinitialisée aussitôt (IBAN + mot de passe effacés du cache).
+  const [lastError, setLastError] = useState<unknown>(null);
   const [beneficiary, setBeneficiary] = useState('');
   const [iban, setIban] = useState('');
   const [bic, setBic] = useState('');
   const [password, setPassword] = useState('');
   const [errors, setErrors] = useState<Partial<Record<'beneficiary' | 'iban' | 'bic' | 'password', string>>>({});
-  const server = fieldErrors(update.error);
-  const wrongPassword = isApiError(update.error) && update.error.code === 'INVALID_CREDENTIALS';
+  const server = fieldErrors(lastError);
+  const wrongPassword = isApiError(lastError) && lastError.code === 'INVALID_CREDENTIALS';
 
   const submit = (e: SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
+    setLastError(null);
     const errs = {
       beneficiary: beneficiary.trim().length < 1 || beneficiary.length > 140 ? 'Titulaire requis.' : undefined,
       iban: ibanProblem(iban),
@@ -158,8 +161,13 @@ function BankForm({ orgId, onDone }: { orgId: string; onDone: () => void }) {
         onSuccess: () => {
           onDone();
         },
+        onError: (err) => {
+          setLastError(err);
+          setIban(''); // à ressaisir : rien de sensible ne reste en mémoire plus que nécessaire
+        },
         onSettled: () => {
           setPassword('');
+          update.reset();
         },
       },
     );
@@ -179,9 +187,9 @@ function BankForm({ orgId, onDone }: { orgId: string; onDone: () => void }) {
         onChange={(e) => setPassword(e.target.value)}
         error={errors.password ?? (wrongPassword ? 'Mot de passe incorrect.' : server.currentPassword)}
       />
-      {update.error && !wrongPassword && Object.keys(server).length === 0 ? (
+      {lastError && !wrongPassword && Object.keys(server).length === 0 ? (
         <p className="alert alert--error" role="alert">
-          {errorMessage(update.error)}
+          {errorMessage(lastError)}
         </p>
       ) : null}
       <div className="row">

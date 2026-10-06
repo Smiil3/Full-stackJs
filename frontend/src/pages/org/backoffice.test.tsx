@@ -80,9 +80,30 @@ describe('back-office : accès et réglages', () => {
     await user.click(screen.getByRole('button', { name: 'Enregistrer les coordonnées' }));
     expect(await screen.findByText('Mot de passe incorrect.')).toBeInTheDocument();
     expect(mock.db.calls.get('POST /auth/refresh') ?? 0).toBeLessThanOrEqual(1); // seul le refresh de démarrage
+    await user.type(screen.getByLabelText('IBAN complet'), 'FR76 3000 6000 0112 3456 7890 189'); // effacé après l'échec (M2)
     await user.type(screen.getByLabelText('Votre mot de passe (confirmation)'), DEMO_PASSWORD);
     await user.click(screen.getByRole('button', { name: 'Enregistrer les coordonnées' }));
     await waitFor(() => expect(screen.queryByLabelText('IBAN complet')).toBeNull());
+  });
+
+  it('M2 : ni l’IBAN complet ni le mot de passe ne restent dans le cache des mutations (échec puis succès)', async () => {
+    const user = userEvent.setup();
+    const { queryClient } = await renderApp(`${ORG}/settings`, { as: OWNER });
+    const dump = () => JSON.stringify(queryClient.getMutationCache().getAll().map((m) => ({ v: m.state.variables, d: m.state.data, c: m.state.context })));
+    await user.click(await screen.findByRole('button', { name: 'Modifier les coordonnées bancaires' }));
+    await user.type(screen.getByLabelText('Titulaire du compte'), 'Les Nuits');
+    await user.type(screen.getByLabelText('IBAN complet'), 'FR76 3000 6000 0112 3456 7890 189');
+    await user.type(screen.getByLabelText('BIC'), 'AGRIFRPP');
+    await user.type(screen.getByLabelText('Votre mot de passe (confirmation)'), 'mauvais-mot-de-passe');
+    await user.click(screen.getByRole('button', { name: 'Enregistrer les coordonnées' }));
+    expect(await screen.findByText('Mot de passe incorrect.')).toBeInTheDocument();
+    expect(dump()).not.toMatch(/7890189|mauvais-mot-de-passe/);
+    expect(screen.getByLabelText('IBAN complet')).toHaveValue('');
+    await user.type(screen.getByLabelText('IBAN complet'), 'FR76 3000 6000 0112 3456 7890 189');
+    await user.type(screen.getByLabelText('Votre mot de passe (confirmation)'), DEMO_PASSWORD);
+    await user.click(screen.getByRole('button', { name: 'Enregistrer les coordonnées' }));
+    await waitFor(() => expect(screen.queryByLabelText('IBAN complet')).toBeNull());
+    expect(dump()).not.toMatch(new RegExp(`7890189|${DEMO_PASSWORD}`));
   });
 
   it('cache vidé à la déconnexion : aucune donnée du collectif ne reste (F3)', async () => {

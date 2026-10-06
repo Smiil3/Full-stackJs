@@ -47,9 +47,14 @@ export const useOrg = (orgId: string) =>
 export const useOrgSettings = (orgId: string, enabled = true) =>
   useQuery({ queryKey: qk.orgSettings(orgId), queryFn: ({ signal }) => apiRequest<OrgSettings>(`${org(orgId)}/settings`, { signal }), enabled });
 
-export function useUpdateOrgSettings(orgId: string) {
+/**
+ * `sensitive` (coordonnées bancaires + mot de passe) : la mutation n'est pas conservée dans le cache
+ * (gcTime 0) — l'appelant doit en plus appeler `reset()` une fois terminée.
+ */
+export function useUpdateOrgSettings(orgId: string, opts: { sensitive?: boolean } = {}) {
   const qc = useQueryClient();
   return useMutation({
+    ...(opts.sensitive ? { gcTime: 0 } : {}),
     mutationFn: (body: OrgSettingsPatch) => apiRequest<OrgSettings>(`${org(orgId)}/settings`, { method: 'PATCH', body }),
     onSuccess: (s) => {
       qc.setQueryData(qk.orgSettings(orgId), s);
