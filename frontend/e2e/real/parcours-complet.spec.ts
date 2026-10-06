@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { API, apiLogin, createEvent, createVerifiedBuyer, IN_CHECKIN_WINDOW } from './fixtures';
+import { API, IN_CHECKIN_WINDOW, apiLogin, createEvent, createVerifiedBuyer, openEventFromCatalogue } from './fixtures';
 import { waitForMail } from './mailpit';
 
 /**
@@ -20,7 +20,7 @@ test('achat carte ⇒ mail ⇒ billet QR ⇒ scan OK puis DÉJÀ UTILISÉ', asyn
   await buyer.getByLabel('Adresse email').fill(account.email);
   await buyer.getByLabel('Mot de passe').fill(account.password);
   await buyer.getByRole('button', { name: 'Se connecter' }).click();
-  await buyer.getByRole('main').getByRole('link', { name: ev.title }).click();
+  await openEventFromCatalogue(buyer, ev.title);
   await buyer.getByRole('button', { name: 'Ajouter une place Unique' }).click();
   await buyer.getByRole('button', { name: /^Réserver 1 place/ }).click();
   await buyer.getByRole('button', { name: /Payer .* par carte/ }).click();
