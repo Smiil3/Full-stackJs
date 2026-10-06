@@ -19,3 +19,18 @@ export async function waitForLink(to: string, path: '/verify-email' | '/reset-pa
   }
   throw new Error(`Aucun email ${path} reçu pour ${to}`);
 }
+
+/** Attend un email dont le sujet commence par `subjectStart` pour `to` ; renvoie son nombre de pièces jointes. */
+export async function waitForMail(to: string, subjectStart: string, timeoutMs = 30_000): Promise<{ subject: string; attachments: number }> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const res = await fetch(`${MAILPIT}/api/v1/search?query=${encodeURIComponent(`to:${to}`)}`);
+    if (res.ok) {
+      const { messages } = (await res.json()) as { messages: (Summary & { Attachments: number })[] };
+      const m = messages.find((x) => x.Subject.startsWith(subjectStart));
+      if (m) return { subject: m.Subject, attachments: m.Attachments };
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error(`Aucun email « ${subjectStart} » reçu pour ${to}`);
+}

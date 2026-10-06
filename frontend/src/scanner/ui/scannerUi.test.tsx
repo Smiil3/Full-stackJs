@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { apiRequest, login, logout } from '../../api/client';
 import type { Order } from '../../api/types';
 import { injectFault, mock } from '../../mocks/core';
@@ -39,6 +39,12 @@ async function scanManually(user: ReturnType<typeof userEvent.setup>, code: stri
   await user.click(screen.getByRole('button', { name: 'Vérifier' }));
   return screen.findByRole('alertdialog');
 }
+
+// Pages chargées à la demande : transformées une fois avant les tests (sinon le 1er test paie ce coût).
+beforeAll(async () => {
+  await Promise.all([import('./ScannerHomePage'), import('./ScannerPage')]);
+}, 30_000);
+vi.setConfig({ testTimeout: 20_000 });
 
 describe('scanner : interface', () => {
   it('préparation hors-ligne puis scan en ligne : vert « OK — Fosse — J.D. », puis rouge « DÉJÀ UTILISÉ à HH:MM »', async () => {

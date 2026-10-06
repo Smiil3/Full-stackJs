@@ -15,8 +15,6 @@ async function login(page: Page, email: string, next = '/', password = PASSWORD)
   await page.getByRole('button', { name: 'Se connecter' }).click();
 }
 
-/** Endpoints du contrat pas encore livrés par le back (jalons B5–B7) : à vider en F5. */
-const NOT_YET_DELIVERED = ['/api/v1/me/waitlist', '/api/v1/me/tickets'];
 
 /** `allowed` : réponses d'erreur attendues par le scénario (ex. « 403 POST /api/v1/auth/login »). */
 function collectErrors(page: Page, allowed: string[] = []): string[] {
@@ -29,7 +27,7 @@ function collectErrors(page: Page, allowed: string[] = []): string[] {
   page.on('response', (r) => {
     const path = new URL(r.url()).pathname;
     const line = `${r.status()} ${r.request().method()} ${path}`;
-    if (r.status() >= 400 && r.status() !== 401 && !(r.status() === 404 && NOT_YET_DELIVERED.includes(path)) && !allowed.includes(line)) errors.push(line);
+    if (r.status() >= 400 && r.status() !== 401 && !allowed.includes(line)) errors.push(line);
   });
   return errors;
 }
