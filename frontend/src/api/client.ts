@@ -272,7 +272,7 @@ async function withAuthLock<T>(fn: () => Promise<T>): Promise<T> {
  */
 type AuthBroadcast = { type: 'login' | 'logout' };
 const channel: BroadcastChannel | null = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('nuits-auth');
-(channel as (BroadcastChannel & { unref?: () => void }) | null)?.unref?.();
+(channel)?.unref?.();
 if (channel) {
   channel.onmessage = (e: MessageEvent<unknown>) => {
     const data = e.data;
@@ -333,7 +333,24 @@ async function settleRefresh(): Promise<void> {
 // ---------------------------------------------------------------------------
 // API publique
 // ---------------------------------------------------------------------------
+/** Requêtes non sûres qui DOIVENT porter une Idempotency-Key (contrat §4). */
+const IDEMPOTENT_ENDPOINTS: readonly { method: string; path: RegExp }[] = [{ method: 'POST', path: /^\/orders$/ }];
+
+/**
+ * Point d'entrée de tous les appels API.
+ * Politique de rejeu : une requête n'est rejouée qu'UNE fois, et uniquement après un 401
+ * UNAUTHENTICATED suivi d'un refresh réussi (la requête initiale a été refusée avant tout effet).
+ * Aucun rejeu automatique sur erreur réseau / timeout / 5xx : pour une commande, c'est l'utilisateur
+ * qui relance, avec la MÊME Idempotency-Key (cf. useIdempotencyKey).
+ */
 export async function apiRequest<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+  const method = opts.method ?? 'GET';
+  if (IDEMPOTENT_ENDPOINTS.some((e) => e.method === method && e.path.test(path))) {
+    const key = opts.headers?.['Idempotency-Key'];
+    if (!key || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key)) {
+      throw new Error(`Idempotency-Key (UUID) obligatoire pour ${method} ${path}`);
+    }
+  }
   const useAuth = opts.auth !== false;
   // Un refresh est en cours : on l'attend plutôt que d'envoyer un token sur le point d'être remplacé.
   if (useAuth) await settleRefresh();

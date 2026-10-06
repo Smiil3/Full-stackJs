@@ -314,3 +314,30 @@ describe('multi-onglets (revue F1.1 — M4)', () => {
     expect(calls('POST /auth/refresh')).toBe(1);
   });
 });
+
+describe('Idempotency-Key (revue F1.1 — M6)', () => {
+  const body = { eventId: 'eeeeeeee-0000-4000-8000-000000000001', paymentMethod: 'CARD', items: [{ ticketTypeId: 'bbbbbbbb-0000-4000-8000-000000000001', quantity: 1 }] };
+
+  it.each([undefined, '', 'pas-un-uuid'])('POST /orders sans clé valide (%s) ⇒ refusé avant envoi', async (key) => {
+    await login(BUYER, DEMO_PASSWORD);
+    await expect(apiRequest('/orders', { method: 'POST', body, headers: key === undefined ? {} : { 'Idempotency-Key': key } })).rejects.toThrow('Idempotency-Key');
+    expect(calls('POST /orders')).toBe(0);
+  });
+
+  it('rejoué après 401 + refresh avec la MÊME clé ; jamais rejoué sur erreur réseau', async () => {
+    await login(BUYER, DEMO_PASSWORD);
+    const keys: (string | null)[] = [];
+    server.events.on('request:start', ({ request }) => {
+      if (request.method === 'POST' && new URL(request.url).pathname.endsWith('/orders')) keys.push(request.headers.get('Idempotency-Key'));
+    });
+    const key = crypto.randomUUID();
+    mock.db.accessTokens.clear();
+    await apiRequest('/orders', { method: 'POST', body, headers: { 'Idempotency-Key': key } });
+    expect(keys).toEqual([key, key]);
+
+    injectFault({ route: 'POST /orders', status: 0, code: 'INTERNAL_ERROR', network: true });
+    await expect(apiRequest('/orders', { method: 'POST', body, headers: { 'Idempotency-Key': crypto.randomUUID() } })).rejects.toMatchObject({ code: 'NETWORK_ERROR' });
+    server.events.removeAllListeners();
+    expect(keys).toHaveLength(3);
+  });
+});
