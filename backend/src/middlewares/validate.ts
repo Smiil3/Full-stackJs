@@ -22,6 +22,27 @@ type Empty = Record<string, never>;
 
 const EMPTY = Joi.object({});
 
+/** Recherche d'un caractère NUL à n'importe quelle profondeur (Postgres le refuse : jamais jusqu'à la base). */
+function findNul(value: unknown, path: string[] = [], depth = 0): string | null {
+  if (depth > 10) return null;
+  if (typeof value === 'string') return value.includes('\u0000') ? path.join('.') : null;
+  if (Array.isArray(value)) {
+    for (const [i, v] of value.entries()) {
+      const hit = findNul(v, [...path, String(i)], depth + 1);
+      if (hit !== null) return hit;
+    }
+    return null;
+  }
+  if (typeof value === 'object' && value !== null) {
+    for (const [k, v] of Object.entries(value)) {
+      if (k.includes('\u0000')) return [...path, k].join('.');
+      const hit = findNul(v, [...path, k], depth + 1);
+      if (hit !== null) return hit;
+    }
+  }
+  return null;
+}
+
 function toFields(error: Joi.ValidationError): FieldError[] {
   return error.details.map((d) => ({ path: d.path.join('.'), message: d.message }));
 }
@@ -37,6 +58,13 @@ function toFields(error: Joi.ValidationError): FieldError[] {
 export function validate<P = Empty, Q = Empty, B = Empty, H = Empty>(schemas: RequestSchemas<P, Q, B, H>): RequestHandler {
   return (req: Request, res: Response, next: NextFunction) => {
     const fields: FieldError[] = [];
+    for (const source of [req.params, req.query, req.body as unknown]) {
+      const hit = findNul(source);
+      if (hit !== null) {
+        next(errors.validation([{ path: hit, message: 'Caractère NUL interdit.' }]));
+        return;
+      }
+    }
     const run = <T>(schema: Joi.ObjectSchema<T> | undefined, value: unknown, convert: boolean, prefix: string): T => {
       const result = (schema ?? EMPTY).validate(value ?? {}, {
         abortEarly: false,

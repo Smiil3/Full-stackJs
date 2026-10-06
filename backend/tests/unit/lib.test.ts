@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { computeServiceFee, percentOf } from '../../src/lib/money.js';
+import { computeServiceFee, lineTotal, MoneyError, percentOf } from '../../src/lib/money.js';
+import { text } from '../../src/lib/schemas.js';
 import { BIC_PATTERN, isValidIban, maskIban } from '../../src/lib/iban.js';
 import { aad, decryptString, encryptString, safeEqual, transferReference, type Keyring } from '../../src/lib/crypto.js';
 
@@ -28,6 +29,40 @@ describe('frais de service (entiers, round half up)', () => {
   });
 });
 
+describe('garde-fous monétaires (B1.1 M7 / B2)', () => {
+  it('refuse les montants négatifs, non entiers ou non sûrs', () => {
+    expect(() => computeServiceFee(-1, 0, 0)).toThrow(MoneyError);
+    expect(() => computeServiceFee(10.5, 0, 0)).toThrow(MoneyError);
+    expect(() => computeServiceFee(Number.MAX_SAFE_INTEGER + 1, 0, 0)).toThrow(MoneyError);
+    expect(() => percentOf(-100, 50)).toThrow(MoneyError);
+    expect(() => lineTotal(-1, 1)).toThrow(MoneyError);
+  });
+  it('refuse pourcentages et points de base hors bornes', () => {
+    expect(() => computeServiceFee(1000, 0, 1501)).toThrow(MoneyError);
+    expect(() => computeServiceFee(1000, 0, -1)).toThrow(MoneyError);
+    expect(() => computeServiceFee(1000, 1001, 0)).toThrow(MoneyError);
+    expect(() => percentOf(1000, 101)).toThrow(MoneyError);
+    expect(() => percentOf(1000, -1)).toThrow(MoneyError);
+    expect(() => percentOf(1000, 50.5)).toThrow(MoneyError);
+  });
+  it('bornes exactes acceptées', () => {
+    expect(computeServiceFee(10_000_000, 1000, 1500)).toBe(1_501_000);
+    expect(percentOf(0, 100)).toBe(0);
+    expect(lineTotal(1_000_000, 20)).toBe(20_000_000);
+  });
+});
+
+describe('texte sans caractère de contrôle (B1.1 M9)', () => {
+  it('refuse NUL, échappements terminal et marques bidi ; multiligne autorise \\n et \\t', () => {
+    for (const bad of ['a\u0000b', 'a\u001b[31m', 'abc\u202Egnp.exe', '\uFEFFx', 'a\nb']) {
+      expect(text().validate(bad).error).toBeDefined();
+    }
+    expect(text().validate('Hélène 🎶 — Ça va').error).toBeUndefined();
+    expect(text({ multiline: true }).validate('ligne 1\nligne\t2').error).toBeUndefined();
+    expect(text({ multiline: true }).validate('a\u0000').error).toBeDefined();
+  });
+});
+
 describe('IBAN / BIC', () => {
   it('valide la clé mod 97', () => {
     expect(isValidIban('FR76 3000 6000 0112 3456 7890 189')).toBe(true);
@@ -36,6 +71,16 @@ describe('IBAN / BIC', () => {
     expect(isValidIban('DE89370400440532013000')).toBe(true);
     expect(isValidIban('XX00')).toBe(false);
     expect(isValidIban('<script>')).toBe(false);
+  });
+  it('table des longueurs par pays (B1.1 M8)', () => {
+    expect(isValidIban('BE68539007547034')).toBe(true);
+    expect(isValidIban('NO9386011117947')).toBe(true);
+    // Pays hors SEPA (clé mod 97 pourtant correcte) ⇒ refusé.
+    expect(isValidIban('BR1800360305000010009795493C1')).toBe(false);
+    // Pays inconnu.
+    expect(isValidIban('ZZ7630006000011234567890189')).toBe(false);
+    // Mauvaise longueur pour la France (clé recalculée volontairement absente : rejet sur la longueur).
+    expect(isValidIban('FR763000600001123456789018')).toBe(false);
   });
   it('masque l’IBAN', () => {
     expect(maskIban('FR7630006000011234567890189')).toBe('FR76 •••• •••• 0189');

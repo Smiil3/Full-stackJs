@@ -163,6 +163,22 @@ describe('validation des entrées sur la vraie pile (createApp)', () => {
   });
 });
 
+describe('caractères de contrôle et NUL (B1.1 M9)', () => {
+  it('NUL dans un champ ⇒ 400 et jamais d’erreur Postgres 500', async () => {
+    const res = await api().post('/api/v1/auth/register').send({ email: 'nul@test.fr', password: 'motdepasse-de-test-123', displayName: 'a\u0000b' });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    const inKey = await api().post('/api/v1/auth/login').set('Content-Type', 'application/json').send('{"email":"a@test.fr","password":"x","\\u0000":1}');
+    expect(inKey.status).toBe(400);
+    const inQuery = await api().get('/health?x=%00');
+    expect(inQuery.status).toBe(400);
+  });
+  it('marque bidi dans le nom affiché ⇒ 400', async () => {
+    const res = await api().post('/api/v1/auth/register').send({ email: 'bidi@test.fr', password: 'motdepasse-de-test-123', displayName: 'admin\u202E' });
+    expect(res.status).toBe(400);
+  });
+});
+
 describe('validation des réponses (contrat de sortie)', () => {
   it('en production : les champs non déclarés (passwordHash) sont retirés', () => {
     const saved = { ...process.env };

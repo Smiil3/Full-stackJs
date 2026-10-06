@@ -1,10 +1,10 @@
 import Joi from 'joi';
-import { email, roleSchema, uuidStrict } from '../../lib/schemas.js';
+import { email, roleSchema, text, uuidStrict } from '../../lib/schemas.js';
 
 /** Mot de passe : 12 à 128 caractères (pas de règle de composition, cf. recommandations ANSSI / NIST). */
-export const password = Joi.string().min(12).max(128);
+export const password = text().min(12).max(128);
 /** Nom affiché : pas de caractères de contrôle. */
-export const displayName = Joi.string().min(1).max(80).pattern(/^[^\p{C}]+$/u).messages({ 'string.pattern.base': '{{#label}} contient des caractères interdits' });
+export const displayName = text().min(1).max(80);
 /** Jeton reçu par mail : 32 octets base64url. */
 const mailToken = Joi.string().pattern(/^[A-Za-z0-9_-]{43}$/).messages({ 'string.pattern.base': '{{#label}} est invalide' });
 
@@ -17,12 +17,12 @@ export interface ChangePasswordBody { currentPassword: string; newPassword: stri
 
 export const registerBody = Joi.object<RegisterBody>({ email: email.required(), password: password.required(), displayName: displayName.required() });
 // Au login, aucune règle de longueur fine : on ne révèle pas la politique, on borne seulement la taille.
-export const loginBody = Joi.object<LoginBody>({ email: email.required(), password: Joi.string().min(1).max(128).required() });
+export const loginBody = Joi.object<LoginBody>({ email: email.required(), password: text().min(1).max(128).required() });
 export const emailBody = Joi.object<EmailBody>({ email: email.required() });
 export const tokenBody = Joi.object<TokenBody>({ token: mailToken.required() });
 export const resetBody = Joi.object<ResetBody>({ token: mailToken.required(), password: password.required() });
 export const changePasswordBody = Joi.object<ChangePasswordBody>({
-  currentPassword: Joi.string().min(1).max(128).required(),
+  currentPassword: text().min(1).max(128).required(),
   newPassword: password.required(),
 });
 
