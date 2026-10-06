@@ -19,8 +19,18 @@ function groupByEvent(tickets: Ticket[]) {
 }
 
 export function TicketsPage() {
-  const { status } = useAuth();
+  const { status, revalidate, revalidating } = useAuth();
   const { data, error, isPending } = useMyTickets();
+  // Page de QR redevenue visible (appareil prêté, onglet repris) : session revérifiée, QR masqués entre-temps.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void revalidate();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [revalidate]);
   const [shownId, setShownId] = useState<string | null>(null);
   const openerRef = useRef<HTMLElement | null>(null);
   const groups = useMemo(() => groupByEvent(data?.tickets ?? []), [data]);
@@ -42,7 +52,7 @@ export function TicketsPage() {
 
   return (
     <>
-      {shown ? (
+      {shown && !revalidating ? (
         <QrFullscreen
           value={shown.qrPayload}
           title={shown.event.title}
@@ -51,7 +61,7 @@ export function TicketsPage() {
         />
       ) : null}
       {/* Liste gardée montée (inerte sous le plein écran) : le focus peut revenir sur le bouton d'ouverture. */}
-      <section className="page" inert={shown !== undefined}>
+      <section className="page" inert={shown !== undefined && !revalidating}>
         <h1>Mes billets</h1>
         {data?.offline ? (
           <p className="alert alert--warning" role="status">
@@ -86,7 +96,11 @@ export function TicketsPage() {
                         Billet {i + 1}/{tickets.length}
                       </span>
                     </p>
-                    {t.status === 'VALID' ? (
+                    {t.status === 'VALID' && revalidating ? (
+                      <p className="muted" role="status">
+                        Vérification de la session…
+                      </p>
+                    ) : t.status === 'VALID' ? (
                       <>
                         <QrCode value={t.qrPayload} size={240} label={`QR code du billet ${t.ticketTypeName}`} />
                         <button type="button" className="btn" onClick={(e) => open(t, e.currentTarget)}>

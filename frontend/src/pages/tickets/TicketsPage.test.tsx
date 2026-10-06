@@ -1,10 +1,12 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { delay, http } from 'msw';
 import { describe, expect, it, vi } from 'vitest';
 import { __resetClientForTests, apiRequest, login, logout } from '../../api/client';
 import type { Order } from '../../api/types';
 import { injectFault, mock } from '../../mocks/core';
 import { markPaid, offerToWaitlist } from '../../mocks/domain';
+import { server } from '../../mocks/server';
 import { DEMO_PASSWORD, IDS } from '../../mocks/state';
 import { loadTickets } from '../../offline/tickets';
 import { BUYER, renderApp } from '../../test/renderApp';
@@ -67,6 +69,50 @@ describe('mes billets', () => {
     document.dispatchEvent(new Event('visibilitychange'));
     expect(request).toHaveBeenCalledTimes(2);
     Reflect.deleteProperty(navigator, 'wakeLock');
+  });
+
+  /** Refresh ralenti (puis traité par le serveur simulé) pour observer l'état intermédiaire. */
+  const slowRefresh = () =>
+    server.use(
+      http.post('*/api/v1/auth/refresh', async () => {
+        await delay(150);
+      }),
+    );
+
+  it('F6-M3 : retour du cache avant/arrière avec la session d’un AUTRE compte ⇒ contenu masqué puis purgé', async () => {
+    await buy(1);
+    await renderApp('/me/tickets');
+    expect(await screen.findByRole('img', { name: /QR code du billet Fosse/ })).toBeInTheDocument();
+    mock.db.refreshCookie = { token: 'autre-onglet', userId: IDS.userOwner }; // un autre compte s'est connecté
+    slowRefresh();
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    expect(await screen.findByText('Vérification de la session…')).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: /QR code/ })).toBeNull(); // masqué immédiatement
+    expect(await screen.findByText(/Vous n’avez pas encore de billet/)).toBeInTheDocument(); // billets de l'autre compte : aucun
+    expect(screen.queryByRole('img', { name: /QR code/ })).toBeNull();
+  });
+
+  it('F6-M3 : retour du cache avant/arrière après fin de session ⇒ plus aucun billet affiché', async () => {
+    await buy(1);
+    const { router } = await renderApp('/me/tickets');
+    await screen.findByRole('img', { name: /QR code du billet Fosse/ });
+    mock.db.refreshCookie = null; // session révoquée entre-temps
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    await waitFor(() => expect(router.state.location.pathname).toBe('/login'));
+    expect(screen.queryByRole('img', { name: /QR code/ })).toBeNull();
+  });
+
+  it('F6-M3 : page de QR redevenue visible ⇒ QR masqués pendant la revérification, puis réaffichés (même compte)', async () => {
+    await buy(1);
+    await renderApp('/me/tickets');
+    await screen.findByRole('img', { name: /QR code du billet Fosse/ });
+    slowRefresh();
+    const refreshes = mock.db.calls.get('POST /auth/refresh') ?? 0;
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(await screen.findByText('Vérification de la session…')).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: /QR code/ })).toBeNull();
+    expect(await screen.findByRole('img', { name: /QR code du billet Fosse/ })).toBeInTheDocument();
+    expect(mock.db.calls.get('POST /auth/refresh') ?? 0).toBe(refreshes + 1);
   });
 
   it('billet utilisé / annulé : pas de QR, statut affiché', async () => {

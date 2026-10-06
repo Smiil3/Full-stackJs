@@ -98,6 +98,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [status]);
 
+  // Revérification de la session (pageshow persisté, page de QR redevenue visible).
+  const [revalidating, setRevalidating] = useState(false);
+  const [restoredFromCache, setRestoredFromCache] = useState(false);
+  const revalidate = useCallback(async () => {
+    if (userIdRef.current === null) return; // rien de personnel chargé
+    setRevalidating(true);
+    try {
+      // Même compte ⇒ rien ne change ; autre compte (cookie remplacé par un autre onglet) ⇒ purge par
+      // l'événement « session » ; session révoquée ⇒ purge par l'événement « expired ».
+      await refreshSession();
+    } catch {
+      // Réseau absent : affichage conservé (billets hors-ligne) ; les autres cas sont traités par le client.
+    } finally {
+      setRevalidating(false);
+    }
+  }, []);
+  useEffect(() => {
+    // Page restaurée depuis le cache avant/arrière (bfcache) : l'état mémoire peut être celui d'une
+    // session terminée ou d'un autre compte ⇒ contenu masqué jusqu'à la revérification.
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (!e.persisted) return;
+      setRestoredFromCache(true);
+      void revalidate().finally(() => {
+        setRestoredFromCache(false);
+      });
+    };
+    window.addEventListener('pageshow', onPageShow);
+    return () => {
+      window.removeEventListener('pageshow', onPageShow);
+    };
+  }, [revalidate]);
+
   const login = useCallback(async (email: string, password: string) => (await apiLogin(email, password)).user, []);
   /** La déconnexion n'est terminée qu'une fois les données hors-ligne effacées (billets = justificatifs). */
   const logout = useCallback(async () => {
@@ -112,8 +144,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ status, user, login, logout, reloadUser, sessionEndRedirect, setSessionEndRedirect, notice }),
-    [status, user, login, logout, reloadUser, sessionEndRedirect, notice],
+    () => ({ status, user, login, logout, reloadUser, sessionEndRedirect, setSessionEndRedirect, notice, revalidate, revalidating }),
+    [status, user, login, logout, reloadUser, sessionEndRedirect, notice, revalidate, revalidating],
   );
-  return <AuthContext value={value}>{children}</AuthContext>;
+  return (
+    <AuthContext value={value}>
+      {restoredFromCache ? (
+        <p className="page" role="status">
+          Vérification de la session…
+        </p>
+      ) : (
+        children
+      )}
+    </AuthContext>
+  );
 }

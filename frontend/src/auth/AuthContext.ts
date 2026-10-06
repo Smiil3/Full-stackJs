@@ -19,6 +19,13 @@ export type AuthContextValue = {
   sessionEndRedirect: string | null;
   setSessionEndRedirect: (path: string | null) => void;
   notice: AuthNotice | null;
+  /**
+   * Revérifie la session auprès du serveur (retour depuis le cache avant/arrière, page de QR redevenue
+   * visible). Compte changé ou session terminée ⇒ purge ; réseau absent ⇒ affichage conservé.
+   */
+  revalidate: () => Promise<void>;
+  /** Vrai pendant une revérification : les contenus sensibles (QR) sont masqués. */
+  revalidating: boolean;
 };
 
 export const AuthContext = createContext<AuthContextValue | null>(null);
