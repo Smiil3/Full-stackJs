@@ -74,7 +74,8 @@ export default defineConfig(({ mode, command }) => {
     strictPort: true,
     proxy: mode === 'mock' ? undefined : { '/api': { target: 'http://localhost:4000', changeOrigin: false } },
   },
-  preview: { port: 4173, strictPort: true, headers: securityHeaders(false) },
+  // Aperçu du build (tests PWA) : mêmes en-têtes stricts que la production, API servie sur la même origine.
+  preview: { port: 4173, strictPort: true, headers: securityHeaders(false), proxy: { '/api': { target: 'http://localhost:4000', changeOrigin: false } } },
   build: { sourcemap: false, target: 'es2022' },
   test: {
     environment: 'jsdom',

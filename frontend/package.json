@@ -16,7 +16,8 @@
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc -b --noEmit",
     "e2e": "playwright test",
-    "e2e:mock": "playwright test -c playwright.mock.config.ts"
+    "e2e:mock": "playwright test -c playwright.mock.config.ts",
+    "e2e:pwa": "playwright test -c playwright.pwa.config.ts"
   },
   "dependencies": {
     "@noble/ed25519": "3.2.0",
