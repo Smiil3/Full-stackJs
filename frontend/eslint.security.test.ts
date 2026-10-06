@@ -1,4 +1,6 @@
 // @vitest-environment node
+import { readdirSync, readFileSync } from 'node:fs';
+import { join, relative } from 'node:path';
 import { ESLint, type Linter } from 'eslint';
 import tseslint from 'typescript-eslint';
 import { describe, expect, it } from 'vitest';
@@ -68,5 +70,18 @@ describe('règles ESLint de sécurité (revue F1.1 — B5)', () => {
     expect(await ruleIds(code, 'src/scanner/engine.ts')).toContain('no-restricted-imports');
     expect(await ruleIds(code, 'src/pages/Page.tsx')).toContain('no-restricted-imports');
     expect(await ruleIds('import { openDB } from "idb/with-async-ittr";\nexport const o = openDB;\n', 'src/api/hooks/x.ts')).toContain('no-restricted-imports');
+  });
+
+  it('D1 : localStorage n’est utilisé (hors commentaires) dans AUCUN fichier applicatif, sauf le module de préférence de thème', () => {
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) walk(path);
+        else if (/\.(ts|tsx)$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) && /localStorage/.test(readFileSync(path, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, ''))) offenders.push(relative(import.meta.dirname, path));
+      }
+    };
+    walk(join(import.meta.dirname, 'src'));
+    expect(offenders).toEqual(['src/lib/themePreference.ts']);
   });
 });
