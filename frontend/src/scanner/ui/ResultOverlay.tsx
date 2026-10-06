@@ -15,17 +15,19 @@ export function ResultOverlay(props: { outcome: ScanOutcome; timezone: string; o
   const decision = props.outcome.kind === 'UNKNOWN_AUTHENTIC';
   const titleRef = useRef<HTMLParagraphElement>(null);
   const armedRef = useRef(false);
-  const [armed, setArmed] = useState(false);
+  // Résultat pour lequel le délai de garde est écoulé (un nouveau résultat repart désarmé).
+  const [armedFor, setArmedFor] = useState<ScanOutcome | null>(null);
+  const armed = armedFor === props.outcome;
   const pointerOnAdmit = useRef(false);
 
   // Chaque nouveau résultat : focus sur le TITRE (jamais sur « Laisser entrer »), délai de garde réarmé.
   useEffect(() => {
+    const outcome = props.outcome;
     armedRef.current = false;
-    setArmed(false);
     titleRef.current?.focus();
     const t = setTimeout(() => {
       armedRef.current = true;
-      setArmed(true);
+      setArmedFor(outcome);
     }, KEY_GUARD_MS);
     return () => {
       clearTimeout(t);

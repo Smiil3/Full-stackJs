@@ -205,7 +205,7 @@ describe('cycle de session (revue F1.1 — H2, M1, M2, M3, M5)', () => {
 
   it('F6-H2 : changement de compte pendant une requête ⇒ réponse jetée (SESSION_CHANGED)', async () => {
     await login(BUYER, DEMO_PASSWORD);
-    let reached = () => undefined as void;
+    let reached: () => void = () => undefined;
     const atServer = new Promise<void>((r) => (reached = r));
     server.use(
       http.get('*/api/v1/me/tickets', async () => {
@@ -223,7 +223,7 @@ describe('cycle de session (revue F1.1 — H2, M1, M2, M3, M5)', () => {
   it('F6-H2 : 401 reçu après un changement de compte ⇒ PAS de rejeu sous le jeton du nouveau compte', async () => {
     await login(BUYER, DEMO_PASSWORD);
     const auths: (string | null)[] = [];
-    let reached = () => undefined as void;
+    let reached: () => void = () => undefined;
     const atServer = new Promise<void>((r) => (reached = r));
     server.use(
       http.post('*/api/v1/orders', async ({ request }) => {
