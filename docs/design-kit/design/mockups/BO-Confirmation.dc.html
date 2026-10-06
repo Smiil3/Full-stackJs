@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Confirmer l'annulation de l'événement</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&amp;family=Atkinson+Hyperlegible+Next:wght@400;500;700&amp;family=Atkinson+Hyperlegible+Mono:wght@400;600&amp;display=swap">
+<style>
+body{margin:0;background:#3A3650}
+*{box-sizing:border-box}
+button,input,textarea{font:inherit}
+:focus-visible{outline:3px solid #2B2560;outline-offset:2px}
+a{color:#2B2560}a:hover{color:#4A3D86}
+button:disabled{cursor:not-allowed}
+</style>
+</helmet>
+<div style="width: 640px; height: 820px; background: #3A3650; font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif; color: #1C1A2B; display: flex; align-items: center; justify-content: center; padding: 24px">
+  <div role="dialog" aria-modal="true" aria-labelledby="dlg-t" style="width: 560px; background: #FFFFFF; border-radius: 20px; padding: 28px; display: flex; flex-direction: column; gap: 18px">
+    <div style="display: flex; gap: 14px; align-items: flex-start">
+      <div aria-hidden="true" style="flex: 0 0 48px; height: 48px; border-radius: 14px; background: #F3E6EA; color: #7A1F3D; display: flex; align-items: center; justify-content: center"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M3 10h18M8 3v4M16 3v4M9.5 13.5l5 5M14.5 13.5l-5 5"></path></svg></div>
+      <div style="display: flex; flex-direction: column; gap: 4px">
+        <h2 id="dlg-t" style="margin: 0; font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-weight: 700; font-size: 26px; line-height: 1.1">Annuler « Quais Électriques » ?</h2>
+        <p style="margin: 0; font-size: 15px; color: #4A4660">Prenez le temps de lire : voici exactement ce qui va se passer.</p>
+      </div>
+    </div>
+
+    <ul style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; font-size: 15px; line-height: 1.45">
+      <li style="display: flex; gap: 10px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2B2560" stroke-width="2.2" stroke-linecap="round" aria-hidden="true" style="flex: 0 0 18px; margin-top: 2px"><path d="M4 6h16v12H4zM4 7l8 6 8-6"></path></svg><span>Les <strong>214 acheteurs</strong> reçoivent un e-mail avec votre message.</span></li>
+      <li style="display: flex; gap: 10px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2B2560" stroke-width="2.2" stroke-linecap="round" aria-hidden="true" style="flex: 0 0 18px; margin-top: 2px"><path d="M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5"></path></svg><span><strong>4 048,00 €</strong> sont à rembourser. Nous préparons la liste pour vous, carte par carte et virement par virement.</span></li>
+      <li style="display: flex; gap: 10px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2B2560" stroke-width="2.2" stroke-linecap="round" aria-hidden="true" style="flex: 0 0 18px; margin-top: 2px"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg><span>Les <strong>24 réservations</strong> en attente de virement sont libérées.</span></li>
+      <li style="display: flex; gap: 10px"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7A1F3D" stroke-width="2.2" stroke-linecap="round" aria-hidden="true" style="flex: 0 0 18px; margin-top: 2px"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5M12 16v.1"></path></svg><span>Une fois confirmée, l'annulation ne peut pas être défaite.</span></li>
+    </ul>
+
+    <div style="background: #F7F4EE; border-radius: 12px; padding: 12px 14px; font-size: 15px">Vous voulez seulement changer la date ? <a href="#reporter" style="font-weight: 700">Reporter l'événement</a> : les billets restent valables.</div>
+
+    <div style="display: flex; flex-direction: column; gap: 6px">
+      <label for="msg" style="font-size: 14px; font-weight: 700">Message aux participants</label>
+      <textarea id="msg" rows="3" style="border-radius: 12px; border: 1.5px solid #CFC8BA; padding: 12px; font-size: 15px; line-height: 1.45; resize: vertical; color: #1C1A2B">Bonjour, nous sommes désolés : la soirée du 12 mars est annulée. Vous allez être remboursé·e intégralement.</textarea>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 6px">
+      <label for="conf" style="font-size: 14px; font-weight: 700">Pour confirmer, écrivez ANNULER</label>
+      <input id="conf" type="text" autocomplete="off" value="{{ typed }}" onChange="{{ onType }}" style="height: 48px; border-radius: 12px; border: 1.5px solid #CFC8BA; padding: 0 14px; font-family: 'Atkinson Hyperlegible Mono', monospace; font-size: 16px; letter-spacing: 0.06em; color: #1C1A2B">
+    </div>
+
+    <div style="display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap">
+      <a href="BO-Tableau-de-bord.dc.html" style="height: 48px; padding: 0 20px; border-radius: 10px; background: #2B2560; color: #FFFFFF; text-decoration: none; display: inline-flex; align-items: center; font-weight: 700">Garder l'événement</a>
+      <button type="button" disabled="{{ locked }}" style="height: 48px; padding: 0 20px; border-radius: 10px; border: 0; background: {{ dangerBg }}; color: {{ dangerFg }}; font-weight: 700">Annuler définitivement</button>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":640,"height":820}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { typed: '' }; }
+  renderVals() {
+    const ok = this.state.typed.trim().toUpperCase() === 'ANNULER';
+    return {
+      typed: this.state.typed,
+      onType: (e) => this.setState({ typed: e.target.value }),
+      locked: !ok,
+      dangerBg: ok ? '#7A1F3D' : '#ECE8E0',
+      dangerFg: ok ? '#FFFFFF' : '#6E6A7E'
+    };
+  }
+}
+</script>
+</body>
+</html>

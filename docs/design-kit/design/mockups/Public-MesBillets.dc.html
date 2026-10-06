@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Mes billets</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&amp;family=Atkinson+Hyperlegible+Next:wght@400;500;700&amp;family=Atkinson+Hyperlegible+Mono:wght@400;600&amp;display=swap">
+<style>
+body{margin:0;background:#110F1F}
+*{box-sizing:border-box}
+button{font:inherit}
+:focus-visible{outline:3px solid #F3C76B;outline-offset:2px}
+a{color:#F3C76B}a:hover{color:#FFE2A3}
+</style>
+</helmet>
+<div style="width: 390px; min-height: 1560px; background: #110F1F; color: #F4EFE6; font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif; display: flex; flex-direction: column">
+
+  <header style="height: 60px; padding: 0 8px; display: flex; align-items: center; justify-content: space-between">
+    <a href="Public-Catalogue.dc.html" style="height: 44px; padding: 0 12px 0 6px; display: flex; align-items: center; gap: 6px; color: #F4EFE6; text-decoration: none; font-weight: 700; font-size: 15px"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"></path></svg>Événements</a>
+    <span style="display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; margin-right: 8px; border-radius: 999px; background: #1B1830; border: 1px solid #36305A; font-size: 13px; font-weight: 700"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#F3C76B" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"></path></svg>Disponibles hors-ligne</span>
+  </header>
+
+  <div style="padding: 4px 16px 0; display: flex; flex-direction: column; gap: 16px">
+    <h1 style="margin: 0 4px; font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-weight: 800; font-size: 36px; letter-spacing: -0.02em">Mes billets</h1>
+    <div role="tablist" aria-label="Période" style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; padding: 4px; background: #1B1830; border-radius: 999px">
+      <sc-for list="{{ tabs }}" as="tab" hint-placeholder-count="2">
+        <sc-if value="{{ tab.on }}" hint-placeholder-val="{{ true }}">
+          <button type="button" role="tab" aria-selected="true" onClick="{{ tab.pick }}" style="height: 44px; border-radius: 999px; border: 0; background: #F4EFE6; color: #110F1F; font-weight: 700; font-size: 15px; cursor: pointer">{{ tab.label }}</button>
+        </sc-if>
+        <sc-if value="{{ tab.off }}" hint-placeholder-val="{{ false }}">
+          <button type="button" role="tab" aria-selected="false" onClick="{{ tab.pick }}" style="height: 44px; border-radius: 999px; border: 0; background: transparent; color: #F4EFE6; font-weight: 700; font-size: 15px; cursor: pointer">{{ tab.label }}</button>
+        </sc-if>
+      </sc-for>
+    </div>
+  </div>
+
+  <sc-if value="{{ showUpcoming }}" hint-placeholder-val="{{ true }}">
+  <div style="padding: 20px 16px 40px; display: flex; flex-direction: column; gap: 14px">
+
+    <article style="background: #1B1830; border: 1px solid #2A2545; border-radius: 20px; overflow: hidden">
+      <div style="padding: 16px; display: flex; gap: 14px">
+        <div aria-hidden="true" style="flex: 0 0 72px; height: 92px; border-radius: 12px; background: #2B2560; display: flex; flex-direction: column; align-items: center; justify-content: center">
+          <div style="font-size: 10px; letter-spacing: 0.16em; font-weight: 700; color: #F3C76B">MARS</div>
+          <div style="font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-weight: 800; font-size: 32px; line-height: 1">12</div>
+          <div style="width: 44px; height: 1.5px; background: #F4EFE6; opacity: 0.7; margin: 5px 0 3px"></div>
+          <div style="font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-weight: 800; font-size: 32px; line-height: 1; transform: scaleY(-1); opacity: 0.2; height: 18px; overflow: hidden">12</div>
+        </div>
+        <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px">
+          <h2 style="margin: 0; font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-weight: 700; font-size: 20px">Quais Électriques</h2>
+          <div style="font-size: 14px">ven. 12 mars · 22:00 heure de Paris</div>
+          <div style="font-size: 14px; color: #B9B2CF">Péniche, quai de Bacalan</div>
+          <div style="margin-top: 4px; font-size: 14px; font-weight: 700">2 billets · Fosse</div>
+        </div>
+      </div>
+      <div style="padding: 0 16px 16px; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px">
+        <a href="Public-Billet-QR.dc.html" style="height: 52px; border-radius: 999px; background: #F3C76B; color: #1A1407; text-decoration: none; display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 700; font-size: 16px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" aria-hidden="true"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect><path d="M14 14h3v3h-3zM18 18h3v3h-3z"></path></svg>Afficher le QR code</a>
+        <button type="button" aria-expanded="{{ cancelOpen }}" onClick="{{ toggleCancel }}" style="height: 52px; padding: 0 18px; border-radius: 999px; border: 1.5px solid #4A4373; background: transparent; color: #F4EFE6; font-weight: 700; font-size: 15px; cursor: pointer">Annuler</button>
+      </div>
+      <sc-if value="{{ cancelOpen }}" hint-placeholder-val="{{ true }}">
+        <div style="background: #F7F4EE; color: #1C1A2B; padding: 18px 16px; display: flex; flex-direction: column; gap: 12px">
+          <div style="font-weight: 700; font-size: 17px">Annuler ces 2 billets ?</div>
+          <dl style="margin: 0; display: flex; flex-direction: column; gap: 6px; font-size: 15px">
+            <div style="display: flex; justify-content: space-between"><dt>Remboursé sur votre carte</dt><dd style="margin: 0; font-weight: 700; font-size: 18px">30,00 €</dd></div>
+            <div style="display: flex; justify-content: space-between; color: #5A5670"><dt>Frais de service, non remboursés</dt><dd style="margin: 0">1,20 €</dd></div>
+          </dl>
+          <p style="margin: 0; font-size: 14px; line-height: 1.45; color: #4A4660">Possible jusqu'au 5 mars à 23:59. L'argent arrive sous quelques jours, selon votre banque. Vos places seront proposées à la liste d'attente.</p>
+          <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px">
+            <button type="button" onClick="{{ toggleCancel }}" style="height: 52px; border-radius: 999px; border: 0; background: #2B2560; color: #FFFFFF; font-weight: 700; font-size: 15px; cursor: pointer">Garder mes billets</button>
+            <button type="button" style="height: 52px; border-radius: 999px; border: 1.5px solid #1C1A2B; background: transparent; color: #1C1A2B; font-weight: 700; font-size: 15px; cursor: pointer">Oui, annuler</button>
+          </div>
+        </div>
+      </sc-if>
+    </article>
+
+    <article style="background: #1B1830; border: 1px solid #2A2545; border-radius: 20px; padding: 16px; display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; gap: 14px">
+        <div aria-hidden="true" style="flex: 0 0 72px; height: 92px; border-radius: 12px; background: #3A1F4D; display: flex; flex-direction: column; align-items: center; justify-content: center">
+          <div style="font-size: 10px; letter-spacing: 0.16em; font-weight: 700; color: #F3C76B">MARS</div>
+          <div style="font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-weight: 800; font-size: 32px; line-height: 1">13</div>
+          <div style="width: 44px; height: 1.5px; background: #F4EFE6; opacity: 0.7; margin: 5px 0 3px"></div>
+          <div style="font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-weight: 800; font-size: 32px; line-height: 1; transform: scaleY(-1); opacity: 0.2; height: 18px; overflow: hidden">13</div>
+        </div>
+        <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px">
+          <span style="align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 10px; border-radius: 999px; border: 1px solid #F3C76B; color: #F3C76B; font-size: 12px; font-weight: 700"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>En attente de virement</span>
+          <h2 style="margin: 0; font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-weight: 700; font-size: 20px">Jazz au bord de l'eau</h2>
+          <div style="font-size: 14px">sam. 13 mars · 20:00 heure de Paris</div>
+          <div style="font-size: 14px; color: #B9B2CF">1 billet · Balcon · 22,60 €</div>
+        </div>
+      </div>
+      <div style="font-size: 14px; line-height: 1.45; color: #DCD6EC">Place gardée encore <strong style="color: #F4EFE6">41 h</strong>. Vos billets apparaîtront ici dès la validation du virement.</div>
+      <a href="Public-Virement.dc.html" style="height: 48px; border-radius: 999px; border: 1.5px solid #4A4373; color: #F4EFE6; text-decoration: none; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px">Revoir les coordonnées bancaires</a>
+    </article>
+
+    <article style="background: #1B1830; border: 1px solid #2A2545; border-radius: 20px; padding: 16px; display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; gap: 14px; align-items: center">
+        <div aria-hidden="true" style="flex: 0 0 72px; height: 72px; border-radius: 999px; border: 2px solid #4A4373; display: flex; flex-direction: column; align-items: center; justify-content: center">
+          <div style="font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-weight: 800; font-size: 30px; line-height: 1">4<sup style="font-size: 14px">e</sup></div>
+        </div>
+        <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px">
+          <span style="font-size: 13px; font-weight: 700; color: #B9B2CF; letter-spacing: 0.04em">LISTE D'ATTENTE</span>
+          <h2 style="margin: 0; font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-weight: 700; font-size: 20px">Nuit Bacalan Sound</h2>
+          <div style="font-size: 14px">Vous êtes 4<sup>e</sup> pour 2 places en Fosse</div>
+        </div>
+      </div>
+      <div style="font-size: 14px; line-height: 1.45; color: #DCD6EC">Si des places se libèrent, nous vous prévenons par e-mail et SMS. Vous aurez alors 30 minutes pour accepter.</div>
+      <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px">
+        <a href="Public-ListeAttente.dc.html" style="height: 48px; border-radius: 999px; border: 1.5px solid #4A4373; color: #F4EFE6; text-decoration: none; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px">Voir le détail</a>
+        <button type="button" style="height: 48px; border-radius: 999px; border: 0; background: transparent; color: #F3C76B; font-weight: 700; font-size: 15px; text-decoration: underline; cursor: pointer">Quitter la liste</button>
+      </div>
+    </article>
+  </div>
+  </sc-if>
+
+  <sc-if value="{{ showPast }}" hint-placeholder-val="{{ false }}">
+    <div style="margin: 24px 16px; border: 1.5px dashed #4A4373; border-radius: 20px; padding: 32px 20px; display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center">
+      <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#F3C76B" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h18v3a2 2 0 0 0 0 4v3H3v-3a2 2 0 0 0 0-4z"></path></svg>
+      <div style="font-weight: 700; font-size: 18px">Pas encore de souvenirs ici</div>
+      <div style="font-size: 15px; line-height: 1.45; color: #B9B2CF">Après chaque soirée, vos billets passent dans cet onglet.</div>
+    </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":1560}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { tab: 'up', cancel: true }; }
+  renderVals() {
+    const t = this.state.tab;
+    const tabs = [['up', 'À venir (3)'], ['past', 'Passés']].map(([id, label]) => ({ label, on: t === id, off: t !== id, pick: () => this.setState({ tab: id }) }));
+    return {
+      tabs,
+      showUpcoming: t === 'up', showPast: t === 'past',
+      cancelOpen: this.state.cancel,
+      toggleCancel: () => this.setState({ cancel: !this.state.cancel })
+    };
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,159 @@
+/* ==========================================================================
+   Tokens — direction « Miroir d'eau »
+   Remplace les blocs :root et @media (prefers-color-scheme: dark) de global.css.
+
+   Thèmes :
+   - « Nuit » (sombre) = défaut du site public.
+   - « Jour » (clair)  = paiement, back-office, et choix du visiteur.
+   Le thème se pose avec l'attribut data-theme="dark" | "light" sur <html>
+   OU sur n'importe quel conteneur (ex. <main data-theme="light">) : les
+   variables se redéfinissent en cascade. Voir HANDOFF.md § 3.
+
+   Tous les couples texte/fond ont été vérifiés (design/contrast-report.md).
+   ========================================================================== */
+
+:root {
+  /* --- Typographie ------------------------------------------------------- */
+  --font: "Atkinson Hyperlegible Next", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-display: "Bricolage Grotesque", "Atkinson Hyperlegible Next", system-ui, sans-serif;
+  --font-mono: "Atkinson Hyperlegible Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --text-xs: 0.8125rem;   /* 13 px — mentions, légendes */
+  --text-sm: 0.9375rem;   /* 15 px — texte secondaire */
+  --text-md: 1.0625rem;   /* 17 px — texte courant (mobile) */
+  --text-lg: 1.25rem;     /* 20 px — titres de carte */
+  --text-xl: 1.5rem;      /* 24 px — titres de section */
+  --text-2xl: 2.125rem;   /* 34 px — titre de page */
+  --text-3xl: 2.5rem;     /* 40 px — accroche d'accueil */
+  --leading-tight: 1.1;
+  --leading: 1.5;
+  --tracking-display: -0.02em;
+
+  /* --- Espacements (échelle de 4 px) ------------------------------------ */
+  --space-1: 0.25rem;  /*  4 */
+  --space-2: 0.5rem;   /*  8 */
+  --space-3: 0.75rem;  /* 12 */
+  --space-4: 1rem;     /* 16 */
+  --space-5: 1.5rem;   /* 24 */
+  --space-6: 2rem;     /* 32 */
+  --space-7: 3rem;     /* 48 — nouveau */
+  --gutter: 16px;      /* marge latérale mobile, inchangée */
+  --content-max: 72rem;
+  --narrow-max: 34rem;
+
+  /* --- Formes ------------------------------------------------------------ */
+  --radius: 14px;
+  --radius-sm: 10px;
+  --radius-lg: 20px;
+  --radius-pill: 999px;
+
+  /* --- Cibles tactiles ---------------------------------------------------- */
+  --tap: 44px;     /* minimum absolu */
+  --tap-lg: 52px;  /* boutons principaux, actions au pouce */
+
+  /* --- Mouvement ---------------------------------------------------------- */
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --duration: 160ms;
+
+  /* --- Scanner : thème fixe, indépendant de Nuit/Jour --------------------
+     Sens FIXE : ok = entrer, ko = refuser, warn = décision humaine.
+     Ne jamais réutiliser ces couleurs ailleurs (ni décoration, ni badges). */
+  --scan-bg: #050508;          /* barres haut/bas */
+  --scan-view: #121218;        /* zone caméra */
+  --scan-sheet: #1B1830;       /* panneau de résultat */
+  --scan-text: #FFFFFF;
+  --scan-muted: #CFC9E3;       /* 10,7:1 sur --scan-sheet */
+  --scan-ink: #0B0A14;         /* icône dans la pastille colorée */
+  --scan-ok: #3DD68C;          /* 9,2:1 sur feuille · 10,5:1 sous encre */
+  --scan-ko: #FF6B61;          /* 6,2:1 sur feuille · 7,1:1 sous encre */
+  --scan-warn: #FFA940;        /* 9,0:1 sur feuille · 10,3:1 sous encre */
+  --scan-pending: #FFFFFF;     /* vérification en cours : neutre */
+  --scan-banner: #1C1A2B;      /* bandeau hors-ligne permanent */
+}
+
+/* --- Nuit (défaut) -------------------------------------------------------- */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --color-bg: #110F1F;
+  --color-surface: #1B1830;
+  --color-surface-2: #252140;
+  --color-border: #36305A;          /* filets, séparateurs (décoratif) */
+  --color-border-strong: #7A72A8;   /* champs, boutons secondaires (3,9:1) */
+  --color-text: #F4EFE6;            /* 16,5:1 */
+  --color-muted: #B9B2CF;           /* 9,3:1 */
+
+  /* Action principale = l'or des lampadaires, texte encre foncée */
+  --color-primary: #F3C76B;
+  --color-primary-strong: #FFDB94;  /* survol / appui */
+  --color-primary-soft: #352C1E;    /* fond teinté (élément choisi) */
+  --color-on-primary: #1A1407;      /* 11,5:1 */
+
+  --color-link: #F3C76B;
+  --color-focus: #F3C76B;
+
+  /* Or « Dernières places » : même rendu dans les deux thèmes */
+  --color-accent: #F3C76B;          /* texte doré sur fond Nuit */
+  --color-accent-fill: #F3C76B;
+  --color-on-accent: #1A1407;
+
+  /* Messages (pas le scanner) */
+  --color-danger: #F28BA8;          /* 7,4:1 sur surface */
+  --color-danger-soft: #3A1A2A;
+  --color-on-danger: #2A0A16;
+  --color-success: #8FD9B0;
+  --color-success-soft: #173328;
+  --color-warning: #F3C76B;
+  --color-warning-soft: #352C1E;
+  --color-info: #B9B2CF;
+  --color-info-soft: #252140;
+
+  --color-overlay: rgba(5, 5, 8, 0.6);
+  --shadow-1: 0 1px 0 rgba(255, 255, 255, 0.03), 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-2: 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+
+/* --- Jour ------------------------------------------------------------------ */
+[data-theme="light"] {
+  color-scheme: light;
+
+  --color-bg: #F7F4EE;
+  --color-surface: #FFFFFF;
+  --color-surface-2: #F1EDE4;
+  --color-border: #E3DED3;
+  --color-border-strong: #8C8697;   /* 3,5:1 sur blanc */
+  --color-text: #1C1A2B;            /* 17:1 */
+  --color-muted: #4A4660;           /* 8,2:1 */
+
+  /* Action principale = indigo de la nuit, texte blanc */
+  --color-primary: #2B2560;
+  --color-primary-strong: #1E1A47;
+  --color-primary-soft: #E9E5F8;
+  --color-on-primary: #FFFFFF;      /* 13,7:1 */
+
+  --color-link: #2B2560;
+  --color-focus: #2B2560;
+
+  --color-accent: #8A5A00;          /* or lisible sur fond clair (5,4:1) */
+  --color-accent-fill: #F3C76B;
+  --color-on-accent: #1A1407;
+
+  --color-danger: #8E2442;          /* bordeaux, 8,5:1 */
+  --color-danger-soft: #FBEFF2;
+  --color-on-danger: #FFFFFF;
+  --color-success: #1E6B48;
+  --color-success-soft: #EAF5EF;
+  --color-warning: #7A4E00;
+  --color-warning-soft: #FBF4E3;
+  --color-info: #2B2560;
+  --color-info-soft: #EFECF8;
+
+  --color-overlay: rgba(28, 26, 43, 0.45);
+  --shadow-1: 0 1px 2px rgba(28, 26, 43, 0.06), 0 8px 24px rgba(28, 26, 43, 0.06);
+  --shadow-2: 0 24px 64px rgba(28, 26, 43, 0.22);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --duration: 0ms; }
+}
