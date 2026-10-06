@@ -75,12 +75,16 @@ _Section rédigée avec le jalon F5._
 
 ## Check-list de mise en production
 
-- [ ] `NODE_ENV=production` (active HSTS, cookie `Secure`, refuse le mock PSP, les placeholders et un `RATE_LIMIT_MULTIPLIER` > 1).
+- [ ] `NODE_ENV=production` : HSTS actif ; démarrage refusé si `REFRESH_COOKIE_SECURE` ≠ true, si `RATE_LIMIT_MULTIPLIER` > 1, si `AUTH_RESPONSE_FLOOR_MS` < 300 ou si la clé privée de signature est lisible par le groupe ou les autres ; le PSP simulé refuse de démarrer. (Les valeurs `CHANGE_ME` et les secrets réutilisés sont refusés quel que soit l'environnement.)
 - [ ] Secrets générés aléatoirement (commandes dans `backend/.env.example`), tous distincts, injectés hors dépôt.
-- [ ] Clé privée Ed25519 en 0400, propriétaire = utilisateur du service.
-- [ ] `TRUST_PROXY_HOPS` réglé selon l'architecture réelle (vérifier `req.ip` dans les logs au démarrage).
+- [ ] Clé privée Ed25519 en 0400 ou 0600, propriétaire = utilisateur du service.
+- [ ] Clé de signature des billets générée **une seule fois** (`npm run keys:generate` refuse d'écraser) et sauvegardée : la changer invalide tous les QR déjà émis.
+- [ ] `TRUST_PROXY_HOPS` = nombre exact de proxys devant l'API (0–3, valeur journalisée au démarrage). Le proxy de bordure doit **écraser** `X-Forwarded-For`. Vérification : deux clients d'IP différentes ne partagent pas le même plafond de rate limiting.
 - [ ] Front servi derrière le reverse proxy avec les en-têtes de `frontend/deploy/nginx.conf.example` (CSP stricte, HSTS, `frame-ancestors 'none'`, `Permissions-Policy`).
 - [ ] TLS partout ; API et front sur la même origine (ou CORS limité à l'origine exacte du front).
+- [ ] `npm run db:migrate` (prisma migrate deploy) à chaque déploiement, **avant** de démarrer la nouvelle version de l'API et du worker : les migrations contiennent des contraintes CHECK et des déclencheurs indispensables (survente, plafond des remboursements, annulation des billets).
+- [ ] `DATA_ENCRYPTION_KEY` (et les anciennes clés de `DATA_ENCRYPTION_PREVIOUS_KEYS`) sauvegardées hors base : leur perte rend illisibles les IBAN des collectifs et des commandes en attente de virement, ainsi que les mails en file. Rotation : nouvelle clé courante (`DATA_ENCRYPTION_KEY_ID`), l'ancienne passe dans `DATA_ENCRYPTION_PREVIOUS_KEYS`. Même principe pour le JWT (`JWT_KEY_ID`, `JWT_PREVIOUS_SECRETS`).
+- [ ] SMTP authentifié et chiffré (`SMTP_SECURE=true` ou STARTTLS côté relais) ; `MAIL_FROM` sur un domaine aligné SPF/DKIM/DMARC (les mails de reset et de virement sont des cibles d'hameçonnage).
 - [ ] Worker démarré et supervisé ; alerte sur les remboursements `MANUAL_REQUIRED` et les commandes en échec d'expiration.
 - [ ] Sauvegardes chiffrées de PostgreSQL, accès base restreint.
 - [ ] `npm audit --omit=dev` sans vulnérabilité haute ou critique sur les deux applications.
