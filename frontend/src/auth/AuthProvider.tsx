@@ -34,8 +34,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(e.session.user);
         setStatus('authenticated');
       } else {
+        const hadUser = userIdRef.current !== null;
         userIdRef.current = null;
-        wipe();
+        // Purge du cache seulement si un compte était chargé : au démarrage anonyme (refresh refusé),
+        // le cache ne contient que des données publiques en cours de chargement qu'il ne faut pas annuler.
+        if (hadUser) wipe();
+        else void runSessionCleanups();
         setUser(null);
         setStatus('anonymous');
       }

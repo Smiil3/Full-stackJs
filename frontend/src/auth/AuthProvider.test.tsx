@@ -45,6 +45,14 @@ describe('AuthProvider', () => {
     expect(await screen.findByText('anonymous:-')).toBeInTheDocument();
   });
 
+  it('démarrage anonyme : les requêtes publiques en cours ne sont pas annulées', async () => {
+    const { qc } = setup();
+    const pending = qc.fetchQuery({ queryKey: ['public'], queryFn: () => new Promise((r) => setTimeout(() => r('ok'), 30)) });
+    await screen.findByText('anonymous:-');
+    await expect(pending).resolves.toBe('ok');
+    expect(qc.getQueryData(['public'])).toBe('ok');
+  });
+
   it('restaure la session au chargement via le cookie de refresh', async () => {
     mock.db.refreshCookie = { token: 'x', userId: mock.db.users[0]?.id ?? '' };
     setup();
