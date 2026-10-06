@@ -99,6 +99,19 @@ export type MockWaitlist = {
   offerExpiresAt: string | null;
   createdAt: string;
 };
+export type MockRefund = {
+  id: string;
+  orgId: string;
+  orderId: string;
+  eventId: string;
+  amountCents: number;
+  reason: 'SELF_CANCELLATION' | 'EVENT_CANCELLED' | 'LATE_PAYMENT' | 'DUPLICATE_PAYMENT' | 'UNEXPECTED_PAYMENT';
+  method: PaymentMethod;
+  status: 'PENDING' | 'SUCCEEDED' | 'MANUAL_REQUIRED' | 'FAILED';
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
 export type MockCheckIn = { scanId: string; publicId: string | null; result: string; usedAt: string | null };
 
 export type MockDb = {
@@ -113,6 +126,7 @@ export type MockDb = {
   waitlist: MockWaitlist[];
   audit: (AuditLogEntry & { orgId: string })[];
   checkins: MockCheckIn[];
+  refunds: MockRefund[];
   /** access token → session */
   accessTokens: Map<string, { userId: string; expiresAt: number }>;
   /** Simule le cookie HttpOnly `nuits_rt` (le navigateur ne le voit pas, le front non plus). */
@@ -336,6 +350,7 @@ export function createSeed(now: number = Date.now()): MockDb {
     waitlist: [],
     audit,
     checkins: [],
+    refunds: [],
     accessTokens: new Map(),
     refreshCookie: null,
     usedRefreshTokens: new Set(),

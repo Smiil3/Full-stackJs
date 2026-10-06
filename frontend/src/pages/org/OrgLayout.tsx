@@ -28,6 +28,9 @@ export function OrgLayout() {
         <NavLink to={`${base}/settings`} className={cls}>
           Réglages
         </NavLink>
+        <NavLink to={`${base}/refunds`} className={cls}>
+          Remboursements
+        </NavLink>
         <NavLink to={`${base}/members`} className={cls}>
           Membres
         </NavLink>

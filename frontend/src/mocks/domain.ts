@@ -91,11 +91,27 @@ export async function markPaid(o: MockOrder, now = Date.now()): Promise<void> {
 }
 
 /** Annulation acheteur : non payée ⇒ CANCELLED ; payée ⇒ REFUNDED + billets annulés. */
-export function cancelOrder(o: MockOrder): void {
+export function cancelOrder(o: MockOrder, reason: 'SELF_CANCELLATION' | 'EVENT_CANCELLED' = 'SELF_CANCELLATION'): void {
   if (o.status === 'PAID') {
     const feePart = o.serviceFeeRefundable ? o.serviceFeeCents : 0;
     o.refundAmountCents = Math.floor((o.subtotalCents * o.refundPercent) / 100) + feePart;
     o.status = 'REFUNDED';
+    const now = new Date().toISOString();
+    const orgId = mock.db.events.find((e) => e.id === o.eventId)?.orgId ?? '';
+    // Contrat v1.10 : un remboursement de virement est toujours à effectuer à la main.
+    mock.db.refunds.push({
+      id: crypto.randomUUID(),
+      orgId,
+      orderId: o.id,
+      eventId: o.eventId,
+      amountCents: o.refundAmountCents,
+      reason,
+      method: o.paymentMethod,
+      status: o.paymentMethod === 'TRANSFER' ? 'MANUAL_REQUIRED' : 'SUCCEEDED',
+      note: null,
+      createdAt: now,
+      updatedAt: now,
+    });
     for (const t of mock.db.tickets) if (t.orderId === o.id) t.status = 'CANCELLED';
     for (const item of o.items) {
       const tt = mock.db.ticketTypes.find((t) => t.id === item.ticketTypeId);

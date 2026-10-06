@@ -357,10 +357,32 @@ export type EventStats = {
     revenueCents: number;
     refundedCents: number;
     serviceFeeCents: number;
+    /** Remboursements MANUAL_REQUIRED + FAILED à traiter par l'organisateur (v1.10). */
+    refundsToProcess: number;
   };
   ordersByStatus: Record<OrderStatus, number>;
   waitlistWaiting: number;
 };
+
+// ---------- Remboursements (v1.10) ----------
+export type RefundStatus = 'PENDING' | 'SUCCEEDED' | 'MANUAL_REQUIRED' | 'FAILED';
+export const REFUND_STATUSES: readonly RefundStatus[] = ['PENDING', 'SUCCEEDED', 'MANUAL_REQUIRED', 'FAILED'];
+export type RefundReason = 'SELF_CANCELLATION' | 'EVENT_CANCELLED' | 'LATE_PAYMENT' | 'DUPLICATE_PAYMENT' | 'UNEXPECTED_PAYMENT';
+export type RefundAdmin = {
+  id: Uuid;
+  orderId: Uuid;
+  eventId: Uuid;
+  eventTitle: string;
+  buyerEmail: string;
+  amountCents: number;
+  reason: RefundReason;
+  method: PaymentMethod;
+  status: RefundStatus;
+  note: string | null;
+  createdAt: IsoDateTime;
+  updatedAt: IsoDateTime;
+};
+export type RefundsQuery = PageQuery & { status?: RefundStatus; eventId?: Uuid };
 
 // ---------- Contrôle d'accès ----------
 /** GET /orgs/:orgId/checkin/events (SCANNER+) : sans aucun chiffre de vente (v1.7). */

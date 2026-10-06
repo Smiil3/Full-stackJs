@@ -584,3 +584,73 @@ describe('changement de collectif dans la même session (revue F3.1)', () => {
     expect(keepIfSameScope('A', 'e1')(prev, { queryKey: ['org', 'A', 'event', 'e1', 'orders'] })).toBe(prev);
   });
 });
+
+describe('remboursements (contrat v1.10)', () => {
+  async function paidTransferThenCancelled() {
+    await login('acheteur@example.test', DEMO_PASSWORD);
+    const order = await apiRequest<Order>('/orders', { method: 'POST', body: { eventId: IDS.eventConcert, paymentMethod: 'TRANSFER', items: [{ ticketTypeId: IDS.ttFosse, quantity: 1 }] }, headers: { 'Idempotency-Key': crypto.randomUUID() } });
+    await logout();
+    await login(MANAGER, DEMO_PASSWORD);
+    await apiRequest(`/orgs/${IDS.orgNuits}/orders/${order.id}/confirm-transfer`, { method: 'POST', body: { receivedAmountCents: order.totalCents } });
+    await logout();
+    await login('acheteur@example.test', DEMO_PASSWORD);
+    await apiRequest(`/orders/${order.id}/cancel`, { method: 'POST' });
+    await logout();
+    return order;
+  }
+
+  it('virement remboursé ⇒ MANUAL_REQUIRED ; alerte au tableau de bord vers la page filtrée ; marquer effectué avec note', async () => {
+    const user = userEvent.setup();
+    await paidTransferThenCancelled();
+    const { router } = await renderApp(`${EVENT}/dashboard`, { as: MANAGER });
+    const alert = await screen.findByText(/1 remboursement à effectuer manuellement/);
+    await user.click(within(alert.closest('p') as HTMLElement).getByRole('link', { name: 'Voir les remboursements' }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`${ORG}/refunds`));
+    expect(router.state.location.search).toBe(`?eventId=${IDS.eventConcert}`);
+    expect(await screen.findByText('À effectuer manuellement', { selector: '.badge' })).toBeInTheDocument();
+    expect(screen.getByText(/payé par virement/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Marquer comme effectué' }));
+    const dialog = screen.getByRole('dialog', { name: 'Confirmer le remboursement effectué ?' });
+    expect(dialog).toHaveTextContent(/18,00\s€/); // frais de service non remboursables dans ce collectif
+    expect(dialog).toHaveTextContent('acheteur@example.test');
+    const confirm = within(dialog).getByRole('button', { name: 'Marquer comme effectué' });
+    expect(confirm).toBeDisabled(); // note obligatoire
+    await user.type(within(dialog).getByLabelText(/Note/), 'Virement retour effectué le 12/11');
+    await user.click(confirm);
+    expect(await screen.findByText('Effectué', { selector: '.badge' })).toBeInTheDocument();
+    expect(screen.getByText('Note : Virement retour effectué le 12/11')).toBeInTheDocument();
+    expect(mock.db.audit[0]?.action).toBe('refund.markDone');
+  });
+
+  it('déjà traité ailleurs ⇒ INVALID_STATE expliqué ; filtre de statut transmis', async () => {
+    const user = userEvent.setup();
+    await paidTransferThenCancelled();
+    const urls: string[] = [];
+    server.events.on('request:start', ({ request }) => {
+      if (request.url.includes('/refunds?')) urls.push(request.url);
+    });
+    await renderApp(`${ORG}/refunds`, { as: OWNER });
+    await user.selectOptions(await screen.findByLabelText('Statut'), 'MANUAL_REQUIRED');
+    await waitFor(() => expect(urls.some((u) => u.includes('status=MANUAL_REQUIRED'))).toBe(true));
+    server.events.removeAllListeners();
+    const r = mock.db.refunds[0];
+    if (r) r.status = 'SUCCEEDED'; // traité par un autre gestionnaire entre-temps
+    await user.click(await screen.findByRole('button', { name: 'Marquer comme effectué' }));
+    await user.type(screen.getByLabelText(/Note/), 'fait');
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Marquer comme effectué' }));
+    expect(await screen.findByText('Ce remboursement a déjà été traité.')).toBeInTheDocument();
+  });
+
+  it('carte remboursée ⇒ SUCCEEDED, rien à faire ; aucune alerte au tableau de bord', async () => {
+    await login('acheteur@example.test', DEMO_PASSWORD);
+    const order = await apiRequest<Order>('/orders', { method: 'POST', body: { eventId: IDS.eventConcert, paymentMethod: 'CARD', items: [{ ticketTypeId: IDS.ttFosse, quantity: 1 }] }, headers: { 'Idempotency-Key': crypto.randomUUID() } });
+    const { markPaid } = await import('../../mocks/domain');
+    const stored = mock.db.orders.find((o) => o.id === order.id);
+    if (stored) await markPaid(stored);
+    await apiRequest(`/orders/${order.id}/cancel`, { method: 'POST' });
+    await logout();
+    await renderApp(`${EVENT}/dashboard`, { as: MANAGER });
+    expect((await screen.findAllByText('Vendues')).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/à effectuer manuellement/)).toBeNull();
+  });
+});

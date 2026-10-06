@@ -25,6 +25,7 @@ import { OrdersAdminPage } from './pages/org/OrdersAdminPage';
 import { OrgEventsPage } from './pages/org/OrgEventsPage';
 import { OrgHomePage } from './pages/org/OrgHomePage';
 import { OrgLayout } from './pages/org/OrgLayout';
+import { RefundsPage } from './pages/org/RefundsPage';
 import { SettingsPage } from './pages/org/SettingsPage';
 
 /** Page de paiement simulée : uniquement serveur de dev en mode mock (branche éliminée du build). */
@@ -70,6 +71,7 @@ export const routes: RouteObject[] = [
           { path: 'events/:eventId/dashboard', element: <ValidIds><DashboardPage /></ValidIds> },
           { path: 'events/:eventId/orders', element: <ValidIds><OrdersAdminPage /></ValidIds> },
           { path: 'settings', element: <SettingsPage /> },
+          { path: 'refunds', element: <RefundsPage /> },
           { path: 'members', element: <MembersPage /> },
           { path: 'audit', element: <RequireOrgRole min="OWNER"><AuditPage /></RequireOrgRole> },
         ],

@@ -42,6 +42,14 @@ export function DashboardPage() {
       {error && !stats ? <ErrorAlert error={error} /> : null}
       {stats ? (
         <>
+          {stats.totals.refundsToProcess > 0 ? (
+            <p className="alert alert--warning" role="alert">
+              <strong>
+                {stats.totals.refundsToProcess} remboursement{stats.totals.refundsToProcess > 1 ? 's' : ''} à effectuer manuellement.
+              </strong>{' '}
+              <Link to={`${apiPath`/org/${orgId}/refunds`}?eventId=${encodeURIComponent(eventId)}`}>Voir les remboursements</Link>
+            </p>
+          ) : null}
           <div className="kpis">
             <div className="kpi">
               <span className="kpi__label">Vendues</span>

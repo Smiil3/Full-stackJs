@@ -6,6 +6,7 @@ import type {
   Order,
   OrderAdmin,
   OrgSettings,
+  RefundAdmin,
   Ticket,
   TicketTypeAdmin,
   User,
@@ -20,6 +21,7 @@ import {
   remaining,
   type MockEvent,
   type MockMembership,
+  type MockRefund,
   type MockOrder,
   type MockSettings,
   type MockTicket,
@@ -257,4 +259,24 @@ export function toSettings(s: MockSettings): OrgSettings {
 export function toMember(m: MockMembership): Member {
   const u = db().users.find((x) => x.id === m.userId);
   return { userId: m.userId, email: u?.email ?? '', displayName: u?.displayName ?? '', role: m.role, createdAt: m.createdAt };
+}
+
+export function toRefund(r: MockRefund): RefundAdmin {
+  const e = db().events.find((x) => x.id === r.eventId);
+  const o = db().orders.find((x) => x.id === r.orderId);
+  const buyer = o && db().users.find((u) => u.id === o.userId);
+  return {
+    id: r.id,
+    orderId: r.orderId,
+    eventId: r.eventId,
+    eventTitle: e?.title ?? '',
+    buyerEmail: buyer?.email ?? '',
+    amountCents: r.amountCents,
+    reason: r.reason,
+    method: r.method,
+    status: r.status,
+    note: r.note,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+  };
 }

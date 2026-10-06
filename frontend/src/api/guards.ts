@@ -80,7 +80,7 @@ export function isEventStats(v: unknown): v is EventStats {
   return (
     isStr(v.eventId) &&
     isStr(v.generatedAt) &&
-    ['capacity', 'sold', 'held', 'remaining', 'checkedIn', 'revenueCents', 'refundedCents', 'serviceFeeCents'].every((k) => isInt(totals[k])) &&
+    ['capacity', 'sold', 'held', 'remaining', 'checkedIn', 'revenueCents', 'refundedCents', 'serviceFeeCents', 'refundsToProcess'].every((k) => isInt(totals[k])) &&
     ORDER_STATUSES.every((s) => isInt(statuses[s])) &&
     isInt(v.waitlistWaiting) &&
     v.ticketTypes.every(

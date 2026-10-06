@@ -304,6 +304,32 @@ describe('MSW — couverture du contrat', () => {
     expect(audit.items.some((a) => a.actorEmail === null)).toBe(true);
   });
 
+  it('v1.10 : remboursements — liste filtrée, mark-done (note obligatoire), INVALID_STATE, refundsToProcess', async () => {
+    await login('acheteur@example.test', DEMO_PASSWORD);
+    const order = await post<Order>('/orders', { eventId: IDS.eventConcert, paymentMethod: 'TRANSFER', items: [{ ticketTypeId: IDS.ttFosse, quantity: 1 }] }, { 'Idempotency-Key': crypto.randomUUID() });
+    await logout();
+    await login('manager@nuits.test', DEMO_PASSWORD);
+    await post(apiPath`/orgs/${IDS.orgNuits}/orders/${order.id}/confirm-transfer`, { receivedAmountCents: order.totalCents });
+    await logout();
+    await login('acheteur@example.test', DEMO_PASSWORD);
+    await post(apiPath`/orders/${order.id}/cancel`);
+    await logout();
+    await login('manager@nuits.test', DEMO_PASSWORD);
+    const page = await apiRequest<Page<{ id: string; status: string; method: string }>>(apiPath`/orgs/${IDS.orgNuits}/refunds`, { query: { status: 'MANUAL_REQUIRED', eventId: IDS.eventConcert } });
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0]).toMatchObject({ status: 'MANUAL_REQUIRED', method: 'TRANSFER' });
+    const stats = await apiRequest<EventStats>(apiPath`/orgs/${IDS.orgNuits}/events/${IDS.eventConcert}/stats`);
+    expect(stats.totals.refundsToProcess).toBe(1);
+    const id = page.items[0]?.id ?? '';
+    await expect(post(apiPath`/orgs/${IDS.orgNuits}/refunds/${id}/mark-done`, {})).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    const done = await post<{ status: string }>(apiPath`/orgs/${IDS.orgNuits}/refunds/${id}/mark-done`, { note: 'Virement retour le 12/11' });
+    expect(done.status).toBe('SUCCEEDED');
+    await expect(post(apiPath`/orgs/${IDS.orgNuits}/refunds/${id}/mark-done`, { note: 'x' })).rejects.toMatchObject({ code: 'INVALID_STATE' });
+    await logout();
+    await login('scanner@nuits.test', DEMO_PASSWORD);
+    await expect(apiRequest(apiPath`/orgs/${IDS.orgNuits}/refunds`)).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+
   it('admin plateforme : réservé, création de collectif', async () => {
     await login('owner@nuits.test', DEMO_PASSWORD);
     await expect(apiRequest('/admin/orgs')).rejects.toMatchObject({ code: 'NOT_FOUND' });

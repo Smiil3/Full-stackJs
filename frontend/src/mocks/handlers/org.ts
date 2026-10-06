@@ -5,7 +5,7 @@ import { base64urlToBytes } from '../../lib/base64url';
 import { audit, fail, json, mock, noContent, notFound, param, paginate, readBody, readQuery, requireOrgRole, route, type Validator } from '../core';
 import { mockPublicKeyJwk } from '../crypto';
 import { cancelOrder, expireDueOrders, markPaid } from '../domain';
-import { toEventAdmin, toMember, toOrderAdmin, toSettings, toTicketTypeAdmin, typesOf } from '../serializers';
+import { toEventAdmin, toMember, toOrderAdmin, toRefund, toSettings, toTicketTypeAdmin, typesOf } from '../serializers';
 import { maskIban, NO_OVERRIDES, remaining, type MockEvent, type MockSettings } from '../state';
 
 const ORG_ROLES: readonly OrgRole[] = ['OWNER', 'MANAGER', 'SCANNER'];
@@ -371,7 +371,7 @@ export const orgHandlers = [
         o.refundPercent = 100;
         o.serviceFeeRefundable = true;
       }
-      if (['PAID', 'PENDING_PAYMENT', 'AWAITING_TRANSFER'].includes(o.status)) cancelOrder(o);
+      if (['PAID', 'PENDING_PAYMENT', 'AWAITING_TRANSFER'].includes(o.status)) cancelOrder(o, 'EVENT_CANCELLED');
     }
     audit(orgId, actor, 'event.cancel', `event:${e.id}`, { reason });
     return json(toEventAdmin(e));
@@ -504,6 +504,7 @@ export const orgHandlers = [
         revenueCents: sum('revenueCents'),
         refundedCents: sum('refundedCents'),
         serviceFeeCents: orders.filter((o) => o.status === 'PAID').reduce((s, o) => s + o.serviceFeeCents, 0),
+        refundsToProcess: mock.db.refunds.filter((r) => r.eventId === e.id && (r.status === 'MANUAL_REQUIRED' || r.status === 'FAILED')).length,
       },
       ordersByStatus,
       waitlistWaiting: mock.db.waitlist.filter((w) => w.eventId === e.id && w.status === 'WAITING').length,
@@ -528,6 +529,36 @@ export const orgHandlers = [
       status: 200,
       headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="participants-${e.id}.csv"` },
     });
+  }),
+
+  // ---------------- Remboursements (v1.10) ----------------
+  route('get', '/orgs/:orgId/refunds', ({ request, params, url }) => {
+    const orgId = param(params, 'orgId');
+    requireOrgRole(request, orgId, 'MANAGER');
+    const q = readQuery(url, ['status', 'eventId']);
+    const status = q.get('status');
+    const eventId = q.get('eventId');
+    if (status && !['PENDING', 'SUCCEEDED', 'MANUAL_REQUIRED', 'FAILED'].includes(status)) fail(400, 'VALIDATION_ERROR', 'Statut invalide', { fields: [{ path: 'status', message: 'Statut invalide' }] });
+    const list = mock.db.refunds
+      .filter((r) => r.orgId === orgId && (!status || r.status === status) && (!eventId || r.eventId === eventId))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .map(toRefund);
+    return json(paginate(list, q.page, q.pageSize));
+  }),
+
+  route('post', '/orgs/:orgId/refunds/:refundId/mark-done', async ({ request, params }) => {
+    const orgId = param(params, 'orgId');
+    const actor = requireOrgRole(request, orgId, 'MANAGER');
+    const r = mock.db.refunds.find((x) => x.id === param(params, 'refundId') && x.orgId === orgId) ?? notFound();
+    const v = await readBody(request, ['note']);
+    const note = v.str('note', { min: 1, max: 500 });
+    v.done();
+    if (r.status !== 'MANUAL_REQUIRED' && r.status !== 'FAILED') fail(409, 'INVALID_STATE', 'Remboursement déjà traité');
+    r.status = 'SUCCEEDED';
+    r.note = note ?? null;
+    r.updatedAt = new Date().toISOString();
+    audit(orgId, actor, 'refund.markDone', `refund:${r.id}`, { amountCents: r.amountCents });
+    return json(toRefund(r));
   }),
 
   // ---------------- Contrôle d'accès ----------------

@@ -9,6 +9,7 @@ import { markPaid } from '../../mocks/domain';
 import { mockPspPay } from '../../mocks/psp';
 import { server } from '../../mocks/server';
 import { DEMO_PASSWORD, IDS } from '../../mocks/state';
+import { markCheckoutLaunched } from '../../api/hooks/orders';
 import { BUYER, renderApp } from '../../test/renderApp';
 
 async function createOrder(paymentMethod: 'CARD' | 'TRANSFER' = 'CARD', qty = 1): Promise<Order> {
@@ -47,15 +48,19 @@ describe('page commande', () => {
     vi.useRealTimers();
   });
 
-  it('H1 : paiement lancé puis retour sans paramètre ⇒ pas de « Payer », confirmation attendue', async () => {
-    const user = userEvent.setup();
+  it('H1 : paiement lancé dans la session puis retour sans paramètre ⇒ pas de « Payer », confirmation attendue', async () => {
     const order = await createOrder();
-    const { router } = await renderApp(`/orders/${order.id}`);
-    await user.click(await screen.findByRole('button', { name: /Payer/ }));
-    await waitFor(() => expect(router.state.location.pathname).toBe(`/mock-psp/${order.id}`));
-    await router.navigate(`/orders/${order.id}`);
+    markCheckoutLaunched(order.id); // ce que fait la page juste avant de partir chez le prestataire
+    await renderApp(`/orders/${order.id}`);
     expect(await screen.findByText(/Paiement en cours de confirmation/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Payer/ })).toBeNull();
+  });
+
+  it('H1 : retour explicite « failed » après un paiement lancé ⇒ nouvel essai possible', async () => {
+    const order = await createOrder();
+    markCheckoutLaunched(order.id);
+    await renderApp(`/orders/${order.id}?payment=failed`);
+    expect(await screen.findByRole('button', { name: /Payer/ })).toBeEnabled();
   });
 
   it('retour PSP « failed » : message et nouvel essai possible', async () => {

@@ -22,6 +22,8 @@ import type {
   OrgSettings,
   OrgSettingsPatch,
   Page,
+  RefundAdmin,
+  RefundsQuery,
   TicketTypeAdmin,
   TicketTypeBody,
   TicketTypePatchBody,
@@ -189,6 +191,25 @@ export function useExportAttendees(orgId: string, eventId: string, eventTitle?: 
           URL.revokeObjectURL(url);
         }, 1000);
       }
+    },
+  });
+}
+
+// ---------------- Remboursements (v1.10) ----------------
+export const useRefunds = (orgId: string, q: RefundsQuery) =>
+  useQuery({
+    queryKey: ['org', orgId, 'refunds', q],
+    queryFn: ({ signal }) => apiRequest<Page<RefundAdmin>>(`${org(orgId)}/refunds`, { query: { ...q, pageSize: 20 }, signal }),
+    placeholderData: keepIfSameScope(orgId),
+  });
+
+export function useMarkRefundDone(orgId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { refundId: string; note: string }) => apiRequest<RefundAdmin>(`${org(orgId)}${apiPath`/refunds/${v.refundId}/mark-done`}`, { method: 'POST', body: { note: v.note } }),
+    onSuccess: (r) => {
+      void qc.invalidateQueries({ queryKey: ['org', orgId, 'refunds'] });
+      void qc.invalidateQueries({ queryKey: qk.orgEventStats(orgId, r.eventId) });
     },
   });
 }
