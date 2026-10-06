@@ -42,9 +42,13 @@ test('commande remboursée ⇒ scan « BILLET ANNULÉ » (en ligne et hors-ligne
   await buyerPage.getByLabel('Mot de passe').fill(account.password);
   await buyerPage.getByRole('button', { name: 'Se connecter' }).click();
   await buyerPage.getByRole('button', { name: 'Annuler la commande' }).click();
-  await expect(buyerPage.getByRole('dialog')).toContainText(/Montant remboursé/);
+  const dialogText = (await buyerPage.getByRole('dialog').textContent()) ?? '';
+  const preview = /Montant remboursé : ([\d\s\u202f\u00a0]+,\d{2})/.exec(dialogText)?.[1]?.replace(/\s/g, '');
+  expect(preview).toBeTruthy();
   await buyerPage.getByRole('button', { name: 'Oui, annuler la commande' }).click();
-  await expect(buyerPage.getByText(/Commande annulée et remboursée/)).toBeVisible();
+  const done = (await buyerPage.getByText(/Commande annulée et remboursée/).textContent()) ?? '';
+  // Le montant effectivement remboursé est celui annoncé avant confirmation (refundPreviewCents).
+  expect(done.replace(/\s/g, '')).toContain(preview ?? 'x');
 
   // En ligne : le serveur répond « annulé ».
   await page.getByLabel('Saisie manuelle du code').fill(qr);
