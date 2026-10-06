@@ -1,7 +1,7 @@
 // @vitest-environment node
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { contentSecurityPolicy, securityHeaders } from './security-headers';
+import { contentSecurityPolicy, securityHeaders } from './security-headers.ts';
 import viteConfig from './vite.config';
 
 type ConfigFn = (env: { mode: string; command: 'build' | 'serve'; isSsrBuild: boolean; isPreview: boolean }) => {

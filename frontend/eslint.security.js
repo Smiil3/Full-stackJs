@@ -37,7 +37,8 @@ export function restrictedApiRules(allow = []) {
 
 /** Blocs de configuration à insérer dans eslint.config.js (après la config générale). */
 export const securityConfigs = [
-  { files: ['**/*.{ts,tsx}'], rules: restrictedApiRules() },
+  // Code applicatif uniquement (les outils de test e2e tournent sous Node, hors navigateur).
+  { files: ['src/**/*.{ts,tsx}'], rules: restrictedApiRules() },
   { files: ['src/api/client.ts'], rules: restrictedApiRules(['fetch']) },
   { files: ['src/offline/**/*.{ts,tsx}', 'src/scanner/db.ts'], rules: restrictedApiRules(['indexedDB']) },
   // Les tests inspectent justement les storages / cookies pour prouver qu'aucun token n'y est écrit.

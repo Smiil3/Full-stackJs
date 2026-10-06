@@ -5,7 +5,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { Plugin } from 'vite';
-import { securityHeaders } from './security-headers';
+import { securityHeaders } from './security-headers.ts';
 
 /**
  * Sert le service worker de MSW UNIQUEMENT en serveur de dev (`apply: 'serve'`) : il n'est jamais
