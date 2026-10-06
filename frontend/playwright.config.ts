@@ -3,6 +3,7 @@ import { defineConfig, devices } from '@playwright/test';
 /** E2E mobile contre le back réel (jalon F5). Le back doit tourner sur :4000 (voir README). */
 export default defineConfig({
   testDir: './e2e',
+  testIgnore: '**/mock/**',
   timeout: 60_000,
   fullyParallel: false,
   retries: 0,
