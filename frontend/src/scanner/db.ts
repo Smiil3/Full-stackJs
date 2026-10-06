@@ -164,11 +164,12 @@ export async function getScannerAccess(): Promise<ScannerAccess | null> {
   return typeof v === 'object' ? v : null;
 }
 
-export async function getDeviceValue(key: 'updateSeenAt'): Promise<string | null> {
+export type DeviceKey = 'updateSeenAt' | 'clockHighWater';
+export async function getDeviceValue(key: DeviceKey): Promise<string | null> {
   const v = await (await scannerDb()).get('device', key);
   return typeof v === 'string' ? v : null;
 }
-export async function setDeviceValue(key: 'updateSeenAt', value: string | null): Promise<void> {
+export async function setDeviceValue(key: DeviceKey, value: string | null): Promise<void> {
   const db = await scannerDb();
   if (value === null) await db.delete('device', key);
   else await db.put('device', value, key);

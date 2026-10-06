@@ -30,6 +30,7 @@ import {
 import {
   AccessRevokedError,
   admitUnknown,
+  ClockRollbackError,
   EventClosedError,
   EventNotAvailableError,
   localScan,
@@ -293,6 +294,24 @@ describe('mode secours hors-ligne', () => {
     const meta = await db.get('snapshots', IDS.eventConcert);
     if (meta) await db.put('snapshots', { ...meta, savedAt: new Date(Date.now() - 25 * 3_600_000).toISOString() });
     await expect(localScan(scanArgs(qr ?? ''))).rejects.toBeInstanceOf(StaleSnapshotError);
+  });
+
+  it('F6-B4 : heure de l’appareil reculée ⇒ contrôle local refusé (âge de la liste non contournable)', async () => {
+    const [qr1, qr2] = await ticketsFor(2);
+    await prepareEvent(ORG, EVENT);
+    expect((await localScan(scanArgs(qr1 ?? ''))).kind).toBe('OK');
+    // Liste de 23 h selon l'appareil ; quelqu'un recule l'horloge de 3 h pour la « rajeunir ».
+    const db = await scannerDb();
+    const meta = await db.get('snapshots', IDS.eventConcert);
+    const real = Date.now();
+    if (meta) await db.put('snapshots', { ...meta, savedAt: new Date(real - 23 * 3_600_000).toISOString() });
+    const now = vi.spyOn(Date, 'now').mockReturnValue(real - 3 * 3_600_000);
+    try {
+      await expect(localScan(scanArgs(qr2 ?? ''))).rejects.toBeInstanceOf(ClockRollbackError);
+    } finally {
+      now.mockRestore();
+    }
+    expect(await pendingCount()).toBe(1); // seul le premier passage est en file
   });
 
   it('M1 : mise à jour de la liste ⇒ un billet admis localement n’est jamais rétrogradé « valide »', async () => {

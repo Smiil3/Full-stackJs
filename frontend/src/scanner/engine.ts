@@ -13,7 +13,7 @@ import { apiPath, apiRequest } from '../api/client';
 import { isApiError } from '../api/errors';
 import { serverNow } from '../api/serverClock';
 import type { ScanResponse } from '../api/types';
-import { abortTx, assertGeneration, currentGeneration, deviceId, getSnapshotMeta, purgeEvent, SCAN_LOCK, scannerDb, withLock } from './db';
+import { abortTx, assertGeneration, currentGeneration, deviceId, getDeviceValue, getSnapshotMeta, purgeEvent, SCAN_LOCK, scannerDb, setDeviceValue, withLock } from './db';
 import { parseQr, verifySignature } from './verify';
 
 /** Budget total d'une vérification en ligne (mode par défaut). */
@@ -25,6 +25,12 @@ const ATTEMPT_TIMEOUT_MS = 4_000;
 /** Contrôle local refusé au-delà de la fin de l'événement + 24 h, ou avec une liste de plus de 24 h. */
 const CLOSE_AFTER_END_MS = 24 * 3_600_000;
 export const MAX_SNAPSHOT_AGE_MS = 24 * 3_600_000;
+/** Recul d'horloge toléré (resynchronisation NTP) avant de refuser le contrôle local. */
+const CLOCK_SKEW_MS = 2 * 60_000;
+/** Horloge monotone de la page : ne recule jamais, même si l'heure de l'appareil est reculée. */
+const MONO_WALL0 = Date.now();
+const MONO_PERF0 = performance.now();
+const monotonicWall = () => MONO_WALL0 + (performance.now() - MONO_PERF0);
 
 type Holder = { ticketTypeName: string; holderInitials: string };
 /** Pourquoi la décision a été prise localement (bandeau « mode dégradé »). */
@@ -78,6 +84,26 @@ export class StaleSnapshotError extends Error {
   constructor() {
     super('Liste hors-ligne trop ancienne');
   }
+}
+
+export class ClockRollbackError extends Error {
+  constructor() {
+    super('Heure de l’appareil reculée');
+  }
+}
+
+/**
+ * « Maintenant » pour l'âge de la liste : jamais avant l'heure la plus avancée déjà observée (horloge
+ * monotone de la page, téléchargement de la liste, plus haute heure enregistrée sur l'appareil).
+ * Heure système nettement en arrière ⇒ quelqu'un a reculé l'horloge ⇒ contrôle local refusé.
+ */
+async function checkedLocalNow(savedAt: number): Promise<number> {
+  const wall = Date.now();
+  const stored = Date.parse((await getDeviceValue('clockHighWater')) ?? '') || 0;
+  const highest = Math.max(stored, savedAt, monotonicWall());
+  if (wall < highest - CLOCK_SKEW_MS) throw new ClockRollbackError();
+  if (wall - stored > 60_000) await setDeviceValue('clockHighWater', new Date(wall).toISOString());
+  return Math.max(wall, highest);
 }
 
 class TransientFailure extends Error {
@@ -222,7 +248,8 @@ export async function localScan(args: { orgId: string; eventId: string; qrPayloa
     const meta = await getSnapshotMeta(args.eventId);
     if (!meta) throw new NoSnapshotError();
     if (serverNow() > Date.parse(meta.endsAt) + CLOSE_AFTER_END_MS) throw new EventClosedError();
-    if (Date.now() - Date.parse(meta.savedAt) > MAX_SNAPSHOT_AGE_MS) throw new StaleSnapshotError();
+    const savedAt = Date.parse(meta.savedAt);
+    if ((await checkedLocalNow(savedAt)) - savedAt > MAX_SNAPSHOT_AGE_MS) throw new StaleSnapshotError();
     const mode = { offline: true as const, reason: args.reason };
     const parsed = parseQr(args.qrPayload);
     if (!parsed || !(await verifySignature(parsed, meta.publicKeyJwk))) return { kind: 'INVALID', ...mode };
