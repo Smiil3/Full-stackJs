@@ -130,6 +130,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [revalidate]);
 
+  // Accès au contrôle d'entrée réécrits à chaque utilisateur reçu du serveur (refresh, /auth/me) :
+  // un contrôleur retiré perd la liste locale des événements de ce collectif. Chargement à la demande.
+  useEffect(() => {
+    if (status !== 'authenticated' || !user) return;
+    void import('../scanner/access').then((m) => m.rememberScannerAccess(user)).catch(() => undefined);
+  }, [status, user]);
+
   const login = useCallback(async (email: string, password: string) => (await apiLogin(email, password)).user, []);
   /** La déconnexion n'est terminée qu'une fois les données hors-ligne effacées (billets = justificatifs). */
   const logout = useCallback(async () => {

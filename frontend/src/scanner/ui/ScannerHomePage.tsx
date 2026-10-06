@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router';
 import { apiPath } from '../../api/client';
 import { useCheckinEvents } from '../../api/hooks/org';
@@ -10,7 +10,7 @@ import { PageLoader } from '../../components/PageLoader';
 import { useNow } from '../../lib/hooks/useNow';
 import { useOnline } from '../../lib/hooks/useOnline';
 import { formatDateTime, userTimeZone } from '../../lib/time';
-import { ownerHash, setScannerAccess, type SnapshotMeta } from '../db';
+import type { SnapshotMeta } from '../db';
 import { prepareEvent } from '../snapshot';
 import { scannerErrorMessage } from './scannerError';
 import { useLocalSnapshots } from './useScannerData';
@@ -94,12 +94,6 @@ export function ScannerHomePage() {
   const online = useOnline();
   const { data: snapshots = [], refetch } = useLocalSnapshots();
   const scannerOrgs = (user?.memberships ?? []).filter((m) => roleAtLeast(m.role, 'SCANNER'));
-
-  // Accès validés en ligne, mémorisés pour un éventuel démarrage hors-ligne (garde de route).
-  useEffect(() => {
-    if (status !== 'authenticated' || !user) return;
-    void ownerHash(user.id).then((h) => setScannerAccess({ ownerHash: h, orgIds: scannerOrgs.map((m) => m.orgId) }));
-  }, [status, user, scannerOrgs]);
 
   return (
     <section className="page">

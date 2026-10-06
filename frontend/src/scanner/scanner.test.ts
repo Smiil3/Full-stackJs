@@ -2,7 +2,7 @@ import * as ed from '@noble/ed25519';
 import { http, HttpResponse } from 'msw';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { apiRequest, login, logout } from '../api/client';
-import type { CheckinEvent, Order } from '../api/types';
+import type { CheckinEvent, Order, User } from '../api/types';
 import { runSessionCleanups } from '../auth/sessionCleanup';
 import { injectFault, mock } from '../mocks/core';
 import { markPaid } from '../mocks/domain';
@@ -418,6 +418,46 @@ describe('file de synchronisation (revue F4.1)', () => {
     await expect(syncEvent(ORG, IDS.eventConcert, OWNER)).rejects.toMatchObject({ code: 'SESSION_CHANGED' });
     expect(auths).toHaveLength(1); // 2e lot jamais envoyé
     expect(await pendingCount()).toBe(501);
+  });
+
+  it('F6-M4 : contrôleur retiré (404 au scan) ⇒ liste locale purgée, file conservée', async () => {
+    const [qr1, qr2] = await ticketsFor(2);
+    await prepareEvent(ORG, EVENT);
+    await localScan(scanArgs(qr1 ?? ''));
+    injectFault({ route: SCAN_ROUTE, status: 404, code: 'NOT_FOUND' });
+    await expect(scanOnline({ orgId: ORG, eventId: IDS.eventConcert, qrPayload: qr2 ?? '' })).rejects.toBeInstanceOf(EventNotAvailableError);
+    expect(await getSnapshotMeta(IDS.eventConcert)).toBeUndefined();
+    expect(await pendingCount()).toBe(1);
+  });
+
+  it('F6-M4 : contrôleur retiré (404 à la synchro) ⇒ relances arrêtées, liste purgée, file conservée', async () => {
+    const [qr] = await ticketsFor(1);
+    await prepareEvent(ORG, EVENT);
+    await localScan(scanArgs(qr ?? ''));
+    injectFault({ route: 'POST /orgs/:orgId/events/:eventId/checkin/sync', status: 404, code: 'NOT_FOUND' });
+    const err = await syncEvent(ORG, IDS.eventConcert, OWNER).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(SyncForbiddenError);
+    expect(await getSnapshotMeta(IDS.eventConcert)).toBeUndefined();
+    expect(await pendingCount()).toBe(1);
+  });
+
+  it('F6-M4 : accès réécrits à chaque utilisateur reçu du serveur ; collectif retiré ⇒ ses listes purgées', async () => {
+    await ticketsFor(1);
+    await prepareEvent(ORG, EVENT);
+    const { rememberScannerAccess } = await import('./access');
+    const { getScannerAccess } = await import('./db');
+    const me = await apiRequest<User>('/auth/me');
+    const put = vi.spyOn(IDBObjectStore.prototype, 'put');
+    await rememberScannerAccess(me);
+    expect(await getScannerAccess()).toEqual({ ownerHash: OWNER, orgIds: [ORG] });
+    expect(put).toHaveBeenCalled(); // l'espion voit bien les écritures
+    put.mockClear();
+    await rememberScannerAccess(me); // rien n'a changé : aucune écriture
+    expect(put).not.toHaveBeenCalled();
+    put.mockRestore();
+    await rememberScannerAccess({ ...me, memberships: [] }); // retiré du collectif
+    expect(await getScannerAccess()).toEqual({ ownerHash: OWNER, orgIds: [] });
+    expect(await getSnapshotMeta(IDS.eventConcert)).toBeUndefined();
   });
 
   it('identifiant d’appareil stable', async () => {

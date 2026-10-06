@@ -126,7 +126,11 @@ async function postScan(orgId: string, eventId: string, qrPayload: string, scanI
         await purgeEvent(eventId).catch(() => undefined); // scanneur retiré : la liste locale part (la file reste)
         throw new AccessRevokedError();
       }
-      if (isApiError(e) && e.code === 'NOT_FOUND') throw new EventNotAvailableError();
+      if (isApiError(e) && e.code === 'NOT_FOUND') {
+        // Contrôleur retiré du collectif (le serveur répond 404, pas 403) ou événement disparu.
+        await purgeEvent(eventId).catch(() => undefined);
+        throw new EventNotAvailableError();
+      }
       if (isApiError(e) && e.code === 'VALIDATION_ERROR') return { result: 'INVALID', ticket: null, usedAt: null }; // QR trop long / mal formé
       const reason = transientReason(e);
       if (!reason) throw e;

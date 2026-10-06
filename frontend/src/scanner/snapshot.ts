@@ -38,7 +38,10 @@ export async function prepareEvent(orgId: string, event: CheckinEvent, signal?: 
   try {
     snap = await fetchSnapshot(orgId, event.id, signal);
   } catch (e) {
-    if (isApiError(e) && e.code === 'NOT_FOUND') throw new EventNotAvailableError();
+    if (isApiError(e) && e.code === 'NOT_FOUND') {
+      await purgeEvent(event.id); // accès retiré (404) : l'ancienne liste ne doit pas rester utilisable
+      throw new EventNotAvailableError();
+    }
     if (isApiError(e) && e.code === 'OFFLINE_CHECKIN_DISABLED') {
       await purgeEvent(event.id);
       throw new OfflineDisabledError();

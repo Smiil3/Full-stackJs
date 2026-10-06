@@ -6,7 +6,7 @@
 import { apiPath, apiRequest, sessionGeneration } from '../api/client';
 import { ApiError, isApiError } from '../api/errors';
 import type { SyncResponse } from '../api/types';
-import { currentGeneration, deviceId, listQueue, scannerDb, withLock, type SyncConflict } from './db';
+import { currentGeneration, deviceId, listQueue, purgeEvent, scannerDb, withLock, type SyncConflict } from './db';
 
 const BATCH = 500;
 /** Taille max d'un lot (contrat v1.12 : 160 ko côté serveur), avec marge. */
@@ -63,7 +63,11 @@ async function doSync(orgId: string, eventId: string, owner: string): Promise<Sy
         timeoutMs: 30_000,
       });
     } catch (e) {
-      if (isApiError(e) && e.code === 'FORBIDDEN') throw new SyncForbiddenError((await mine()).length);
+      if (isApiError(e) && (e.code === 'FORBIDDEN' || e.code === 'NOT_FOUND')) {
+        // Accès retiré (404 pour un contrôleur retiré) : liste locale effacée, file conservée, relances arrêtées.
+        await purgeEvent(eventId).catch(() => undefined);
+        throw new SyncForbiddenError((await mine()).length);
+      }
       throw e;
     }
     const generation = await currentGeneration();
