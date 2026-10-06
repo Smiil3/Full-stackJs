@@ -37,3 +37,4 @@ export const orderFields = {
 };
 export const orderResponse = Joi.object(orderFields);
 export const orderPage = pageOf(orderResponse);
+export const checkoutResponse = Joi.object({ redirectUrl: Joi.string().uri({ scheme: ['http', 'https'] }) });

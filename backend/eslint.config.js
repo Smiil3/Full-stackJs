@@ -37,7 +37,8 @@ export default defineConfig(
   {
     // Seuls le middleware de validation et le contrôle d'adhésion (qui valide lui-même orgId au format UUID
     // strict avant toute requête) lisent la requête brute.
-    files: ['src/middlewares/validate.ts', 'src/middlewares/requireOrgRole.ts'],
+    // + le PSP simulé (application distincte, dev/test uniquement, qui valide ses entrées avec Joi).
+    files: ['src/middlewares/validate.ts', 'src/middlewares/requireOrgRole.ts', 'src/middlewares/rawBody.ts', 'src/mock-psp/**/*.ts'],
     rules: {
       'no-restricted-syntax': [
         'error',

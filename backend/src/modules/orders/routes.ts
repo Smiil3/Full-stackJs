@@ -12,5 +12,6 @@ export function ordersRouter(limiters: Limiters): Router {
     ...endpoint({ headers: s.idempotencyHeaders, body: s.createOrderBody, response: s.orderResponse, status: 201 }, c.create));
   r.get('/', ...endpoint({ query: s.ordersQuery, response: s.orderPage }, c.list));
   r.get('/:orderId', ...endpoint({ params: s.orderParams, response: s.orderResponse }, c.get));
+  r.post('/:orderId/checkout', limiters.orders, ...endpoint({ params: s.orderParams, response: s.checkoutResponse }, c.checkout));
   return r;
 }

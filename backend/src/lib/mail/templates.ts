@@ -13,6 +13,7 @@ export interface TemplatePayloads {
   orderExpired: { displayName: string; eventTitle: string };
   orderRefunded: { displayName: string; eventTitle: string; amount: string; reason: string };
   latePaymentRefunded: { displayName: string; eventTitle: string; amount: string };
+  duplicatePaymentRefunded: { displayName: string; eventTitle: string; amount: string };
   waitlistOffer: { displayName: string; eventTitle: string; ticketTypeName: string; quantity: number; deadline: string; link: string };
   eventCancelled: { displayName: string; eventTitle: string; reason: string; amount: string | null };
   eventRescheduled: { displayName: string; eventTitle: string; oldDate: string; newDate: string; reason: string };
@@ -103,6 +104,12 @@ export function renderTemplate<T extends MailTemplate>(template: T, data: Templa
         subject: `Paiement reçu trop tard — ${s('eventTitle')}`,
         html: layout('Paiement remboursé', [`Bonjour ${e(s('displayName'))},`, `Votre paiement pour <strong>${e(s('eventTitle'))}</strong> est arrivé après l’expiration de votre réservation et il n’y avait plus de places disponibles. Vous êtes intégralement remboursé(e) : <strong>${e(s('amount'))}</strong>.`]),
         text: `Bonjour ${s('displayName')},\nPaiement reçu après expiration, plus de places : remboursement intégral de ${s('amount')}.`,
+      };
+    case 'duplicatePaymentRefunded':
+      return {
+        subject: `Paiement en double remboursé — ${s('eventTitle')}`,
+        html: layout('Paiement remboursé', [`Bonjour ${e(s('displayName'))},`, `Nous avons reçu un paiement supplémentaire pour votre commande <strong>${e(s('eventTitle'))}</strong>, qui était déjà réglée ou ne pouvait plus l’être. Il vous est intégralement remboursé : <strong>${e(s('amount'))}</strong>. Votre commande n’est pas modifiée.`]),
+        text: `Bonjour ${s('displayName')},\nPaiement supplémentaire reçu pour ${s('eventTitle')} : remboursement intégral de ${s('amount')}. Votre commande n'est pas modifiée.`,
       };
     case 'waitlistOffer':
       return {

@@ -12,6 +12,7 @@ import { priceAt } from '../../lib/pricing.js';
 import { iso } from '../../lib/schemas.js';
 import { addHours, addMinutes, formatWithZone } from '../../lib/time.js';
 import { resolveEventSettings } from '../settings/resolveEventSettings.js';
+import { getPspClient } from '../../lib/psp.js';
 import { issueTickets } from '../tickets/issue.js';
 import { refundPreview } from './refund.js';
 import * as repo from './repo.js';
@@ -230,4 +231,41 @@ export async function listOrders(userId: string, page: number, pageSize: number)
 
 export function getOrder(userId: string, orderId: string) {
   return transaction((tx) => viewOwnOrder(tx, userId, orderId));
+}
+
+/**
+ * Démarre (ou reprend) le paiement par carte. Idempotent : une session PSP déjà ouverte pour la commande
+ * est réutilisée ; deux appels concurrents obtiennent la même session (clé d'idempotence PSP = id de commande).
+ * L'appel au PSP se fait hors transaction.
+ */
+export async function checkout(userId: string, orderId: string): Promise<{ redirectUrl: string }> {
+  const order = await transaction((tx) => repo.findOwnOrder(tx, userId, orderId));
+  if (!order) throw errors.notFound();
+  const now = clock.now();
+  const expired = order.status === 'EXPIRED' || (order.status === 'PENDING_PAYMENT' && order.expiresAt !== null && order.expiresAt <= now);
+  if (expired) throw errors.state('ORDER_EXPIRED', 'La réservation a expiré.');
+  if (order.status !== 'PENDING_PAYMENT' || order.paymentMethod !== 'CARD') {
+    throw errors.state('INVALID_STATE', 'Cette commande ne peut pas être payée par carte.');
+  }
+  if (order.pspSessionUrl) return { redirectUrl: order.pspSessionUrl };
+  const env = getEnv();
+  const session = await getPspClient().createCheckoutSession({
+    orderId: order.id,
+    amountCents: order.totalCents,
+    currency: 'EUR',
+    successUrl: `${env.frontUrl}/orders/${order.id}?payment=success`,
+    cancelUrl: `${env.frontUrl}/orders/${order.id}?payment=failed`,
+    idempotencyKey: order.id,
+  });
+  return transaction(async (tx) => {
+    const { count } = await tx.order.updateMany({
+      where: { id: order.id, userId, status: 'PENDING_PAYMENT', pspSessionUrl: null },
+      data: { pspSessionId: session.id, pspSessionUrl: session.url },
+    });
+    if (count === 1) return { redirectUrl: session.url };
+    // Appel concurrent déjà enregistré : on renvoie la session stockée.
+    const current = await tx.order.findFirst({ where: { id: order.id, userId }, select: { status: true, pspSessionUrl: true } });
+    if (current?.status === 'PENDING_PAYMENT' && current.pspSessionUrl) return { redirectUrl: current.pspSessionUrl };
+    throw errors.state('INVALID_STATE', 'La commande a changé d’état entre-temps.');
+  });
 }

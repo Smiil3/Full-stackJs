@@ -21,5 +21,8 @@ export async function create(
 export const list = ({ query }: ValidatedInput<Empty, PageQuery, Empty, Empty>, _q: Request, res: Response) =>
   service.listOrders(getAuth(res).userId, query.page, query.pageSize);
 
+export const checkout = ({ params }: ValidatedInput<{ orderId: string }, Empty, Empty, Empty>, _q: Request, res: Response) =>
+  service.checkout(getAuth(res).userId, params.orderId);
+
 export const get = ({ params }: ValidatedInput<{ orderId: string }, Empty, Empty, Empty>, _q: Request, res: Response) =>
   service.getOrder(getAuth(res).userId, params.orderId);

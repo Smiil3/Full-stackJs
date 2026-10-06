@@ -7,6 +7,7 @@ import { createSmtpTransport } from './lib/mailer.js';
 import { processOutboxBatch } from './lib/outbox.js';
 import { purgeExpiredBuckets } from './lib/rateLimitStore.js';
 import { expireOrders } from './jobs/expireOrders.js';
+import { processRefunds } from './jobs/processRefunds.js';
 
 /**
  * Worker : expirations, envoi des mails (outbox), purge des compteurs.
@@ -32,6 +33,7 @@ let stopping = false;
 async function tick(): Promise<void> {
   const jobs: [string, () => Promise<unknown>][] = [
     ['expireOrders', () => expireOrders()],
+    ['refunds', () => processRefunds()],
     ['outbox', () => processOutboxBatch(transport)],
     ['purgeRateLimits', () => purgeExpiredBuckets()],
   ];

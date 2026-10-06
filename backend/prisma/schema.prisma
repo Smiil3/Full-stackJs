@@ -53,6 +53,8 @@ enum RefundStatus {
   PENDING
   SUCCEEDED
   FAILED
+  /// Paiement par virement : remboursement à effectuer manuellement par le collectif (hors PSP).
+  MANUAL_REQUIRED
 }
 
 enum TicketStatus {
@@ -324,6 +326,8 @@ model Order {
   transferBic               String? @db.VarChar(11)
 
   pspSessionId    String? @db.VarChar(100)
+  /// URL de paiement de la session PSP en cours (checkout idempotent : même URL renvoyée).
+  pspSessionUrl   String? @db.VarChar(500)
   waitlistEntryId String? @unique @db.Uuid
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
