@@ -5,7 +5,7 @@
  */
 import 'dotenv/config';
 import { randomBytes, randomUUID } from 'node:crypto';
-import argon2 from 'argon2';
+import { hashPassword } from '../src/lib/password.js';
 import { getEnv } from '../src/config/env.js';
 import { disconnectDb, getDb } from '../src/lib/db.js';
 import { aad, encryptString, randomToken, transferReference } from '../src/lib/crypto.js';
@@ -31,7 +31,7 @@ async function main(): Promise<void> {
   }
 
   const password = provided === '' ? randomToken(18) : provided;
-  const passwordHash = await argon2.hash(password, { type: argon2.argon2id });
+  const passwordHash = await hashPassword(password);
   const now = new Date();
 
   const mkUser = (email: string, displayName: string, isPlatformAdmin = false) =>
@@ -130,7 +130,7 @@ async function main(): Promise<void> {
       data: {
         email: `public${i}@nuits-garonne.test`, displayName: `Spectateur ${i}`, emailVerifiedAt: now,
         // Comptes de remplissage sans mot de passe connu.
-        passwordHash: await argon2.hash(randomToken(24), { type: argon2.argon2id }),
+        passwordHash: await hashPassword(randomToken(24)),
       },
     });
     await db.$transaction(async (tx) => {

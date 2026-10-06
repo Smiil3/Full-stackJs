@@ -91,6 +91,15 @@ export async function consumeEmailToken(tx: Tx, tokenHash: string, purpose: Emai
   return rows[0]?.userId ?? null;
 }
 
+/** Pré-contrôle (sans consommation) d'un jeton mail : existe, bon usage, non utilisé, non expiré, même adresse. */
+export async function isEmailTokenUsable(tokenHash: string, purpose: EmailTokenPurpose): Promise<boolean> {
+  const rows = await getDb().$queryRaw<{ ok: number }[]>`
+    SELECT 1 AS ok FROM "email_tokens" t JOIN "users" u ON u."id" = t."userId"
+    WHERE t."tokenHash" = ${tokenHash} AND t."purpose" = ${purpose}::"EmailTokenPurpose"
+      AND t."usedAt" IS NULL AND t."expiresAt" > now() AND u."email" = t."email"`;
+  return rows.length === 1;
+}
+
 export interface RefreshRow {
   id: string;
   userId: string;

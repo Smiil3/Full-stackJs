@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import argon2 from 'argon2';
 import { getEnv } from '../../config/env.js';
 import { transaction, type Tx } from '../../lib/db.js';
 import { errors } from '../../lib/errors.js';
@@ -9,6 +8,7 @@ import { enqueueEmail } from '../../lib/outbox.js';
 import { addMinutes } from '../../lib/time.js';
 import { withResponseFloor } from '../../lib/timing.js';
 import { consumeQuota } from '../../lib/rateLimitStore.js';
+import { getDummyHash, hashPassword, verifyPasswordHash } from '../../lib/password.js';
 import { normalizeEmail } from '../../lib/email.js';
 import * as repo from './repo.js';
 
@@ -19,7 +19,6 @@ export const REFRESH_FAMILY_MAX_MS = 90 * DAY_MS;
 /** Délai de grâce de rotation (réponse de refresh perdue sur réseau mobile). */
 export const REFRESH_GRACE_MS = 10_000;
 const EMAIL_TOKEN_TTL_MINUTES = 30;
-const ARGON2_OPTIONS = { type: argon2.argon2id } as const;
 
 export const GENERIC_ACCEPTED_MESSAGE =
   'Si cette adresse peut recevoir un message, un email vient de lui être envoyé.';
@@ -45,22 +44,6 @@ export interface SessionResult {
 }
 
 
-let dummyHash: Promise<string> | null = null;
-/**
- * Hash factice : un email inconnu coûte le même temps de calcul qu'un email connu (anti-énumération
- * par timing). Calculé au démarrage (warmUpAuth) ; une promesse en échec n'est jamais gardée en cache.
- */
-function getDummyHash(): Promise<string> {
-  if (!dummyHash) {
-    const pending = argon2.hash(randomToken(32), ARGON2_OPTIONS);
-    dummyHash = pending;
-    pending.catch(() => {
-      if (dummyHash === pending) dummyHash = null;
-    });
-  }
-  return dummyHash;
-}
-
 /** À appeler au démarrage : précalcule le hash factice (la première requête n'est pas plus lente). */
 export async function warmUpAuth(): Promise<void> {
   await getDummyHash();
@@ -70,20 +53,10 @@ function floor<T>(fn: () => Promise<T>): Promise<T> {
   return withResponseFloor(getEnv().authResponseFloorMs, fn);
 }
 
-export function hashPassword(password: string): Promise<string> {
-  return argon2.hash(password, ARGON2_OPTIONS);
-}
-
 /** Compteurs d'observabilité (exposés pour les tests : nombre d'évaluations réelles d'un mot de passe). */
 export const authMetrics = { passwordVerifications: 0 };
 
-async function verifyPassword(hash: string, password: string): Promise<boolean> {
-  try {
-    return await argon2.verify(hash, password);
-  } catch {
-    return false;
-  }
-}
+const verifyPassword = verifyPasswordHash;
 
 /** Évalue le mot de passe d'un compte réel, après réservation atomique d'une tentative. */
 async function checkAccountPassword(user: { id: string; passwordHash: string }, password: string): Promise<boolean> {
@@ -358,6 +331,9 @@ async function forgotPasswordInner(rawEmail: string): Promise<void> {
 }
 
 export async function resetPassword(token: string, password: string): Promise<void> {
+  const invalid = () => errors.validation([{ path: 'token', message: 'Lien invalide ou expiré.' }], 'Lien invalide ou expiré.');
+  // Jeton vérifié AVANT le calcul argon2 : un jeton bidon ne coûte rien au serveur.
+  if (!(await repo.isEmailTokenUsable(sha256Hex(token), 'RESET_PASSWORD'))) throw invalid();
   const passwordHash = await hashPassword(password);
   const ok = await transaction(async (tx) => {
     const userId = await repo.consumeEmailToken(tx, sha256Hex(token), 'RESET_PASSWORD');
@@ -372,7 +348,8 @@ export async function resetPassword(token: string, password: string): Promise<vo
     await enqueueEmail(tx, user.email, 'passwordChanged', { displayName: user.displayName });
     return true;
   });
-  if (!ok) throw errors.validation([{ path: 'token', message: 'Lien invalide ou expiré.' }], 'Lien invalide ou expiré.');
+  // Jeton consommé entre-temps par une requête concurrente : la consommation gardée fait foi.
+  if (!ok) throw invalid();
 }
 
 export async function changePassword(userId: string, currentPassword: string, newPassword: string): Promise<void> {

@@ -612,3 +612,12 @@ describe('plafond d’envoi par adresse et jetons mail (B2.1 M6 / B5)', () => {
     await api().post(`${A}/login`).send({ email: u.email, password: winner }).expect(200);
   });
 });
+
+describe('coût argon2 maîtrisé (B2.1 M9)', () => {
+  it('reset avec un jeton invalide : aucun hash calculé', async () => {
+    const { passwordMetrics } = await import('../../src/lib/password.js');
+    const before = passwordMetrics.hashes;
+    await api().post(`${A}/reset-password`).send({ token: 'a'.repeat(43), password: 'nouveau-mot-de-passe-42' }).expect(400);
+    expect(passwordMetrics.hashes).toBe(before);
+  });
+});

@@ -4,6 +4,7 @@ import argon2 from 'argon2';
 import { createApp } from '../src/app.js';
 import { getDb } from '../src/lib/db.js';
 import { decryptOutboxPayload } from '../src/lib/outbox.js';
+import { ARGON2_PARAMS } from '../src/lib/password.js';
 import type { Role } from '../src/generated/prisma/client.js';
 
 export const FRONT = 'http://localhost:5173';
@@ -19,7 +20,7 @@ export function api() {
 
 let cachedHash: string | null = null;
 async function passwordHash(): Promise<string> {
-  cachedHash ??= await argon2.hash(PASSWORD, { type: argon2.argon2id });
+  cachedHash ??= await argon2.hash(PASSWORD, ARGON2_PARAMS);
   return cachedHash;
 }
 
