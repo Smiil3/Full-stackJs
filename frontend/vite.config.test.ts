@@ -27,6 +27,12 @@ describe('en-têtes de sécurité (revue F1.1 — M7)', () => {
     expect(securityHeaders(false)['Permissions-Policy']).toContain('camera=(self)');
   });
 
+  it('F6-B1 : index.html n’envoie aucun Referer (même politique que l’en-tête)', () => {
+    const html = readFileSync(new URL('./index.html', import.meta.url), 'utf8');
+    const metas = html.match(/<meta name="referrer" content="([^"]+)"/g) ?? [];
+    expect(metas).toEqual(['<meta name="referrer" content="no-referrer"']);
+  });
+
   it('la conf nginx d’exemple reprend exactement la CSP et les en-têtes, plus HSTS, partout', () => {
     const snippet = readFileSync(new URL('./deploy/nuits-security-headers.conf', import.meta.url), 'utf8');
     for (const [name, value] of Object.entries(securityHeaders(false))) {
