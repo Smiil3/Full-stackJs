@@ -48,6 +48,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const previous = userIdRef.current;
         if (previous !== null && previous !== e.session.user.id) wipe(); // changement de compte : purge AVANT le nouvel utilisateur
         userIdRef.current = e.session.user.id;
+        setNotice((n) => (n === 'csrf' ? null : n)); // session ouverte : l'ancien échec n'est plus d'actualité
         setSessionEndRedirect(null);
         setUser(e.session.user);
         setStatus('authenticated');
@@ -74,6 +75,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Restauration de session au chargement via le cookie HttpOnly (promesse partagée côté client).
       refreshSession().catch((err: unknown) => {
         if (isApiError(err) && err.code === 'SESSION_CHANGED') return; // un login/logout a eu lieu entre-temps
+        if (isApiError(err) && err.code === 'CSRF_CHECK_FAILED') {
+          // Requête bloquée par le contrôle anti-CSRF : réessayer ne changera rien ⇒ anonyme, avec un message.
+          setNotice('csrf');
+          setStatus((s) => (s === 'loading' ? 'anonymous' : s));
+          return;
+        }
         if (isApiError(err) && (err.code === 'NETWORK_ERROR' || err.code === 'TIMEOUT' || err.status >= 500)) {
           setStatus((s) => (s === 'loading' ? 'offline' : s));
         } else {
@@ -89,7 +96,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (status !== 'offline') return;
     const retry = () => {
       refreshSession().catch((err: unknown) => {
-        if (isApiError(err) && err.status === 401) setStatus('anonymous');
+        if (isApiError(err) && err.code === 'CSRF_CHECK_FAILED') setNotice('csrf');
+        // Refus définitif (session invalide, anti-CSRF) : plus d'état « hors-ligne » sans fin.
+        if (isApiError(err) && (err.status === 401 || err.code === 'CSRF_CHECK_FAILED')) setStatus('anonymous');
       });
     };
     window.addEventListener('online', retry);

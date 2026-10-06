@@ -113,6 +113,29 @@ describe('AuthProvider', () => {
     expect(await isLogoutPending()).toBe(true);
   });
 
+  it('F6-B6 : refresh refusé par l’anti-CSRF au démarrage ⇒ anonyme avec message (pas « hors-ligne »), effacé à la connexion', async () => {
+    const { injectFault } = await import('../mocks/core');
+    mock.db.refreshCookie = { token: 'x', userId: mock.db.users[0]?.id ?? '' };
+    injectFault({ route: 'POST /auth/refresh', status: 403, code: 'CSRF_CHECK_FAILED' });
+    const { auth } = setup();
+    expect(await screen.findByText('anonymous:-')).toBeInTheDocument();
+    expect(auth().notice).toBe('csrf');
+    await act(() => auth().login('acheteur@example.test', DEMO_PASSWORD));
+    expect(auth().notice).toBeNull();
+  });
+
+  it('F6-B6 : démarrage hors-ligne puis anti-CSRF au retour du réseau ⇒ anonyme, plus d’état hors-ligne sans fin', async () => {
+    const { injectFault } = await import('../mocks/core');
+    mock.db.refreshCookie = { token: 'x', userId: mock.db.users[0]?.id ?? '' };
+    injectFault({ route: 'POST /auth/refresh', status: 0, code: 'INTERNAL_ERROR', network: true });
+    const { auth } = setup();
+    expect(await screen.findByText('offline:-')).toBeInTheDocument();
+    injectFault({ route: 'POST /auth/refresh', status: 403, code: 'CSRF_CHECK_FAILED' });
+    window.dispatchEvent(new Event('online'));
+    expect(await screen.findByText('anonymous:-')).toBeInTheDocument();
+    expect(auth().notice).toBe('csrf');
+  });
+
   it('logout ⇒ cache TanStack Query vidé et nettoyages hors-ligne exécutés', async () => {
     const { qc, auth } = setup();
     await screen.findByText('anonymous:-');

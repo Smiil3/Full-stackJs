@@ -1,6 +1,7 @@
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
+import { logout } from '../../api/client';
 import { getAccessToken } from '../../auth/tokenStore';
 import { injectFault, mock } from '../../mocks/core';
 import { mockOutbox } from '../../mocks/handlers/auth';
@@ -124,6 +125,18 @@ describe('vérification email et réinitialisation', () => {
     const { router } = await renderApp('/verify-email'); // remontage : l'URL ne contient plus le jeton
     await user.click(await screen.findByRole('button', { name: 'Confirmer mon adresse' }));
     await waitFor(() => expect(router.state.location.pathname).toBe('/login'));
+  });
+
+  it('F6-B6 : fin de session ⇒ le jeton retiré de l’URL est oublié', async () => {
+    const token = crypto.randomUUID();
+    mock.db.verifyTokens.set(token, 'aaaaaaaa-0000-4000-8000-000000000006');
+    const first = await renderApp(`/verify-email?token=${token}`, { as: BUYER });
+    await waitFor(() => expect(first.router.state.location.search).toBe(''));
+    first.unmount();
+    await logout(); // fin de session sur cet appareil
+    await renderApp('/verify-email');
+    expect(await screen.findByRole('heading', { name: 'Confirmer mon adresse email' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Confirmer mon adresse' })).toBeNull();
   });
 
   it('lien invalide ⇒ proposition de renvoi', async () => {
