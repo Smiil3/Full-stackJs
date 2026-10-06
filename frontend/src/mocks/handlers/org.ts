@@ -2,13 +2,15 @@ import * as ed from '@noble/ed25519';
 import type { OrderStatus, OrgRole, ScanResult, SyncResult } from '../../api/types';
 import { ORDER_STATUSES } from '../../api/types';
 import { base64urlToBytes } from '../../lib/base64url';
-import { audit, fail, json, mock, noContent, notFound, param, paginate, readBody, readQuery, requireOrgRole, route, type Validator } from '../core';
+import { audit, control, fail, json, mock, noContent, notFound, param, paginate, readBody, readQuery, requireOrgRole, route, type Validator } from '../core';
 import { mockPublicKeyJwk } from '../crypto';
 import { cancelOrder, expireDueOrders, markPaid } from '../domain';
 import { toEventAdmin, toMember, toOrderAdmin, toRefund, toSettings, toTicketTypeAdmin, typesOf } from '../serializers';
 import { maskIban, NO_OVERRIDES, remaining, type MockEvent, type MockSettings } from '../state';
 
 const ORG_ROLES: readonly OrgRole[] = ['OWNER', 'MANAGER', 'SCANNER'];
+/** Taille des lots d'annulation simulés (v1.14). */
+const CANCEL_BATCH = 2;
 
 /** Bornes du plan (§ Paramètres configurables). */
 const BOUNDS = {
@@ -378,15 +380,25 @@ export const orgHandlers = [
     const v = await readBody(request, ['reason']);
     const reason = v.str('reason', { min: 1, max: 500 });
     v.done();
-    if (e.status === 'CANCELLED') fail(409, 'INVALID_STATE', 'Déjà annulé');
+    if (e.status === 'CANCELLED') return json(toEventAdmin(e)); // idempotent (v1.14)
+    if (Date.parse(e.startsAt) <= Date.now()) fail(409, 'CONFLICT', 'Événement déjà commencé');
     e.status = 'CANCELLED';
-    for (const o of mock.db.orders.filter((x) => x.eventId === e.id)) {
-      if (o.status === 'PAID') {
-        o.refundPercent = 100;
-        o.serviceFeeRefundable = true;
+    // v1.14 : traitement des commandes en arrière-plan, par lots.
+    e.cancellationPending = mock.db.orders.filter((x) => x.eventId === e.id && ['PAID', 'PENDING_PAYMENT', 'AWAITING_TRANSFER'].includes(x.status)).map((o) => o.id);
+    const step = () => {
+      const batch = (e.cancellationPending ?? []).splice(0, CANCEL_BATCH);
+      for (const id of batch) {
+        const o = mock.db.orders.find((x) => x.id === id);
+        if (!o) continue;
+        if (o.status === 'PAID') {
+          o.refundPercent = 100;
+          o.serviceFeeRefundable = true;
+        }
+        if (['PAID', 'PENDING_PAYMENT', 'AWAITING_TRANSFER'].includes(o.status)) cancelOrder(o, 'EVENT_CANCELLED');
       }
-      if (['PAID', 'PENDING_PAYMENT', 'AWAITING_TRANSFER'].includes(o.status)) cancelOrder(o, 'EVENT_CANCELLED');
-    }
+      if ((e.cancellationPending ?? []).length > 0) setTimeout(step, control.cancelBatchDelayMs);
+    };
+    setTimeout(step, control.cancelBatchDelayMs);
     audit(orgId, actor, 'event.cancel', `event:${e.id}`, { reason });
     return json(toEventAdmin(e));
   }),

@@ -56,6 +56,8 @@ export type MockEvent = {
   salesEndAt: string;
   overrides: EventOverrides;
   offlineCheckinEnabled: boolean;
+  /** Annulation asynchrone (v1.14) : commandes restant à traiter. */
+  cancellationPending?: string[];
   createdAt: string;
   updatedAt: string;
 };

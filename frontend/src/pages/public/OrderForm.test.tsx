@@ -238,6 +238,11 @@ describe('page événement et commande', () => {
     expect(await screen.findByText(/Vous êtes inscrit·e \(position 1\)/)).toBeInTheDocument();
   });
 
+  it('v1.14 : règles de la liste d’attente expliquées avant l’inscription', async () => {
+    await renderApp(`/events/${IDS.eventSoldOut}`, { as: BUYER });
+    expect(await screen.findByText(/par ordre d’inscription/)).toHaveTextContent(/première personne de la file est servie en priorité/);
+  });
+
   it('virement indisponible ⇒ option absente (événement en ligne)', async () => {
     await renderApp(`/events/${IDS.eventOnline}`, { as: BUYER });
     await screen.findByRole('heading', { name: 'Session acoustique en ligne' });

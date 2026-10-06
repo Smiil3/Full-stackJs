@@ -141,6 +141,7 @@ export function toEventAdmin(e: MockEvent): EventAdmin {
     offlineCheckinEnabled: e.offlineCheckinEnabled,
     effectiveRules: effectiveRules(db(), e),
     ticketTypes: typesOf(e.id).map(toTicketTypeAdmin),
+    cancellationPendingOrders: e.cancellationPending?.length ?? 0,
     createdAt: e.createdAt,
     updatedAt: e.updatedAt,
   };

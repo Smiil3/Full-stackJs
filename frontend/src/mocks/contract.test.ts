@@ -330,6 +330,17 @@ describe('MSW — couverture du contrat', () => {
     await expect(apiRequest(apiPath`/orgs/${IDS.orgNuits}/refunds`)).rejects.toMatchObject({ code: 'FORBIDDEN' });
   });
 
+  it('v1.14 : annulation idempotente, refusée après le début', async () => {
+    await login('owner@nuits.test', DEMO_PASSWORD);
+    const path = apiPath`/orgs/${IDS.orgNuits}/events/${IDS.eventConcert}/cancel`;
+    const first = await post<EventAdmin>(path, { reason: 'Météo' });
+    expect(first.status).toBe('CANCELLED');
+    expect((await post<EventAdmin>(path, { reason: 'Météo' })).status).toBe('CANCELLED');
+    const ev = mock.db.events.find((e) => e.id === IDS.eventOnline);
+    if (ev) ev.startsAt = new Date(Date.now() - 1000).toISOString();
+    await expect(post(apiPath`/orgs/${IDS.orgNuits}/events/${IDS.eventOnline}/cancel`, { reason: 'x' })).rejects.toMatchObject({ code: 'CONFLICT' });
+  });
+
   it('admin plateforme : réservé, création de collectif', async () => {
     await login('owner@nuits.test', DEMO_PASSWORD);
     await expect(apiRequest('/admin/orgs')).rejects.toMatchObject({ code: 'NOT_FOUND' });

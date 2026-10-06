@@ -31,6 +31,10 @@ export function WaitlistJoin({ eventId, ticketType, maxPerOrder }: { eventId: st
   }
   return (
     <div className="stack">
+      <p className="muted m-0 waitlist-help">
+        Liste d’attente par ordre d’inscription. Quand des places se libèrent, la première personne de la file est servie en priorité et reçoit un email : elle a alors un
+        délai limité pour accepter, sinon la suivante est servie. Le nombre maximum de places par personne s’applique aussi à l’acceptation.
+      </p>
       <div className="row">
         <div className="field m-0">
           <label htmlFor={selectId}>Places souhaitées</label>

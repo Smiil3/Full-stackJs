@@ -308,6 +308,36 @@ describe('back-office : événements', () => {
     expect(queryClient.getQueryState(['org', IDS.orgNuits, 'event', IDS.eventDraft, 'stats'])?.isInvalidated).toBe(true);
   });
 
+  it('v1.14 : annulation asynchrone ⇒ « Remboursements en cours : N commandes restantes » jusqu’au bout', async () => {
+    const user = userEvent.setup();
+    for (let i = 0; i < 3; i++) {
+      await login('acheteur@example.test', DEMO_PASSWORD);
+      const o = await apiRequest<Order>('/orders', { method: 'POST', body: { eventId: IDS.eventConcert, paymentMethod: 'CARD', items: [{ ticketTypeId: IDS.ttFosse, quantity: 1 }] }, headers: { 'Idempotency-Key': crypto.randomUUID() } });
+      const stored = mock.db.orders.find((x) => x.id === o.id);
+      if (stored) await (await import('../../mocks/domain')).markPaid(stored);
+      await logout();
+    }
+    const { control } = await import('../../mocks/core');
+    control.cancelBatchDelayMs = 1500;
+    await renderApp(EVENT, { as: OWNER });
+    await user.click(await screen.findByRole('button', { name: 'Annuler l’événement…' }));
+    const dialog = screen.getByRole('dialog', { name: 'Annuler définitivement l’événement ?' });
+    await user.type(within(dialog).getByLabelText(/Motif/), 'Météo');
+    await user.type(within(dialog).getByLabelText(/recopiez le titre/), 'Garonne Électrique — soirée d’ouverture');
+    await user.click(within(dialog).getByRole('button', { name: 'Annuler l’événement' }));
+    expect(await screen.findByText(/Remboursements en cours : 3 commandes restantes/)).toBeInTheDocument();
+    expect(await screen.findByText('Événement annulé : toutes les commandes ont été traitées.', {}, { timeout: 12_000 })).toBeInTheDocument();
+    expect(mock.db.orders.filter((o) => o.eventId === IDS.eventConcert).every((o) => o.status === 'REFUNDED')).toBe(true);
+  }, 20_000);
+
+  it('v1.14 : événement déjà commencé ⇒ annulation désactivée avec explication', async () => {
+    const ev = mock.db.events.find((e) => e.id === IDS.eventConcert);
+    if (ev) ev.startsAt = new Date(Date.now() - 60_000).toISOString();
+    await renderApp(EVENT, { as: OWNER });
+    expect(await screen.findByText(/L’événement a commencé : il ne peut plus être annulé/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Annuler l’événement…' })).toBeDisabled();
+  });
+
   it('MANAGER : pas de bouton d’annulation d’événement', async () => {
     await renderApp(EVENT, { as: MANAGER });
     await screen.findByRole('heading', { name: /Garonne Électrique/ });

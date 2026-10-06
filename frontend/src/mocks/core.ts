@@ -17,6 +17,7 @@ export function resetMockDb(now?: number): MockDb {
   mock.db = createSeed(now);
   faults.length = 0;
   control.latencyMs = 0;
+  control.cancelBatchDelayMs = 300;
   return mock.db;
 }
 
@@ -36,7 +37,7 @@ export type Fault = {
   network?: boolean;
 };
 const faults: Fault[] = [];
-export const control = { latencyMs: 0 };
+export const control = { latencyMs: 0, cancelBatchDelayMs: 300 };
 
 export function injectFault(f: Fault): void {
   faults.push({ times: 1, ...f });

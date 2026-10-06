@@ -12,6 +12,7 @@ import { PageLoader } from '../../components/PageLoader';
 import { EVENT_STATUS_LABELS } from '../../lib/labels';
 import { lookup } from '../../lib/lookup';
 import { EventEditor } from './EventEditor';
+import { useNow } from '../../lib/hooks/useNow';
 import { TicketTypesEditor } from './TicketTypesEditor';
 import { OfflineCheckinSetting } from './OfflineCheckinSetting';
 
@@ -24,6 +25,7 @@ export function EventAdminPage() {
   const { user } = useAuth();
   const role = membershipFor(user, orgId)?.role ?? 'MANAGER';
   const { data: event, error, isPending, refetch } = useOrgEvent(orgId, eventId);
+  const now = useNow(30_000);
   const settings = useOrgSettings(orgId);
   const m = useEventMutations(orgId, eventId);
   const { data: titleData } = useOrgEvent(orgId, eventId);
@@ -49,6 +51,7 @@ export function EventAdminPage() {
 
   if (isPending) return <PageLoader />;
   if (!event) return <ErrorAlert error={error} />;
+  const started = now >= Date.parse(event.startsAt); // horloge du serveur ; le serveur refuse aussi (409)
   const cancelled = event.status === 'CANCELLED';
   const base = apiPath`/org/${orgId}/events/${eventId}`;
 
@@ -122,13 +125,21 @@ export function EventAdminPage() {
         </section>
       ) : null}
 
+      {cancelled && event.cancellationPendingOrders > 0 ? (
+        <p className="alert alert--info" role="status">
+          Remboursements en cours : {event.cancellationPendingOrders} commande{event.cancellationPendingOrders > 1 ? 's' : ''} restante{event.cancellationPendingOrders > 1 ? 's' : ''} (mise à jour automatique).
+        </p>
+      ) : null}
+      {cancelled && event.cancellationPendingOrders === 0 ? <p className="alert alert--info">Événement annulé : toutes les commandes ont été traitées.</p> : null}
+
       {role === 'OWNER' && !cancelled ? (
         <section className="stack card" aria-labelledby="titre-annulation">
           <h2 id="titre-annulation" className="m-0">
             Annuler l’événement
           </h2>
           <p>Toutes les commandes payées seront remboursées intégralement et les acheteurs prévenus par email. Action irréversible.</p>
-          <button type="button" className="btn btn--danger" onClick={() => setCancelOpen(true)}>
+          {started ? <p className="alert alert--warning m-0">L’événement a commencé : il ne peut plus être annulé en ligne.</p> : null}
+          <button type="button" className="btn btn--danger" disabled={started} onClick={() => setCancelOpen(true)}>
             Annuler l’événement…
           </button>
         </section>

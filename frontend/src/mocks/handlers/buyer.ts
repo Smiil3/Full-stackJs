@@ -229,6 +229,11 @@ export const buyerHandlers = [
     const tt = mock.db.ticketTypes.find((t) => t.id === w.ticketTypeId);
     if (!event || !tt) return notFound();
     const rules = effectiveRules(mock.db, event);
+    // v1.14 : plafond par personne revérifié à l'acceptation.
+    const owned = mock.db.orders
+      .filter((o) => o.userId === user.id && o.eventId === event.id && ACTIVE_ORDER.has(o.status))
+      .reduce((s, o) => s + o.items.reduce((a, i) => a + i.quantity, 0), 0);
+    if (owned + w.quantity > rules.maxPerUser) fail(422, 'LIMIT_EXCEEDED', 'Plafond par personne', { max: rules.maxPerUser, alreadyOwned: owned });
     const now = Date.now();
     const unit = currentPrice(tt, now).cents;
     const subtotal = unit * w.quantity;

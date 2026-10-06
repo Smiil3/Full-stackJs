@@ -139,6 +139,21 @@ describe('mes billets', () => {
     expect(await screen.findByRole('button', { name: /Payer/ })).toBeInTheDocument();
   });
 
+  it('v1.14 : acceptation au-delà du plafond par personne ⇒ message LIMIT_EXCEEDED', async () => {
+    const user = userEvent.setup();
+    await login(BUYER, DEMO_PASSWORD);
+    await apiRequest(`/events/${IDS.eventSoldOut}/ticket-types/${IDS.ttSoldOut}/waitlist`, { method: 'POST', body: { quantity: 1 } });
+    const tt = mock.db.ticketTypes.find((t) => t.id === IDS.ttSoldOut);
+    if (tt) {
+      tt.held -= 2;
+      offerToWaitlist(tt);
+    }
+    await renderApp('/me/tickets');
+    injectFault({ route: 'POST /waitlist/:entryId/accept', status: 422, code: 'LIMIT_EXCEEDED', details: { max: 6, alreadyOwned: 6 } });
+    await user.click(await screen.findByRole('button', { name: 'Accepter et payer' }));
+    expect(await screen.findByText('Vous ne pouvez pas dépasser 6 places. Vous en avez déjà 6.')).toBeInTheDocument();
+  });
+
   it('liste d’attente : offre expirée ⇒ message OFFER_EXPIRED', async () => {
     const user = userEvent.setup();
     await login(BUYER, DEMO_PASSWORD);

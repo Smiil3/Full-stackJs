@@ -297,6 +297,8 @@ export type EventAdmin = {
   offlineCheckinEnabled: boolean;
   effectiveRules: EventRulesPublic;
   ticketTypes: TicketTypeAdmin[];
+  /** Annulation d'événement traitée en arrière-plan : commandes restant à traiter (v1.14). */
+  cancellationPendingOrders: number;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
 };
