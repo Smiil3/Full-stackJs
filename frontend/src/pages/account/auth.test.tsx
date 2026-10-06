@@ -105,19 +105,29 @@ describe('vérification email et réinitialisation', () => {
     const user = userEvent.setup();
     const token = crypto.randomUUID();
     mock.db.verifyTokens.set(token, 'aaaaaaaa-0000-4000-8000-000000000006');
-    window.history.replaceState(null, '', `/verify-email?token=${token}`);
     const { router } = await renderApp(`/verify-email?token=${token}`);
     await screen.findByRole('button', { name: 'Confirmer mon adresse' });
-    expect(window.location.search).not.toContain(token);
+    await waitFor(() => expect(router.state.location.search).toBe(''));
     expect(mock.db.calls.get('POST /auth/verify-email') ?? 0).toBe(0); // rien d'automatique
     await user.click(screen.getByRole('button', { name: 'Confirmer mon adresse' }));
     await waitFor(() => expect(router.state.location.pathname).toBe('/login'));
     expect(await screen.findByText(/Votre adresse email est confirmée/)).toBeInTheDocument();
   });
 
+  it('M7 : jeton retiré de l’URL sans être perdu au remontage du composant', async () => {
+    const user = userEvent.setup();
+    const token = crypto.randomUUID();
+    mock.db.verifyTokens.set(token, 'aaaaaaaa-0000-4000-8000-000000000006');
+    const first = await renderApp(`/verify-email?token=${token}`);
+    await waitFor(() => expect(first.router.state.location.search).toBe(''));
+    first.unmount();
+    const { router } = await renderApp('/verify-email'); // remontage : l'URL ne contient plus le jeton
+    await user.click(await screen.findByRole('button', { name: 'Confirmer mon adresse' }));
+    await waitFor(() => expect(router.state.location.pathname).toBe('/login'));
+  });
+
   it('lien invalide ⇒ proposition de renvoi', async () => {
     const user = userEvent.setup();
-    window.history.replaceState(null, '', '/verify-email?token=faux');
     await renderApp('/verify-email?token=faux');
     await user.click(await screen.findByRole('button', { name: 'Confirmer mon adresse' }));
     expect(await screen.findByText(/Ce lien est invalide ou a expiré/)).toBeInTheDocument();
@@ -136,7 +146,6 @@ describe('vérification email et réinitialisation', () => {
     const user = userEvent.setup();
     const token = crypto.randomUUID();
     mock.db.resetTokens.set(token, 'aaaaaaaa-0000-4000-8000-000000000001');
-    window.history.replaceState(null, '', `/reset-password?token=${token}`);
     const { router } = await renderApp(`/reset-password?token=${token}`);
     await user.type(await screen.findByLabelText('Nouveau mot de passe'), 'nouvelle-phrase-de-passe');
     await user.type(screen.getByLabelText('Confirmer'), 'nouvelle-phrase-de-passe');

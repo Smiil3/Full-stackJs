@@ -6,6 +6,7 @@ import { __resetClientForTests } from '../api/client';
 import { runSessionCleanups } from '../auth/sessionCleanup';
 import { __resetServerClock } from '../api/serverClock';
 import { __resetCheckoutLaunched } from '../api/hooks/orders';
+import { __resetUrlTokens } from '../pages/account/useUrlToken';
 import { resetMockDb } from '../mocks/core';
 import { server } from '../mocks/server';
 
@@ -29,6 +30,7 @@ afterEach(async () => {
   __resetClientForTests();
   __resetServerClock();
   __resetCheckoutLaunched();
+  __resetUrlTokens();
 });
 afterAll(() => {
   server.close();
