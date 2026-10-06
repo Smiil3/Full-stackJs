@@ -43,6 +43,13 @@ export function resolvePspRedirect(
   return null;
 }
 
+/** Au démarrage : en production, une origine PSP valide (https) est OBLIGATOIRE — échec explicite sinon. */
+export function assertPspConfig(env: { pspOrigin: string | undefined; isProd: boolean }): void {
+  if (env.isProd && !allowedPspOrigin(env.pspOrigin, true)) {
+    throw new Error('VITE_PSP_ORIGIN manquante ou invalide : origine https du prestataire de paiement attendue (ex. https://pay.psp.example).');
+  }
+}
+
 export function currentPspEnv() {
   return { appOrigin: window.location.origin, pspOrigin: import.meta.env.VITE_PSP_ORIGIN, isProd: import.meta.env.PROD };
 }

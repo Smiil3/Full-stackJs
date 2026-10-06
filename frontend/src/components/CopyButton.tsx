@@ -1,7 +1,18 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+
+const RESET_MS = 2000;
 
 export function CopyButton({ value, label }: { value: string; label: string }) {
   const [state, setState] = useState<'idle' | 'ok' | 'ko'>('idle');
+  useEffect(() => {
+    if (state === 'idle') return;
+    const timer = setTimeout(() => {
+      setState('idle');
+    }, RESET_MS);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [state]);
   const copy = async () => {
     try {
       await navigator.clipboard.writeText(value);

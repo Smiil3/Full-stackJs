@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolvePspRedirect } from './pspRedirect';
+import { assertPspConfig, resolvePspRedirect } from './pspRedirect';
 
 const dev = { appOrigin: 'http://localhost:5173', pspOrigin: 'http://localhost:4001', isProd: false };
 const prod = { appOrigin: 'https://billetterie.example.org', pspOrigin: 'https://pay.psp.example', isProd: true };
@@ -24,6 +24,14 @@ describe('resolvePspRedirect', () => {
   ])('refuse %s', (url) => {
     expect(resolvePspRedirect(url, dev)).toBeNull();
   });
+  it('B1 : configuration obligatoire en production, facultative en dev', () => {
+    expect(() => assertPspConfig({ pspOrigin: undefined, isProd: true })).toThrow('VITE_PSP_ORIGIN');
+    expect(() => assertPspConfig({ pspOrigin: 'http://pay.psp.example', isProd: true })).toThrow('VITE_PSP_ORIGIN');
+    expect(() => assertPspConfig({ pspOrigin: 'https://pay.psp.example/chemin', isProd: true })).toThrow('VITE_PSP_ORIGIN');
+    expect(() => assertPspConfig({ pspOrigin: 'https://pay.psp.example', isProd: true })).not.toThrow();
+    expect(() => assertPspConfig({ pspOrigin: undefined, isProd: false })).not.toThrow();
+  });
+
   it('en production : refuse le http et l’absence de configuration', () => {
     expect(resolvePspRedirect('http://pay.psp.example/c/1', prod)).toBeNull();
     expect(resolvePspRedirect('https://pay.psp.example/c/1', { ...prod, pspOrigin: undefined })).toBeNull();

@@ -1,6 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
+import { assertPspConfig } from './lib/pspRedirect';
 import './styles/global.css';
 
 async function bootstrap() {
@@ -12,6 +13,13 @@ async function bootstrap() {
   }
   const root = document.getElementById('root');
   if (!root) throw new Error('#root introuvable');
+  try {
+    // Configuration de déploiement vérifiée au démarrage (échec explicite plutôt qu'un comportement dégradé).
+    assertPspConfig({ pspOrigin: import.meta.env.VITE_PSP_ORIGIN, isProd: import.meta.env.PROD });
+  } catch (e) {
+    root.textContent = 'Application mal configurée. Contactez l’administrateur du site.';
+    throw e;
+  }
   createRoot(root).render(
     <StrictMode>
       <App />
