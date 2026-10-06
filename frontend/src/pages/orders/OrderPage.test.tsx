@@ -175,8 +175,9 @@ describe('page commande', () => {
   });
 
   it('non connecté ⇒ renvoi vers la connexion avec retour', async () => {
-    const { router } = await renderApp('/orders/abc?payment=success');
+    const id = '0f0e0d0c-0b0a-4908-8706-050403020100';
+    const { router } = await renderApp(`/orders/${id}?payment=success`);
     await waitFor(() => expect(router.state.location.pathname).toBe('/login'));
-    expect(router.state.location.search).toBe(`?next=${encodeURIComponent('/orders/abc?payment=success')}`);
+    expect(router.state.location.search).toBe(`?next=${encodeURIComponent(`/orders/${id}?payment=success`)}`);
   });
 });
