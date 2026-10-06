@@ -48,6 +48,7 @@ test('liste d’attente : complet ⇒ inscription ⇒ annulation d’un autre ac
   await b.getByRole('button', { name: /^Payer$/ }).click();
   await expect(b.getByText(/Paiement confirmé/)).toBeVisible({ timeout: 30_000 });
   await b.getByRole('link', { name: 'Mes billets' }).first().click();
+  await b.getByRole('button', { name: 'Afficher le QR code' }).click();
   await expect(b.getByRole('img', { name: /QR code du billet Unique/ })).toBeVisible();
 });
 

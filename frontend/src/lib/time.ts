@@ -157,6 +157,14 @@ export function formatDate(iso: string | Date | number, tz: string): string {
   return [part(parts, 'weekday'), part(parts, 'day'), part(parts, 'month'), part(parts, 'year')].filter(Boolean).join(' ');
 }
 
+/** « dimanche 7 mars » (année ajoutée si elle diffère de l'année en cours), dans le fuseau donné. */
+export function formatLongDate(iso: string | Date | number, tz: string): string {
+  tz = zone(tz);
+  const d = new Date(toEpoch(iso));
+  const sameYear = new Intl.DateTimeFormat(LOCALE, { timeZone: tz, year: 'numeric' }).format(d) === new Intl.DateTimeFormat(LOCALE, { timeZone: tz, year: 'numeric' }).format(new Date());
+  return new Intl.DateTimeFormat(LOCALE, { timeZone: tz, weekday: 'long', day: 'numeric', month: 'long', ...(sameYear ? {} : { year: 'numeric' }) }).format(d);
+}
+
 /** « 21:04 » dans le fuseau donné. */
 export function formatTime(iso: string | Date | number, tz: string): string {
   tz = zone(tz);

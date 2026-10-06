@@ -17,8 +17,12 @@ function orderKeys(): string[] {
   return keys;
 }
 
+/** Sélecteur − n + : ajuste la quantité « Fosse » jusqu'à la valeur voulue. */
 async function chooseFosse(user: ReturnType<typeof userEvent.setup>, qty: string) {
-  await user.selectOptions(await screen.findByLabelText('Nombre de places « Fosse »'), qty);
+  const group = await screen.findByRole('group', { name: 'Nombre de places « Fosse »' });
+  const current = () => Number(within(group).getByRole('status').textContent);
+  while (current() < Number(qty)) await user.click(within(group).getByRole('button', { name: 'Ajouter une place Fosse' }));
+  while (current() > Number(qty)) await user.click(within(group).getByRole('button', { name: 'Retirer une place Fosse' }));
 }
 
 describe('page événement et commande', () => {
@@ -52,7 +56,7 @@ describe('page événement et commande', () => {
     const user = userEvent.setup();
     const { router } = await renderApp(EVENT_URL, { as: BUYER });
     await chooseFosse(user, '1');
-    await user.click(screen.getByRole('button', { name: 'Réserver 1 place' }));
+    await user.click(screen.getByRole('button', { name: /^Réserver 1 place ·/ }));
     expect(await screen.findByRole('button', { name: /Payer 18,95\s€ par carte/ })).toBeInTheDocument();
     expect(router.state.location.pathname).toMatch(/^\/orders\//);
     expect(screen.getAllByText(/Places réservées encore/).length).toBeGreaterThan(0);
@@ -64,7 +68,7 @@ describe('page événement et commande', () => {
     control.latencyMs = 150;
     await renderApp(EVENT_URL, { as: BUYER });
     await chooseFosse(user, '1');
-    const button = screen.getByRole('button', { name: 'Réserver 1 place' });
+    const button = screen.getByRole('button', { name: /^Réserver 1 place ·/ });
     await user.dblClick(button);
     await user.click(button);
     await screen.findByRole('button', { name: /Payer/ });
@@ -79,15 +83,15 @@ describe('page événement et commande', () => {
     await renderApp(EVENT_URL, { as: BUYER });
     await chooseFosse(user, '1');
     injectFault({ route: 'POST /orders', status: 0, code: 'INTERNAL_ERROR', network: true });
-    await user.click(screen.getByRole('button', { name: 'Réserver 1 place' }));
+    await user.click(screen.getByRole('button', { name: /^Réserver 1 place ·/ }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Connexion impossible');
     injectFault({ route: 'POST /orders', status: 0, code: 'INTERNAL_ERROR', network: true });
-    await user.click(screen.getByRole('button', { name: 'Réserver 1 place' }));
+    await user.click(screen.getByRole('button', { name: /^Réserver 1 place ·/ }));
     await waitFor(() => expect(keys).toHaveLength(2));
     expect(keys[1]).toBe(keys[0]);
 
     await chooseFosse(user, '2');
-    await user.click(screen.getByRole('button', { name: 'Réserver 2 places' }));
+    await user.click(screen.getByRole('button', { name: /^Réserver 2 places ·/ }));
     await screen.findByRole('button', { name: /Payer/ });
     server.events.removeAllListeners();
     expect(keys).toHaveLength(3);
@@ -109,9 +113,9 @@ describe('page événement et commande', () => {
     );
     await renderApp(EVENT_URL, { as: BUYER });
     await chooseFosse(user, '1');
-    await user.click(screen.getByRole('button', { name: 'Réserver 1 place' }));
+    await user.click(screen.getByRole('button', { name: /^Réserver 1 place ·/ }));
     await screen.findByRole('alert');
-    await user.click(screen.getByRole('button', { name: 'Réserver 1 place' }));
+    await user.click(screen.getByRole('button', { name: /^Réserver 1 place ·/ }));
     await screen.findByRole('button', { name: /Payer/ });
     expect(mock.db.orders).toHaveLength(1);
   });
@@ -122,7 +126,7 @@ describe('page événement et commande', () => {
     await chooseFosse(user, '1');
     const before = mock.db.calls.get(`GET /events/:eventId`) ?? 0;
     injectFault({ route: 'POST /orders', status: 409, code: 'SOLD_OUT', details: { ticketTypeId: IDS.ttFosse } });
-    await user.click(screen.getByRole('button', { name: 'Réserver 1 place' }));
+    await user.click(screen.getByRole('button', { name: /^Réserver 1 place ·/ }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Plus assez de places « Fosse »');
     await waitFor(() => expect(mock.db.calls.get(`GET /events/:eventId`) ?? 0).toBeGreaterThan(before));
   });
@@ -133,10 +137,10 @@ describe('page événement et commande', () => {
     await chooseFosse(user, '2');
     const fosse = mock.db.ticketTypes.find((t) => t.id === IDS.ttFosse);
     if (fosse) fosse.sold = fosse.capacity - fosse.held; // épuisé entre-temps
-    await user.click(screen.getByRole('button', { name: 'Réserver 2 places' }));
+    await user.click(screen.getByRole('button', { name: /^Réserver 2 places ·/ }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Plus assez de places « Fosse »');
-    expect(await screen.findByRole('button', { name: 'Choisissez vos places' })).toBeDisabled();
-    expect(screen.queryByLabelText('Nombre de places « Fosse »')).toBeNull();
+    expect(await screen.findByRole('button', { name: 'Choisissez au moins une place' })).toBeDisabled();
+    expect(screen.queryByRole('group', { name: 'Nombre de places « Fosse »' })).toBeNull();
     expect(mock.db.calls.get('POST /orders')).toBe(1);
   });
 
@@ -146,12 +150,12 @@ describe('page événement et commande', () => {
     const first = await renderApp(EVENT_URL, { as: BUYER });
     await chooseFosse(user, '1');
     injectFault({ route: 'POST /orders', status: 0, code: 'INTERNAL_ERROR', network: true });
-    await user.click(screen.getByRole('button', { name: 'Réserver 1 place' }));
+    await user.click(screen.getByRole('button', { name: /^Réserver 1 place ·/ }));
     await screen.findByRole('alert');
     first.unmount();
     await renderApp(EVENT_URL);
     await chooseFosse(user, '1');
-    await user.click(await screen.findByRole('button', { name: 'Réserver 1 place' }));
+    await user.click(await screen.findByRole('button', { name: /^Réserver 1 place ·/ }));
     await screen.findByRole('button', { name: /Payer/ });
     server.events.removeAllListeners();
     expect(keys).toHaveLength(2);
@@ -175,11 +179,11 @@ describe('page événement et commande', () => {
 
     const { router } = await renderApp(EVENT_URL);
     await chooseFosse(user, '1');
-    await user.click(screen.getByRole('button', { name: 'Réserver 1 place' }));
+    await user.click(screen.getByRole('button', { name: /^Réserver 1 place ·/ }));
     expect(await screen.findByText(/Le délai de réservation est dépassé/)).toBeInTheDocument(); // même clé ⇒ commande EXPIRED renvoyée
     await router.navigate(EVENT_URL);
     await chooseFosse(user, '1');
-    await user.click(await screen.findByRole('button', { name: 'Réserver 1 place' }));
+    await user.click(await screen.findByRole('button', { name: /^Réserver 1 place ·/ }));
     await screen.findByRole('button', { name: /Payer/ });
     server.events.removeAllListeners();
     expect(keys[0]).toBe(key);
@@ -193,7 +197,7 @@ describe('page événement et commande', () => {
     await renderApp(EVENT_URL, { as: BUYER });
     await chooseFosse(user, '1');
     injectFault({ route: 'POST /orders', status: 422, code: 'LIMIT_EXCEEDED', details: { max: 6, alreadyOwned: 6 } });
-    await user.click(screen.getByRole('button', { name: 'Réserver 1 place' }));
+    await user.click(screen.getByRole('button', { name: /^Réserver 1 place ·/ }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Vous ne pouvez pas dépasser 6 places. Vous en avez déjà 6.');
   });
 
@@ -207,7 +211,7 @@ describe('page événement et commande', () => {
     await renderApp(EVENT_URL, { as: BUYER });
     await chooseFosse(user, '1');
     injectFault({ route: 'POST /orders', status, code });
-    await user.click(screen.getByRole('button', { name: 'Réserver 1 place' }));
+    await user.click(screen.getByRole('button', { name: /^Réserver 1 place ·/ }));
     expect(await screen.findByRole('alert')).toHaveTextContent(text);
   });
 
@@ -215,8 +219,12 @@ describe('page événement et commande', () => {
     const user = userEvent.setup();
     await renderApp(EVENT_URL, { as: BUYER });
     await chooseFosse(user, '4');
-    const balcon = screen.getByLabelText('Nombre de places « Balcon »');
-    expect(within(balcon).getAllByRole('option').map((o) => o.textContent)).toEqual(['0', '1', '2']);
+    const balcon = screen.getByRole('group', { name: 'Nombre de places « Balcon »' });
+    const add = within(balcon).getByRole('button', { name: 'Ajouter une place Balcon' });
+    await user.click(add);
+    await user.click(add);
+    expect(within(balcon).getByRole('status')).toHaveTextContent('2');
+    expect(add).toBeDisabled(); // 4 + 2 = plafond de 6 par commande
   });
 
   it('virement choisi ⇒ commande en attente de virement avec référence à copier', async () => {
@@ -224,7 +232,7 @@ describe('page événement et commande', () => {
     await renderApp(EVENT_URL, { as: BUYER });
     await chooseFosse(user, '1');
     await user.click(screen.getByRole('radio', { name: /Virement bancaire/ }));
-    await user.click(screen.getByRole('button', { name: 'Réserver 1 place' }));
+    await user.click(screen.getByRole('button', { name: /^Réserver 1 place ·/ }));
     expect(await screen.findByRole('heading', { name: 'Instructions de virement' })).toBeInTheDocument();
     expect(screen.getByText(/^NG-[A-Z0-9]{8}$/)).toBeInTheDocument();
     expect(screen.getByText('FR76 3000 6000 0112 3456 7890 189')).toBeInTheDocument();

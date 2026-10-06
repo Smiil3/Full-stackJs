@@ -60,19 +60,20 @@ test('acheteur : inscription, vérification email (Mailpit), réservation par ca
   await page.getByRole('main').getByRole('link', { name: 'Jazz au Hangar' }).click();
   await expect(page.getByText(/heure de Paris/).first()).toBeVisible();
   // Carte
-  await page.getByLabel('Nombre de places « Parterre »').selectOption('1');
+  await page.getByRole('button', { name: 'Ajouter une place Parterre' }).click();
   await page.getByRole('button', { name: /Réserver 1 place/ }).click();
   await expect(page.getByRole('heading', { name: 'Commande' })).toBeVisible();
   await expect(page.getByRole('button', { name: /Payer .* par carte/ })).toBeVisible();
   await expect(page.getByText(/Places réservées encore/).first()).toBeVisible();
   // Virement
   await page.goBack();
-  await page.getByLabel('Nombre de places « Parterre »').selectOption('1');
+  await page.getByRole('button', { name: 'Ajouter une place Parterre' }).click();
   await page.getByRole('radio', { name: /Virement bancaire/ }).check();
   await page.getByRole('button', { name: /Réserver 1 place/ }).click();
   await expect(page.getByRole('heading', { name: 'Instructions de virement' })).toBeVisible();
   await expect(page.getByText(/FR76 3000 6000 0112 3456 7890 189/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Copier la référence' })).toBeVisible();
+  await page.getByRole('button', { name: 'Ouvrir le menu' }).click();
   await page.getByRole('link', { name: 'Commandes' }).first().click();
   await expect(page.getByRole('heading', { name: 'Mes commandes' })).toBeVisible();
   await expect(page.getByText('Jazz au Hangar').first()).toBeVisible();
@@ -87,7 +88,7 @@ test('paiement carte réel : PSP simulé ⇒ retour ⇒ attente du webhook ⇒ b
   const buyer = await createVerifiedBuyer(request);
   await login(page, buyer.email, '/', buyer.password);
   await page.getByRole('main').getByRole('link', { name: 'Jazz au Hangar' }).click();
-  await page.getByLabel('Nombre de places « Parterre »').selectOption('1');
+  await page.getByRole('button', { name: 'Ajouter une place Parterre' }).click();
   await page.getByRole('button', { name: /Réserver 1 place/ }).click();
   await page.getByRole('button', { name: /Payer .* par carte/ }).click();
   await expect(page).toHaveURL(/^http:\/\/localhost:4001\//);
@@ -102,7 +103,7 @@ test('virement réel : réservation acheteur puis validation par le gestionnaire
   const buyer = await browser.newPage();
   await login(buyer, account.email, '/', account.password);
   await buyer.getByRole('main').getByRole('link', { name: 'Jazz au Hangar' }).click();
-  await buyer.getByLabel('Nombre de places « Parterre »').selectOption('1');
+  await buyer.getByRole('button', { name: 'Ajouter une place Parterre' }).click();
   await buyer.getByRole('radio', { name: /Virement bancaire/ }).check();
   await buyer.getByRole('button', { name: /Réserver 1 place/ }).click();
   const reference = (await buyer.locator('.reference').textContent())?.trim() ?? '';

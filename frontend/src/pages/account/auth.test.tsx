@@ -84,8 +84,17 @@ describe('inscription', () => {
     await user.type(screen.getByLabelText('Mot de passe'), 'une-phrase-de-passe');
     await user.type(screen.getByLabelText('Confirmer le mot de passe'), 'une-autre-phrase');
     await user.click(screen.getByRole('button', { name: 'Créer mon compte' }));
-    expect(screen.getByText(/caractères accentués non acceptés/)).toBeInTheDocument();
+    expect(screen.getByText(/caractères accentués ne sont pas acceptés/)).toBeInTheDocument();
     expect(screen.getByText('Les deux mots de passe ne correspondent pas.')).toBeInTheDocument();
+    expect(mock.db.calls.get('POST /auth/register') ?? 0).toBe(0);
+  });
+
+  it('D1 : champs vides ⇒ messages humains (§ 7), rien n’est envoyé', async () => {
+    const user = userEvent.setup();
+    await renderApp('/register');
+    await user.click(await screen.findByRole('button', { name: 'Créer mon compte' }));
+    expect(screen.getByText('Il manque votre e-mail : c’est là que nous envoyons les billets.')).toBeInTheDocument();
+    expect(screen.getByText('Il manque votre nom.')).toBeInTheDocument();
     expect(mock.db.calls.get('POST /auth/register') ?? 0).toBe(0);
   });
 

@@ -18,17 +18,19 @@ test('parcours acheteur complet (carte) en mode mock', async ({ page }) => {
   await page.getByLabel('Mot de passe').fill('demo-nuits-2026');
   await page.getByRole('button', { name: 'Se connecter' }).click();
 
-  await page.getByLabel('Nombre de places « Fosse »').selectOption('2');
+  await page.getByRole('button', { name: 'Ajouter une place Fosse' }).click();
+  await page.getByRole('button', { name: 'Ajouter une place Fosse' }).click();
   await expect(page.getByRole('region', { name: 'Récapitulatif' })).toContainText('37,40');
-  await page.getByRole('button', { name: 'Réserver 2 places' }).click();
+  await page.getByRole('button', { name: /^Réserver 2 places/ }).click();
   await page.getByRole('button', { name: /Payer .* par carte/ }).click();
   await page.getByRole('button', { name: 'Payer', exact: true }).click();
   await expect(page.getByText('Paiement en cours de confirmation')).toBeVisible();
   await expect(page.getByText(/Paiement confirmé/)).toBeVisible({ timeout: 15_000 });
 
   await page.getByRole('link', { name: 'Mes billets' }).first().click();
-  await expect(page.getByRole('img', { name: /QR code du billet Fosse/ })).toHaveCount(2);
-  await page.getByRole('button', { name: 'Afficher en plein écran' }).first().click();
+  await expect(page.getByText('2 billets · Fosse')).toBeVisible();
+  await page.getByRole('button', { name: 'Afficher le QR code' }).click();
+  await expect(page.getByRole('img', { name: /QR code du billet Fosse/ })).toBeVisible();
   await expect(page.getByText('Augmentez la luminosité de votre écran')).toBeVisible();
   await page.getByRole('button', { name: 'Fermer' }).click();
 

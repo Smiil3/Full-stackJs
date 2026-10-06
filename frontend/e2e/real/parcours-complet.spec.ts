@@ -21,8 +21,8 @@ test('achat carte ⇒ mail ⇒ billet QR ⇒ scan OK puis DÉJÀ UTILISÉ', asyn
   await buyer.getByLabel('Mot de passe').fill(account.password);
   await buyer.getByRole('button', { name: 'Se connecter' }).click();
   await buyer.getByRole('main').getByRole('link', { name: ev.title }).click();
-  await buyer.getByLabel('Nombre de places « Unique »').selectOption('1');
-  await buyer.getByRole('button', { name: 'Réserver 1 place' }).click();
+  await buyer.getByRole('button', { name: 'Ajouter une place Unique' }).click();
+  await buyer.getByRole('button', { name: /^Réserver 1 place/ }).click();
   await buyer.getByRole('button', { name: /Payer .* par carte/ }).click();
   await buyer.getByRole('button', { name: /^Payer$/ }).click();
   await expect(buyer.getByText(/Paiement confirmé/)).toBeVisible({ timeout: 30_000 });
@@ -33,8 +33,8 @@ test('achat carte ⇒ mail ⇒ billet QR ⇒ scan OK puis DÉJÀ UTILISÉ', asyn
 
   // 3. Billet dans « Mes billets » : QR affiché, plein écran
   await buyer.getByRole('link', { name: 'Mes billets' }).first().click();
+  await buyer.getByRole('button', { name: 'Afficher le QR code' }).click();
   await expect(buyer.getByRole('img', { name: /QR code du billet Unique/ })).toBeVisible();
-  await buyer.getByRole('button', { name: 'Afficher en plein écran' }).click();
   await expect(buyer.getByText('Augmentez la luminosité de votre écran')).toBeVisible();
   await buyer.getByRole('button', { name: 'Fermer' }).click();
 

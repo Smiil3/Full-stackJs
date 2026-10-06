@@ -15,7 +15,7 @@ export function RegisterPage() {
 
   const local = {
     email: emailProblem(email),
-    displayName: displayName.trim().length < 1 || displayName.length > 80 ? 'Entre 1 et 80 caractères.' : undefined,
+    displayName: displayName.trim().length < 1 ? 'Il manque votre nom.' : displayName.length > 80 ? 'Entre 1 et 80 caractères.' : undefined,
     password: passwordProblem(password, confirm),
   };
   const server = fieldErrors(register.error);

@@ -87,7 +87,7 @@ describe('page commande', () => {
   it('retour PSP « failed » : message et nouvel essai possible', async () => {
     const order = await createOrder();
     await renderApp(`/orders/${order.id}?payment=failed`);
-    expect(await screen.findByText(/Le paiement n’a pas abouti/)).toBeInTheDocument();
+    expect(await screen.findByText(/Le paiement n’est pas passé\. Aucun montant n’a été débité\./)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Payer/ })).toBeEnabled();
   });
 
@@ -205,5 +205,19 @@ describe('page commande', () => {
     const { router } = await renderApp(`/orders/${id}?payment=success`);
     await waitFor(() => expect(router.state.location.pathname).toBe('/login'));
     expect(router.state.location.search).toBe(`?next=${encodeURIComponent(`/orders/${id}?payment=success`)}`);
+  });
+
+  it('D1 : virement — ton rassurant, une date et jamais de compte à rebours, valeurs à copier', async () => {
+    const order = await createOrder('TRANSFER');
+    await renderApp(`/orders/${order.id}`);
+    expect(await screen.findByRole('heading', { name: 'Il ne reste plus qu’à faire le virement' })).toBeInTheDocument();
+    expect(screen.getByText('Réservation enregistrée')).toBeInTheDocument();
+    expect(screen.getByText(/Vos places vous attendent jusqu’au/)).toHaveTextContent(/sans aucun frais/);
+    expect(screen.queryByText(/Temps restant/)).toBeNull();
+    expect(screen.queryByRole('timer')).toBeNull();
+    for (const label of ['le montant', 'la référence', 'le bénéficiaire', 'l’IBAN', 'le BIC']) {
+      expect(screen.getByRole('button', { name: `Copier ${label}` })).toBeInTheDocument();
+    }
+    expect(screen.getByText('Elle nous permet de reconnaître votre virement.')).toBeInTheDocument();
   });
 });

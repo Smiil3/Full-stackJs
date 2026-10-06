@@ -71,3 +71,22 @@ legend { font-family: var(--font-display); font-weight: 700; padding: 0 var(--sp
 .qr-full__close { background: transparent; color: #F4EFE6; border-color: #7A72A8; }
 .qr-full__close:hover { background: #1B1830; }
 .qr-full__nav .btn { background: transparent; color: #F4EFE6; border-color: #7A72A8; }
+
+/* Recherche du catalogue : libellé masqué, icône dans le champ */
+.search { display: flex; align-items: center; gap: var(--space-2); min-height: var(--tap-lg); padding: 0 var(--space-4); border: 1.5px solid var(--color-border-strong); border-radius: var(--radius-pill); background: var(--color-surface); }
+.search .icon { color: var(--color-muted); }
+.search input { flex: 1; min-width: 0; border: 0; background: transparent; font-size: max(16px, var(--text-md)); min-height: calc(var(--tap-lg) - 4px); }
+.search input:focus-visible { outline: none; }
+.search:focus-within { outline: 3px solid var(--color-focus); outline-offset: 2px; }
+.event-card__body > .badge { align-self: flex-start; }
+.event-facts { grid-template-columns: 1.5rem 1fr; align-items: start; }
+.event-facts dt { color: var(--color-accent); padding-top: 2px; }
+.choice-group { border: 0; padding: 0; }
+.choice-group > legend { padding: 0; margin-bottom: var(--space-2); font-size: var(--text-lg); }
+.ticket-type h3 { font-size: var(--text-lg); }
+.ticket-type__foot > p { margin: 0; }
+.ok-line { color: var(--color-success); font-weight: 700; gap: var(--space-2); }
+.copy-row__body dd.field__hint { font-weight: 400; }
+ol.stack { margin: 0; padding-left: 1.25rem; }
+.choice__text { font-weight: 700; }
+.choice__text .choice__hint { font-weight: 400; }

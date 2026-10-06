@@ -66,6 +66,7 @@ test('acheteur : fiche événement, virement, mes billets, QR, liste d’attente
   await shot(page, '04-mes-billets');
   await page.getByRole('button', { name: /Afficher (en plein écran|le QR code)/ }).first().click();
   await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.getByRole('img', { name: /QR code du billet/ })).toBeVisible();
   await shot(page, '05-qr-plein-ecran');
   await page.getByRole('button', { name: 'Fermer' }).click();
   await go(page, `/events/${SOLD_OUT}`);
