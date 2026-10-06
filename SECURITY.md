@@ -8,7 +8,7 @@ Ne pas ouvrir de ticket public. Écrire aux mainteneurs du dépôt en décrivant
 
 ## Vue d'ensemble
 
-- `backend/` : API Express 5 + TypeScript strict, PostgreSQL 16 via Prisma, validation Joi des entrées **et** des sorties, worker séparé (expirations, remboursements, mails, liste d'attente).
+- `backend/` : API Express 5 + TypeScript strict, PostgreSQL 16 via Prisma, validation Joi des entrées **et** des sorties, worker séparé (expirations, remboursements, mails, liste d'attente, annulations d'événement, rapprochement des paiements auprès du PSP).
 - `frontend/` : React 19 + TypeScript strict, PWA mobile-first, scanner d'entrée.
 - Prestataire de paiement **simulé** (développement uniquement).
 
@@ -31,7 +31,7 @@ Ne pas ouvrir de ticket public. Écrire aux mainteneurs du dépôt en décrivant
 ### Autorisations et isolation des collectifs
 - Rôles jamais dans le jeton : adhésion relue en base à chaque requête ; non-membre ⇒ 404, rôle insuffisant ⇒ 403.
 - Chaque requête back-office filtre par `orgId` (y compris via la clé parente dans le SQL brut) ; une ressource d'un autre collectif ou d'un autre acheteur ⇒ 404. Tests d'IDOR avec vérification que les données ciblées sont restées identiques.
-- Actions sensibles réservées à l'OWNER : réglages, coordonnées bancaires (avec ré-authentification et mail à tous les OWNER), membres, report et annulation d'événement, mode de contrôle hors-ligne. Le dernier OWNER ne peut pas être retiré, même en concurrence.
+- Actions sensibles réservées à l'OWNER : réglages, coordonnées bancaires (avec ré-authentification et mail à tous les OWNER), membres, report et annulation d'événement, mode de contrôle hors-ligne. Le dernier OWNER ne peut pas être retiré, même en concurrence. Rôle relu dans la transaction après la ré-authentification (un OWNER rétrogradé entre-temps est refusé).
 
 ### Entrées, sorties et surface HTTP
 - Joi sur params / query / body / en-têtes : champs inconnus refusés (400), corps JSON non converti, dates avec fuseau explicite, textes sans caractères de contrôle ni marques bidirectionnelles, NUL refusé à toute profondeur, clés `__proto__` / `constructor` / `prototype` refusées ; emails ASCII ; montants plafonnés.
@@ -41,17 +41,19 @@ Ne pas ouvrir de ticket public. Écrire aux mainteneurs du dépôt en décrivant
 - Corps limités à 10 ko (64 ko webhook, 160 ko pour la synchronisation, lue seulement après authentification) ; Content-Type JSON exigé (415).
 - helmet (CSP `default-src 'none'`, `frame-ancestors 'none'`, HSTS en production), CORS limité à l'origine du front, `Cache-Control: no-store`, pas d'`X-Powered-By`, nombre de proxys de confiance borné (0–3).
 - Erreurs centralisées : jamais de stack ni de message SQL ; erreurs transitoires (interblocage) ⇒ 409, jamais 500.
-- Rate limiting partagé en base (multi-instance, survit au redémarrage, identifiants hachés) : par IP ET par compte / adresse (connexion, mails, réservations, scans).
+- Rate limiting partagé en base (multi-instance, survit au redémarrage, identifiants hachés) : limite globale par compte quand le jeton est valide, sinon par IP, plus un plafond large par IP (3 000/min) contre les rafales ; quotas dédiés par compte / adresse pour la connexion, les mails et les réservations ; scans limités par contrôleur (240/min) et par IP (2 400/min) ; suivi de commande (`GET /orders/:id`) 120/min. Le webhook n'est limité que sur signature invalide (60/min/IP) : une notification signée n'est jamais refusée pour débit.
 
 ### Argent, stock et billets
-- Zéro survente : décrément atomique conditionnel + contrainte `CHECK (sold + held <= capacity)` ; ordre de verrous unique (verrou consultatif acheteur / événement → événement → commande → types de places).
+- Zéro survente : décrément atomique conditionnel + contrainte `CHECK (sold + held <= capacity)` ; ordre de verrous unique (verrou consultatif acheteur / événement → événement → commande → entrées de liste d'attente → types de places) ; reprise d'un paiement tardif : verrou consultatif pris après le verrou de commande, sans cycle possible.
+- Liste d'attente anti-gel : seule la tête de file peut retenir des places libérées, une fois, 30 min au plus : des comptes jetables ne gèlent pas les ventes au-delà de cette fenêtre.
 - Idempotence : `Idempotency-Key` par acheteur (même clé + corps différent ⇒ 409) ; webhook dédoublonné par identifiant d'événement dans la même transaction que son effet ; billets uniques par (ligne, rang) ; remboursements exécutés avec une clé d'idempotence ; scans idempotents par `scanId`.
-- Webhook : signature HMAC-SHA256 vérifiée à temps constant sur le corps brut, fenêtre de 5 min ; une fois la signature valide, aucun paiement n'est perdu : toute somme encaissée sans billets est enregistrée puis remboursée automatiquement (log error + audit).
-- Remboursements : jamais d'appel réseau dans une transaction (bail + worker), plafond vérifié sous verrou ET par déclencheur SQL ; échec durable ⇒ traitement manuel visible par l'organisateur (jamais d'échec silencieux).
-- Billets : identifiant public 128 bits aléatoire, QR `NG1.<eventId>.<publicId>.<signature Ed25519>` sans donnée personnelle, base64url canonique exigé ; passage `VALID → USED` atomique ; billets d'une commande annulée / remboursée / expirée annulés dans la même transaction et par déclencheur SQL ; contrôle limité aux événements publiés terminés depuis moins de 24 h.
+- Webhook : signature HMAC-SHA256 vérifiée à temps constant sur le corps brut, fenêtre de 5 min ; une fois la signature valide, aucun paiement n'est perdu : toute somme encaissée sans billets est enregistrée puis remboursée automatiquement (log error + audit). Paiement reçu après l'échéance : repris seulement si toutes les règles de vente tiennent encore (ventes ouvertes, événement ni commencé ni annulé, places libres sans priorité de liste d'attente, plafond par personne), sinon remboursé intégralement. La session de paiement doit appartenir à la commande (historique des sessions) ; une session PSP expire avec la réservation ; un webhook perdu est rattrapé par consultation du PSP avant expiration et chaque minute pour les sessions récentes ; le PSP réessaie ses notifications.
+- Remboursements : jamais d'appel réseau dans une transaction (bail + worker), plafond vérifié sous verrou ET par déclencheur SQL ; échec durable ⇒ traitement manuel visible par l'organisateur (jamais d'échec silencieux) ; statut renvoyé par le PSP vérifié (succeeded / pending / failed) ; avant tout passage en traitement manuel après erreurs réseau, le remboursement est recherché auprès du PSP par sa clé d'idempotence.
+- Billets : identifiant public 128 bits aléatoire, QR `NG1.<eventId>.<publicId>.<signature Ed25519>` sans donnée personnelle, base64url canonique exigé ; passage `VALID → USED` atomique ; billets d'une commande annulée / remboursée / expirée annulés dans la même transaction et par déclencheur SQL ; contrôle limité aux événements publiés, de `startsAt − 12 h` à `endsAt + 24 h` (hors fenêtre ⇒ 404).
 
 ### Données au repos et journaux
-- IBAN chiffrés en AES-256-GCM liés à leur ligne (données associées), identifiant de clé pour la rotation, jamais renvoyés en clair (forme masquée) sauf à l'acheteur concerné par un virement ; coordonnées figées sur chaque commande.
+- IBAN chiffrés en AES-256-GCM liés à leur ligne (données associées), identifiant de clé pour la rotation, jamais renvoyés en clair (forme masquée) sauf à l'acheteur concerné par un virement ; coordonnées figées sur chaque commande ; IBAN de commande indéchiffrable ⇒ instructions de virement masquées + alerte, jamais d'erreur 500.
+- Une seule horloge de référence, celle de l'application, passée en paramètre SQL, pour toutes les échéances (réservations, offres, remboursements, mails, rate limiting, verrouillage de connexion, liens mail). Exceptions : horodatage de signature des webhooks (échange avec le PSP), validation des JWT, plancher de temps de réponse, horodatages techniques `createdAt` / `updatedAt` posés par Prisma.
 - File de mails chiffrée (même mécanisme) et purgée après envoi ou abandon : aucun lien à jeton lisible en base.
 - Journaux pino : identifiant de requête généré par le serveur, masquage des en-têtes et champs sensibles à toute profondeur, erreurs de base réduites à leur type / code, messages et stacks expurgés (emails, IBAN, hashs, jetons) ; audit des actions sensibles (réglages avec IBAN masqué, membres, report, annulation, virements, remboursements, export).
 
@@ -105,7 +107,8 @@ Ne pas ouvrir de ticket public. Écrire aux mainteneurs du dépôt en décrivant
 - **Secrets** : clés JWT, clé de chiffrement des IBAN et clé de signature des billets sont fournies par fichiers / variables d'environnement (pas de HSM / KMS) ; une compromission du serveur les expose. Rotation prévue (identifiants de clé) mais manuelle. La clé privée de signature doit être en 0600 / 0400 (refus de démarrer sinon, en production).
 - **Prestataire de paiement simulé** : uniquement pour le développement et les tests (refuse de démarrer en production) ; aucune intégration réelle n'est fournie.
 - **Remboursement des virements** : manuel (le collectif effectue le virement retour puis le marque comme fait).
-- **Disponibilité** : base PostgreSQL unique (stock, sessions, compteurs de limitation, files) ; pas de protection anti-DDoS volumétrique au-delà du rate limiting applicatif ; le worker doit tourner pour que les réservations expirent et que les mails / remboursements partent (plusieurs instances possibles sans double traitement).
+- **Disponibilité** : base PostgreSQL unique (stock, sessions, compteurs de limitation, files) ; pas de protection anti-DDoS volumétrique au-delà du rate limiting applicatif ; le worker doit tourner pour que les réservations expirent et que les mails / remboursements partent (plusieurs instances possibles sans double traitement) ; il rapproche aussi les paiements : PSP injoignable ⇒ expiration d'une commande carte différée de 15 min au plus.
+- **Mails envoyés « au moins une fois »** : un crash entre l'acceptation SMTP et l'enregistrement de l'envoi peut produire un doublon ; le `Message-ID` stable par mail (`<outbox-<id>@nuits-garonne.billetterie>`) permet aux messageries de le dédoublonner.
 - **Pas de double authentification (MFA)** pour les organisateurs.
 - **Horloge des appareils** : les horodatages de scans hors-ligne sont bornés mais déclaratifs (journal), et `deviceId` n'a aucune valeur de preuve.
 - **Plafond par personne** : il s'applique par compte ; plusieurs comptes d'une même personne ne sont pas détectés.
@@ -115,8 +118,8 @@ Ne pas ouvrir de ticket public. Écrire aux mainteneurs du dépôt en décrivant
 
 ## Check-list de mise en production
 
-- [ ] `NODE_ENV=production` : HSTS actif ; démarrage refusé si `REFRESH_COOKIE_SECURE` ≠ true, si `RATE_LIMIT_MULTIPLIER` > 1, si `AUTH_RESPONSE_FLOOR_MS` < 300 ou si la clé privée de signature est lisible par le groupe ou les autres ; le PSP simulé refuse de démarrer. (Les valeurs `CHANGE_ME` et les secrets réutilisés sont refusés quel que soit l'environnement.)
-- [ ] Secrets générés aléatoirement (commandes dans `backend/.env.example`), tous distincts, injectés hors dépôt.
+- [ ] `NODE_ENV=production` : HSTS actif ; démarrage refusé si `REFRESH_COOKIE_SECURE` ≠ true, si `RATE_LIMIT_MULTIPLIER` > 1, si `AUTH_RESPONSE_FLOOR_MS` < 300 si la clé privée de signature est lisible par le groupe ou les autres, si `FRONT_URL` ou `PSP_BASE_URL` n'est pas en https, ou si ni `SMTP_SECURE` ni `SMTP_REQUIRE_TLS` n'est activé ; le PSP simulé refuse de démarrer. (Les valeurs `CHANGE_ME` et les secrets réutilisés sont refusés quel que soit l'environnement : comparaison sur les octets décodés, anciens secrets `JWT_PREVIOUS_SECRETS` / `DATA_ENCRYPTION_PREVIOUS_KEYS` compris.)
+- [ ] Secrets générés aléatoirement (commandes dans `backend/.env.example`), tous distincts (y compris les anciens secrets conservés pour la rotation), injectés hors dépôt.
 - [ ] Clé privée Ed25519 en 0400 ou 0600, propriétaire = utilisateur du service.
 - [ ] Clé de signature des billets générée **une seule fois** (`npm run keys:generate` refuse d'écraser) et sauvegardée : la changer invalide tous les QR déjà émis.
 - [ ] `TRUST_PROXY_HOPS` = nombre exact de proxys devant l'API (0–3, valeur journalisée au démarrage). Le proxy de bordure doit **écraser** `X-Forwarded-For`. Vérification : deux clients d'IP différentes ne partagent pas le même plafond de rate limiting.
@@ -124,7 +127,7 @@ Ne pas ouvrir de ticket public. Écrire aux mainteneurs du dépôt en décrivant
 - [ ] TLS partout ; API et front sur la même origine (ou CORS limité à l'origine exacte du front).
 - [ ] `npm run db:migrate` (prisma migrate deploy) à chaque déploiement, **avant** de démarrer la nouvelle version de l'API et du worker : les migrations contiennent des contraintes CHECK et des déclencheurs indispensables (survente, plafond des remboursements, annulation des billets).
 - [ ] `DATA_ENCRYPTION_KEY` (et les anciennes clés de `DATA_ENCRYPTION_PREVIOUS_KEYS`) sauvegardées hors base : leur perte rend illisibles les IBAN des collectifs et des commandes en attente de virement, ainsi que les mails en file. Rotation : nouvelle clé courante (`DATA_ENCRYPTION_KEY_ID`), l'ancienne passe dans `DATA_ENCRYPTION_PREVIOUS_KEYS`. Même principe pour le JWT (`JWT_KEY_ID`, `JWT_PREVIOUS_SECRETS`).
-- [ ] SMTP authentifié et chiffré (`SMTP_SECURE=true` ou STARTTLS côté relais) ; `MAIL_FROM` sur un domaine aligné SPF/DKIM/DMARC (les mails de reset et de virement sont des cibles d'hameçonnage).
+- [ ] SMTP authentifié et chiffré (`SMTP_SECURE=true` ou `SMTP_REQUIRE_TLS=true` pour exiger STARTTLS, sinon le démarrage est refusé en production) ; `MAIL_FROM` sur un domaine aligné SPF/DKIM/DMARC (les mails de reset et de virement sont des cibles d'hameçonnage).
 - [ ] Worker démarré et supervisé ; alerte sur les remboursements `MANUAL_REQUIRED` et les commandes en échec d'expiration.
 - [ ] Sauvegardes chiffrées de PostgreSQL, accès base restreint.
 - [ ] Build front : `VITE_PSP_ORIGIN` = origine https du prestataire (démarrage refusé sinon), `VITE_API_BASE_URL` relatif ; jamais `--mode mock`.
