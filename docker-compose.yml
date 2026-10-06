@@ -1,9 +1,12 @@
+# ⚠️ DÉVELOPPEMENT ET TESTS UNIQUEMENT — ne jamais utiliser tel quel en production.
+# Les mots de passe ci-dessous sont des valeurs de développement locales (ports liés à 127.0.0.1) ;
+# ils peuvent être surchargés par les variables d'environnement indiquées.
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine
     environment:
       POSTGRES_USER: nuits
-      POSTGRES_PASSWORD: nuits_dev_password
+      POSTGRES_PASSWORD: ${NUITS_DEV_DB_PASSWORD:-nuits_dev_password}
       POSTGRES_DB: nuits
     ports:
       - "127.0.0.1:5432:5432"
@@ -15,10 +18,10 @@ services:
       retries: 10
 
   postgres-test:
-    image: postgres:16-alpine
+    image: postgres:16.15-alpine
     environment:
       POSTGRES_USER: nuits
-      POSTGRES_PASSWORD: nuits_test_password
+      POSTGRES_PASSWORD: ${NUITS_TEST_DB_PASSWORD:-nuits_test_password}
       POSTGRES_DB: nuits_test
     ports:
       - "127.0.0.1:5433:5432"
@@ -26,7 +29,8 @@ services:
       - /var/lib/postgresql/data
 
   mailpit:
-    image: axllent/mailpit:latest
+    # Version épinglée par empreinte (reproductibilité).
+    image: axllent/mailpit@sha256:b68349e3a014b90c5610bfb26b2ae36f3892d7b8cf25ee140c6c71c98d2fcf48
     ports:
       - "127.0.0.1:1025:1025"
       - "127.0.0.1:8025:8025"
