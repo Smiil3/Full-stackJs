@@ -36,6 +36,7 @@ export default defineConfig(({ mode, command }) => {
     mode === 'mock' ? mswWorkerDevOnly() : null,
     VitePWA({
       registerType: 'prompt',
+      // Enregistrement fait par <PwaUpdatePrompt /> (virtual:pwa-register/react), en production uniquement.
       injectRegister: false,
       // Le service worker n'est utile qu'en build : en mode mock, MSW occupe déjà le scope.
       devOptions: { enabled: false },
