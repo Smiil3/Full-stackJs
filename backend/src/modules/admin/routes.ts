@@ -8,7 +8,7 @@ import * as s from './schemas.js';
 export function adminRouter(): Router {
   const r = Router();
   r.use(requireAuth, requirePlatformAdmin);
-  r.get('/orgs', ...endpoint({ response: s.adminOrgList }, c.listOrgs));
+  r.get('/orgs', ...endpoint({ query: s.adminOrgsQuery, response: s.adminOrgList }, c.listOrgs));
   r.post('/orgs', ...endpoint({ body: s.createOrgBody, response: s.adminOrgResponse, status: 201 }, c.createOrg));
   return r;
 }

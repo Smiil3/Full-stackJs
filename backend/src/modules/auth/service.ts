@@ -72,6 +72,15 @@ async function checkAccountPassword(user: { id: string; passwordHash: string }, 
   return valid;
 }
 
+/**
+ * Ré-authentification d'un utilisateur connecté avant une action sensible (ex. changement d'IBAN) :
+ * même compteur et même verrou que la connexion. Échec ⇒ 401 INVALID_CREDENTIALS.
+ */
+export async function reauthenticate(userId: string, password: string): Promise<void> {
+  const user = await transaction((tx) => tx.user.findUnique({ where: { id: userId }, select: { id: true, passwordHash: true } }));
+  if (!user || !(await checkAccountPassword(user, password))) throw errors.invalidCredentials();
+}
+
 /** Plafonds PAR ADRESSE des mails d'authentification (silencieux côté réponse). */
 export const MAIL_MIN_INTERVAL_MINUTES = 2;
 

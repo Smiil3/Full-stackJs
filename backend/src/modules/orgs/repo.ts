@@ -42,7 +42,7 @@ export function auditPage(orgId: string, page: number, pageSize: number) {
   return Promise.all([
     db.auditLog.findMany({
       where: { orgId },
-      include: { actor: { select: { email: true } } },
+      include: { actor: { select: { email: true, isPlatformAdmin: true, memberships: { where: { orgId }, select: { id: true } } } } },
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
       skip: (page - 1) * pageSize,
       take: pageSize,

@@ -28,7 +28,7 @@ export interface SettingsPatch {
   cardHoldMinutes?: number; transferHoldHours?: number; transferEnabled?: boolean; cancellationDeadlineHours?: number;
   selfCancellationEnabled?: boolean; refundPercent?: number; serviceFeeRefundable?: boolean; maxPerOrder?: number; maxPerUser?: number;
   waitlistOfferMinutes?: number; waitlistEnabled?: boolean; serviceFeeFixedCents?: number; serviceFeeBasisPoints?: number;
-  defaultTimezone?: string; contactEmail?: string | null; bank?: BankInput;
+  defaultTimezone?: string; contactEmail?: string | null; bank?: BankInput; currentPassword?: string;
 }
 
 const iban = text().max(42)
@@ -45,6 +45,9 @@ export const settingsPatchBody = Joi.object<SettingsPatch>({
     iban: iban.required(),
     bic: text().pattern(BIC_PATTERN, 'BIC').required().messages({ 'string.pattern.name': '{{#label}} n’est pas un BIC valide' }),
   }),
+  // Ré-authentification obligatoire pour tout changement bancaire (et refusée sinon).
+  currentPassword: text({ trim: false }).min(1).max(256)
+    .when('bank', { is: Joi.exist(), then: Joi.required(), otherwise: Joi.forbidden() }),
 }).min(1);
 
 export interface AddMemberBody { email: string; role: RoleName }

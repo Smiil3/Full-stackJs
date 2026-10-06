@@ -6,8 +6,9 @@ import { iso } from '../../lib/schemas.js';
 import * as repo from './repo.js';
 import type { CreateOrgBody } from './schemas.js';
 
-export async function listOrgs() {
-  return { items: (await repo.listOrgs()).map((o) => ({ id: o.id, name: o.name, slug: o.slug, createdAt: iso(o.createdAt) })) };
+export async function listOrgs(page: number, pageSize: number) {
+  const [rows, total] = await repo.listOrgs(page, pageSize);
+  return { items: rows.map((o) => ({ id: o.id, name: o.name, slug: o.slug, createdAt: iso(o.createdAt) })), page, pageSize, total };
 }
 
 /** Création d'un collectif par l'admin plateforme : propriétaire = compte existant ET vérifié. */

@@ -2,7 +2,9 @@ import type { OrganizationSettings, Role } from '../../generated/prisma/client.j
 import { getEnv } from '../../config/env.js';
 import { diff, writeAudit } from '../../lib/audit.js';
 import { aad, encryptString } from '../../lib/crypto.js';
-import { transaction } from '../../lib/db.js';
+import { transaction, type Tx } from '../../lib/db.js';
+import { enqueueEmail } from '../../lib/outbox.js';
+import { reauthenticate } from '../auth/service.js';
 import { normalizeEmail } from '../../lib/email.js';
 import { errors } from '../../lib/errors.js';
 import { maskIban, normalizeIban } from '../../lib/iban.js';
@@ -52,6 +54,8 @@ export async function getSettings(orgId: string) {
  * maxPerUser ≥ maxPerOrder sur les valeurs fusionnées, IBAN chiffré lié au collectif, audit avant / après.
  */
 export async function updateSettings(orgId: string, actorId: string, patch: SettingsPatch) {
+  // Changement bancaire : ré-authentification (hors transaction : calcul argon2), comptée dans le verrouillage.
+  if (patch.bank) await reauthenticate(actorId, patch.currentPassword ?? '');
   const updated = await transaction(async (tx) => {
     await repo.getSettings(tx, orgId);
     await repo.lockSettings(tx, orgId);
@@ -89,9 +93,24 @@ export async function updateSettings(orgId: string, actorId: string, patch: Sett
     // Un nouvel IBAN dont les 4 derniers chiffres sont identiques reste tracé.
     if (patch.bank && !('bankIbanMasked' in changes)) changes['bankIbanMasked'] = { from: before.bankIbanMasked, to: after.bankIbanMasked };
     await writeAudit(tx, { orgId, actorId, action: 'settings.update', target: `org:${orgId}`, meta: { changes } });
+    if (patch.bank) await notifyOwnersOfBankChange(tx, orgId, actorId, after.bankIbanMasked ?? '');
     return after;
   });
   return toSettingsView(updated);
+}
+
+/** Tout changement bancaire est signalé à TOUS les propriétaires (détection d'un détournement de virements). */
+async function notifyOwnersOfBankChange(tx: Tx, orgId: string, actorId: string, ibanMasked: string): Promise<void> {
+  const [org, actor, owners] = await Promise.all([
+    tx.organization.findUniqueOrThrow({ where: { id: orgId }, select: { name: true } }),
+    tx.user.findUniqueOrThrow({ where: { id: actorId }, select: { displayName: true, email: true } }),
+    tx.membership.findMany({ where: { orgId, role: 'OWNER' }, select: { user: { select: { email: true, displayName: true } } } }),
+  ]);
+  for (const { user } of owners) {
+    await enqueueEmail(tx, user.email, 'bankDetailsChanged', {
+      displayName: user.displayName, orgName: org.name, changedBy: `${actor.displayName} (${actor.email})`, ibanMasked,
+    });
+  }
 }
 
 function toMemberView(m: { userId: string; role: Role; createdAt: Date; user: { email: string; displayName: string } }) {
@@ -115,6 +134,11 @@ export async function addMember(orgId: string, actorId: string, rawEmail: string
       include: { user: { select: { email: true, displayName: true } } },
     });
     await writeAudit(tx, { orgId, actorId, action: 'member.add', target: `user:${user.id}`, meta: { role } });
+    const [org, actor] = await Promise.all([
+      tx.organization.findUniqueOrThrow({ where: { id: orgId }, select: { name: true } }),
+      tx.user.findUniqueOrThrow({ where: { id: actorId }, select: { displayName: true } }),
+    ]);
+    await enqueueEmail(tx, created.user.email, 'memberAdded', { displayName: created.user.displayName, orgName: org.name, role, addedBy: actor.displayName });
     return created;
   });
   return toMemberView(member);
@@ -151,12 +175,15 @@ export async function removeMember(orgId: string, actorId: string, userId: strin
   });
 }
 
+export const PLATFORM_ADMIN_LABEL = 'Administrateur plateforme';
+
 export async function auditLog(orgId: string, page: number, pageSize: number) {
   const [rows, total] = await repo.auditPage(orgId, page, pageSize);
   return {
     items: rows.map((r) => ({
       id: r.id,
-      actorEmail: r.actor?.email ?? null,
+      // Admin plateforme non membre : libellé générique ; action système (sans acteur) : null.
+      actorEmail: r.actor === null ? null : r.actor.isPlatformAdmin && r.actor.memberships.length === 0 ? PLATFORM_ADMIN_LABEL : r.actor.email,
       action: r.action,
       target: r.target,
       meta: (r.meta ?? {}) as Record<string, unknown>,

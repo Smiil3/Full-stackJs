@@ -1,5 +1,5 @@
 import Joi from 'joi';
-import { email, isoDateOutput, text, uuidStrict } from '../../lib/schemas.js';
+import { email, isoDateOutput, pageOf, pageQuery, text, uuidStrict, type PageQuery } from '../../lib/schemas.js';
 
 export interface CreateOrgBody { name: string; slug: string; ownerEmail: string }
 export const createOrgBody = Joi.object<CreateOrgBody>({
@@ -9,4 +9,5 @@ export const createOrgBody = Joi.object<CreateOrgBody>({
 });
 
 export const adminOrgResponse = Joi.object({ id: uuidStrict, name: Joi.string(), slug: Joi.string(), createdAt: isoDateOutput });
-export const adminOrgList = Joi.object({ items: Joi.array().items(adminOrgResponse) });
+export const adminOrgList = pageOf(adminOrgResponse);
+export const adminOrgsQuery = Joi.object<PageQuery>(pageQuery);
