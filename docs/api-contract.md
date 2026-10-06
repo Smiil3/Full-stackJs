@@ -1,7 +1,7 @@
 # Contrat d'API — Billetterie « Les Nuits de la Garonne »
 
 > **Source de vérité commune front / back.** Toute modification passe par le PO (session `fullstack-js`) : demander via une ligne `NEED: changement de contrat …`. Ne jamais diverger silencieusement.
-> Version : 1.9 — 2026-10-06 (voir §11 Historique)
+> Version : 1.10 — 2026-10-06 (voir §11 Historique)
 
 ## 1. Conventions
 
@@ -209,7 +209,7 @@ type EventAdmin = { id; orgId; title; description: string|null; venue: string|nu
 type OrderAdmin = Order & { buyer: { id; email; displayName } }     // transferInstructions renseigné si AWAITING_TRANSFER, avec iban MASQUÉ (référence utile au rapprochement)
 type EventStats = { eventId; generatedAt; currency: 'EUR';
   ticketTypes: { ticketTypeId; name; capacity; sold; held; remaining; checkedIn; revenueCents; refundedCents }[];
-  totals: { capacity; sold; held; remaining; checkedIn; revenueCents; refundedCents; serviceFeeCents };
+  totals: { capacity; sold; held; remaining; checkedIn; revenueCents; refundedCents; serviceFeeCents; refundsToProcess };
   ordersByStatus: Record<OrderStatus, number>; waitlistWaiting: number }
 ```
 `revenueCents` = encaissé net (paiements − remboursements), frais de service à part.
@@ -222,6 +222,18 @@ type EventStats = { eventId; generatedAt; currency: 'EUR';
 | `POST /orgs/:orgId/orders/:orderId/confirm-transfer` | MANAGER+ | `{ receivedAmountCents }` | 200 `OrderAdmin` (PAID, billets émis, mail) · 422 `AMOUNT_MISMATCH` · 409 `ORDER_EXPIRED`/`INVALID_STATE` |
 | `GET /orgs/:orgId/events/:eventId/stats` | MANAGER+ | — | 200 `EventStats` (le front poll toutes les 5 s) |
 | `GET /orgs/:orgId/events/:eventId/attendees.csv` | MANAGER+ | — | 200 `text/csv; charset=utf-8`, `Content-Disposition: attachment`, séparateur `;`, BOM UTF-8. Colonnes : `billet;type;nom;email;statut;scanne_le` (heure locale de l'événement). Cellules protégées contre l'injection de formules. |
+
+### 7.3 bis Remboursements (suivi organisateur)
+```ts
+type RefundAdmin = { id; orderId; eventId; eventTitle; buyerEmail; amountCents; reason: 'SELF_CANCELLATION'|'EVENT_CANCELLED'|'LATE_PAYMENT'|'DUPLICATE_PAYMENT'|'UNEXPECTED_PAYMENT';
+  method: 'CARD'|'TRANSFER'; status: 'PENDING'|'SUCCEEDED'|'MANUAL_REQUIRED'|'FAILED'; note: string|null; createdAt; updatedAt }
+```
+| Méthode & chemin | Rôle | Query / Body | Réponse |
+|---|---|---|---|
+| `GET /orgs/:orgId/refunds` | MANAGER+ | `page, pageSize, status?, eventId?` | 200 page `RefundAdmin` (tri `createdAt` desc) |
+| `POST /orgs/:orgId/refunds/:refundId/mark-done` | MANAGER+ | `{ note (1–500) }` (ex. « virement retour effectué le … ») | 200 `RefundAdmin` (`MANUAL_REQUIRED`/`FAILED` ⇒ `SUCCEEDED`, AuditLog) · 409 `INVALID_STATE` |
+
+Un remboursement de commande payée par virement est toujours `MANUAL_REQUIRED`. Un remboursement carte en échec définitif passe `MANUAL_REQUIRED` (jamais un `FAILED` silencieux). `EventStats.totals` ajoute `refundsToProcess: number` (MANUAL_REQUIRED + FAILED).
 
 ### 7.4 Contrôle d'accès (scan)
 | `GET /orgs/:orgId/checkin/events` | SCANNER+ | — | 200 `{ items: { id; title; venue; isOnline; startsAt; endsAt; timezone; status }[] }` — événements PUBLISHED dont la fin date de moins de 24 h, sans aucun chiffre de vente |
@@ -253,7 +265,7 @@ type EventStats = { eventId; generatedAt; currency: 'EUR';
     "data": { "paymentId": "pay_…", "sessionId": "cs_…", "orderId": "…", "amountCents": 3000, "currency": "EUR" } }
   ```
   En-tête `Psp-Signature: t=<unix>,v1=<hex HMAC-SHA256(PSP_WEBHOOK_SECRET, t + "." + rawBody)>`.
-  Réponses : 200 `{ received: true }` (y compris doublon déjà traité) · 400 signature invalide / horodatage hors tolérance (5 min).
+  Réponses : 400 **uniquement** si la signature est invalide, l'horodatage hors tolérance (5 min) ou le corps n'est pas du JSON. **Une fois la signature valide, réponse 200 `{ received: true }` dans tous les cas métier** (doublon, type inconnu, champ inconnu dans `data`, commande inconnue, montant/devise/session incohérents, stock incohérent) : un paiement authentifié n'est **jamais perdu**. Toute somme encaissée qui ne donne pas de billets est enregistrée (`Payment`) puis remboursée automatiquement (`Refund` motif `UNEXPECTED_PAYMENT`, `LATE_PAYMENT` ou `DUPLICATE_PAYMENT`) avec log `error` et AuditLog. 5xx uniquement sur panne réelle (le PSP réessaie).
 - Le mock n'est **jamais** démarré quand `NODE_ENV=production`.
 
 ## 10. Divers
@@ -261,6 +273,7 @@ type EventStats = { eventId; generatedAt; currency: 'EUR';
 - En-têtes de sécurité via helmet ; CORS : origine `FRONT_URL` uniquement, `credentials: true`.
 
 ## 11. Historique
+- **1.10** (2026-10-06) : webhook — 200 pour tout événement signé (paiement jamais perdu, remboursement auto des anomalies) ; suivi des remboursements (§7.3 bis) ; `refundsToProcess` dans les stats.
 - **1.9** (2026-10-06) : portée et cycle de vie de l'Idempotency-Key précisés.
 - **1.8** (2026-10-06) : `GET /admin/orgs` paginé.
 - **1.7** (2026-10-06) : report d'événement (OWNER, motif, droit au remboursement intégral) ; invariants de dates ; ré-authentification + notification pour changement bancaire ; mail au membre ajouté ; `GET /orgs/:orgId/events*` réservé MANAGER+, nouvel endpoint `GET /orgs/:orgId/checkin/events` pour SCANNER ; `page` ≤ 1000 ; libellé admin dans l'audit.
