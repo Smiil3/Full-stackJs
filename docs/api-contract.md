@@ -1,7 +1,7 @@
 # Contrat d'API — Billetterie « Les Nuits de la Garonne »
 
 > **Source de vérité commune front / back.** Toute modification passe par le PO (session `fullstack-js`) : demander via une ligne `NEED: changement de contrat …`. Ne jamais diverger silencieusement.
-> Version : 1.7 — 2026-10-06 (voir §11 Historique)
+> Version : 1.8 — 2026-10-06 (voir §11 Historique)
 
 ## 1. Conventions
 
@@ -238,7 +238,7 @@ type EventStats = { eventId; generatedAt; currency: 'EUR';
 ## 8. Administration plateforme
 | Méthode & chemin | Auth | Body | Réponse |
 |---|---|---|---|
-| `GET /admin/orgs` | `isPlatformAdmin` | — | 200 `{ items: { id, name, slug, createdAt }[] }` |
+| `GET /admin/orgs` | `isPlatformAdmin` | `page, pageSize` | 200 page `{ id, name, slug, createdAt }` (`{ items, page, pageSize, total }`), tri par nom puis id |
 | `POST /admin/orgs` | `isPlatformAdmin` | `{ name (2–80), slug (^[a-z0-9-]{2,40}$), ownerEmail }` | 201 org, propriétaire = compte existant vérifié |
 
 ## 9. Prestataire de paiement simulé (dev / test uniquement)
@@ -260,6 +260,7 @@ type EventStats = { eventId; generatedAt; currency: 'EUR';
 - En-têtes de sécurité via helmet ; CORS : origine `FRONT_URL` uniquement, `credentials: true`.
 
 ## 11. Historique
+- **1.8** (2026-10-06) : `GET /admin/orgs` paginé.
 - **1.7** (2026-10-06) : report d'événement (OWNER, motif, droit au remboursement intégral) ; invariants de dates ; ré-authentification + notification pour changement bancaire ; mail au membre ajouté ; `GET /orgs/:orgId/events*` réservé MANAGER+, nouvel endpoint `GET /orgs/:orgId/checkin/events` pour SCANNER ; `page` ≤ 1000 ; libellé admin dans l'audit.
 - **1.6** (2026-10-06) : `Order.refundPreviewCents` + formule de remboursement explicite.
 - **1.5** (2026-10-06) : login non vérifié ⇒ 403 `EMAIL_NOT_VERIFIED` ; règles d'inscription (ASCII, mots de passe courants refusés, dernière inscription gagne) ; délai de grâce 10 s de rotation ; famille 90 j ; verify-email révoque les sessions.
