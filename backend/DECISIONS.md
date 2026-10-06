@@ -39,3 +39,16 @@ Décisions non bloquantes prises pendant l'implémentation (option la plus sûre
 - **2026-10-06 — Inscription avec un email déjà vérifié ⇒ mail « vous avez déjà un compte » avec lien de reset ; email non vérifié ⇒ nouveau lien de vérification.** — Réponse HTTP identique dans tous les cas.
 - **2026-10-06 — Le reset de mot de passe vaut vérification d'email.** — Le lien reçu prouve la possession de l'adresse.
 - **2026-10-06 — Jetons mail stockés hashés, liés à l'adresse d'envoi (B2.1 B5), émis sous verrou de la ligne utilisateur.**
+
+## B3 — Collectifs, réglages, événements, catalogue
+
+- **2026-10-06 — Contrôle d'adhésion avant validation des paramètres.** — `requireOrgRole` valide lui-même `orgId` (UUID strict, sinon 404) puis lit l'adhésion en base ; il est, avec `validate`, le seul autorisé à lire `req.params` (règle ESLint).
+- **2026-10-06 — Ressource d'un autre collectif adressée via son propre préfixe ⇒ 404.** — Tous les repos back-office filtrent par `orgId` (événement, type de place via `event.orgId`).
+- **2026-10-06 — Rétrogradation / retrait du dernier OWNER : verrou `FOR UPDATE` sur les OWNER du collectif.** — Deux OWNER qui se rétrogradent mutuellement en même temps : il en reste toujours un.
+- **2026-10-06 — Résolution des réglages : `maxPerOrder` effectif borné par `maxPerUser` effectif.** — Un mélange d'héritages (collectif modifié après coup) ne peut pas produire un plafond par commande supérieur au plafond par personne ; les incohérences explicites sont refusées (400).
+- **2026-10-06 — `rules.transferEnabled` public = virement activé ET coordonnées bancaires complètes.** — Le public ne voit pas une option qui échouerait (`PAYMENT_METHOD_UNAVAILABLE`).
+- **2026-10-06 — Catalogue : événements PUBLIÉS dont la fin est dans le futur (en cours inclus) ; `earlyUntil` public renvoyé seulement si le tarif early est actif.**
+- **2026-10-06 — Disponibilité publique : SOLD_OUT dès qu'une personne attend en liste d'attente sur ce type.** — Les places libérées leur reviennent avant le public (décision PO 4).
+- **2026-10-06 — Suppression d'un type de place refusée s'il a des ventes, des places bloquées ou une liste d'attente, et pour le dernier type d'un événement publié.**
+- **2026-10-06 — Réduction de capacité par UPDATE conditionnel `sold + held <= capacity`.** — Atomique face à une réservation concurrente (pas de lecture puis écriture).
+- **2026-10-06 — Création d'événement : fin dans le futur obligatoire ; dates d'entrée avec fuseau explicite ; fuseau IANA vérifié par `Intl.supportedValuesOf`.**
