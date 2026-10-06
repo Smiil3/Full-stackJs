@@ -57,7 +57,7 @@ FullstackJs/
 12. **Fuseaux** : stockage UTC + `timezone` IANA (validée via `Intl.supportedValuesOf('timeZone')`) ; affichage « 20:00 heure de Paris (UTC+2) · 14:00 chez vous (New York) » avec `Intl.DateTimeFormat`. Tarif early et délais calculés côté serveur en UTC.
 
 ## Sécurité transverse (backend)
-- **Auth JWT** : lib `jose`, access token 10 min, algo épinglé (`HS256`, secret ≥ 256 bits), `iss/aud/exp` vérifiés, payload = `sub` seulement ; gardé **en mémoire** côté front (jamais localStorage). Refresh = opaque 256 bits, hashé en base, cookie `httpOnly Secure SameSite=Strict Path=/api/auth`, **rotation à chaque usage + détection de réutilisation → révocation de toute la famille**. Logout / changement de mot de passe → révocation. Endpoint refresh : vérif `Origin` + en-tête custom (anti-CSRF).
+- **Auth JWT** : lib `jose`, access token 10 min, algo épinglé (`HS256`, secret ≥ 256 bits), `iss/aud/exp` vérifiés, payload = `sub` seulement ; gardé **en mémoire** côté front (jamais localStorage). Refresh = opaque 256 bits, hashé en base, cookie `httpOnly Secure SameSite=Strict Path=/api/v1/auth`, **rotation à chaque usage + détection de réutilisation → révocation de toute la famille**. Logout / changement de mot de passe → révocation. Endpoint refresh : vérif `Origin` + en-tête custom (anti-CSRF).
 - Mots de passe argon2id, min 12 car. ; hash factice si email inconnu (timing) ; messages génériques (pas d'énumération à l'inscription / reset) ; tokens vérif email & reset : aléatoires, hashés, usage unique, 30 min.
 - Rate limiting (`express-rate-limit`) global + strict sur login/register/reset/réservation ; verrouillage progressif par compte.
 - **Joi partout** : `params`, `query`, `body` (`allowUnknown: false`, `abortEarly: false`) et **réponses** (schémas de sortie : seuls les champs déclarés sortent ; en test un écart fait échouer, en prod log + 500). Aucun `req.body` passé tel quel à Prisma (anti mass-assignment). Prix, early, total : **toujours calculés serveur**.
@@ -125,7 +125,7 @@ Deux niveaux : **réglages du collectif** (`OrganizationSettings`, valeurs par d
 | Plafond places par personne / événement | 6 | collectif + événement | 1–50, ≥ plafond commande |
 | Délai de réponse liste d'attente (min) | 120 | collectif + événement | 15–2880 |
 | Liste d'attente activée | oui | collectif + événement | bool |
-| Frais de service | 0 | collectif + événement | fixe en centimes (0–1000) + % (0–15), arrondi au centime, affichés avant paiement |
+| Frais de service | 0 | collectif + événement | fixe en centimes (0–1000) + points de base (0–1500, 250 = 2,5 %), arrondi au centime, affichés avant paiement |
 | Coordonnées virement (titulaire, IBAN, BIC) | — | collectif | IBAN validé (mod 97), BIC regex ; virement impossible tant que non renseigné |
 | Fuseau horaire par défaut | Europe/Paris | collectif | IANA |
 | Email de contact affiché aux acheteurs | — | collectif | email |

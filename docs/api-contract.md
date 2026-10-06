@@ -1,7 +1,7 @@
 # Contrat d'API — Billetterie « Les Nuits de la Garonne »
 
 > **Source de vérité commune front / back.** Toute modification passe par le PO (session `fullstack-js`) : demander via une ligne `NEED: changement de contrat …`. Ne jamais diverger silencieusement.
-> Version : 1.0 — 2026-10-06
+> Version : 1.1 — 2026-10-06 (voir §11 Historique)
 
 ## 1. Conventions
 
@@ -81,7 +81,7 @@ type Availability = 'AVAILABLE' | 'LOW' /* ≤10 % restants */ | 'SOLD_OUT'   //
 type TicketTypePublic = { id; name; description: string|null; currentPriceCents: number; regularPriceCents: number;
   isEarly: boolean; earlyUntil: string|null; availability: Availability }
 type EventRulesPublic = { maxPerOrder; maxPerUser; transferEnabled: boolean; cardHoldMinutes; transferHoldHours;
-  selfCancellationEnabled: boolean; cancellationDeadlineHours; refundPercent; serviceFeeFixedCents; serviceFeePercent; waitlistEnabled: boolean }
+  selfCancellationEnabled: boolean; cancellationDeadlineHours; refundPercent; serviceFeeFixedCents; serviceFeeBasisPoints; waitlistEnabled: boolean }
 type EventSummary = { id; orgId; orgName; orgSlug; title; venue: string|null; isOnline: boolean; startsAt; endsAt;
   timezone; coverAvailability: Availability; fromPriceCents: number }
 type EventPublic = EventSummary & { description: string|null; address: string|null; salesStartAt; salesEndAt;
@@ -120,7 +120,11 @@ Après paiement, le PSP redirige vers `${FRONT_URL}/orders/:orderId?payment=succ
 type Ticket = { id; publicId: string; status: 'VALID'|'USED'|'CANCELLED'; usedAt: string|null; qrPayload: string;
   ticketTypeName; orderId; event: { id; title; venue; isOnline; startsAt; endsAt; timezone } }
 ```
-`qrPayload` = `NG1.<publicId base64url>.<signature Ed25519 base64url>` — à encoder tel quel dans le QR. Aucune donnée personnelle.
+`qrPayload` = `NG1.<eventId>.<publicId>.<signature>` — à encoder tel quel dans le QR. Aucune donnée personnelle.
+- `eventId` : UUID de l'événement (forme canonique minuscule, 36 caractères).
+- `publicId` : 16 octets aléatoires encodés **base64url sans padding** (22 caractères). C'est **exactement la même chaîne** partout (snapshot, réponses de scan, CSV).
+- `signature` : Ed25519 (clé privée serveur) sur les **octets UTF-8 de la chaîne ASCII `NG1.<eventId>.<publicId>`**, encodée base64url sans padding (86 caractères).
+- Vérification hors-ligne : découper sur `.`, exiger 4 parties et le préfixe `NG1`, vérifier la signature avec `publicKeyJwk`, puis comparer `eventId` à l'événement scanné.
 
 | Méthode & chemin | Auth | Réponse |
 |---|---|---|
@@ -148,7 +152,7 @@ Rôles : **OWNER** ⊃ **MANAGER** ⊃ **SCANNER**.
 ```ts
 type OrgSettings = { cardHoldMinutes; transferHoldHours; transferEnabled; cancellationDeadlineHours; selfCancellationEnabled;
   refundPercent; serviceFeeRefundable: boolean; maxPerOrder; maxPerUser; waitlistOfferMinutes; waitlistEnabled;
-  serviceFeeFixedCents; serviceFeePercent; defaultTimezone; contactEmail: string|null;
+  serviceFeeFixedCents; serviceFeeBasisPoints; defaultTimezone; contactEmail: string|null;
   bank: { beneficiary: string|null; ibanMasked: string|null /* "FR76 •••• •••• 1234" */; bic: string|null } }
 type Member = { userId; email; displayName; role; createdAt }
 ```
@@ -168,10 +172,10 @@ type Member = { userId; email; displayName; role; createdAt }
 type EventOverrides = { cardHoldMinutes: number|null; transferHoldHours: number|null; transferEnabled: boolean|null;
   cancellationDeadlineHours: number|null; selfCancellationEnabled: boolean|null; refundPercent: number|null;
   maxPerOrder: number|null; maxPerUser: number|null; waitlistOfferMinutes: number|null; waitlistEnabled: boolean|null;
-  serviceFeeFixedCents: number|null; serviceFeePercent: number|null }      // null = hérite du collectif
-type TicketTypeAdmin = { id; name; description; capacity; sold; held; remaining; priceCents; earlyPriceCents: number|null;
+  serviceFeeFixedCents: number|null; serviceFeeBasisPoints: number|null }      // null = hérite du collectif
+type TicketTypeAdmin = { id; name; description: string|null; capacity; sold; held; remaining; priceCents; earlyPriceCents: number|null;
   earlyUntil: string|null; sortOrder: number }
-type EventAdmin = { id; orgId; title; description; venue; address; isOnline; startsAt; endsAt; timezone;
+type EventAdmin = { id; orgId; title; description: string|null; venue: string|null; address: string|null; isOnline; startsAt; endsAt; timezone;
   status: 'DRAFT'|'PUBLISHED'|'CANCELLED'; salesStartAt; salesEndAt; overrides: EventOverrides;
   effectiveRules: EventRulesPublic; ticketTypes: TicketTypeAdmin[]; createdAt; updatedAt }
 ```
@@ -197,6 +201,8 @@ type EventStats = { eventId; generatedAt; currency: 'EUR';
 ```
 `revenueCents` = encaissé net (paiements − remboursements), frais de service à part.
 
+**Frais de service** : `serviceFeeBasisPoints` entier 0–1500 (points de base : 250 = 2,5 %). Par commande : `serviceFeeCents = serviceFeeFixedCents + round_half_up(subtotalCents × serviceFeeBasisPoints / 10000)`, calcul en entiers uniquement.
+
 | Méthode & chemin | Rôle | Query / Body | Réponse |
 |---|---|---|---|
 | `GET /orgs/:orgId/events/:eventId/orders` | MANAGER+ | `page, pageSize, status?, q? (email, ≤100)` | 200 page `OrderAdmin` |
@@ -208,8 +214,13 @@ type EventStats = { eventId; generatedAt; currency: 'EUR';
 | Méthode & chemin | Rôle | Body | Réponse |
 |---|---|---|---|
 | `GET /orgs/:orgId/events/:eventId/checkin/snapshot` | SCANNER+ | — | 200 `{ eventId; generatedAt; publicKeyJwk: { kty:'OKP', crv:'Ed25519', x }; tickets: { publicId; ticketTypeName; holderInitials; status; usedAt }[] }` |
-| `POST /orgs/:orgId/events/:eventId/checkin/scan` | SCANNER+ | `{ qrPayload (≤256), deviceId (uuid) }` | 200 `{ result: 'OK'|'ALREADY_USED'|'INVALID'|'CANCELLED'|'WRONG_EVENT'; ticket: null | { publicId; ticketTypeName; holderInitials }; usedAt: string|null }` — rate-limité |
-| `POST /orgs/:orgId/events/:eventId/checkin/sync` | SCANNER+ | `{ deviceId, scans: [{ qrPayload, scannedAt }] (1–500) }` | 200 `{ results: [{ qrPayload; result: 'ACCEPTED'|'ALREADY_USED'|'INVALID'|'CANCELLED'|'WRONG_EVENT'; usedAt: string|null }] }` — le premier scan (ordre `scannedAt`, puis arrivée serveur) gagne |
+| `POST /orgs/:orgId/events/:eventId/checkin/scan` | SCANNER+ | `{ qrPayload (≤256), deviceId (uuid), scanId (uuid, généré par l'appareil pour chaque tentative) }` | 200 `{ result: 'OK'|'ALREADY_USED'|'INVALID'|'CANCELLED'|'WRONG_EVENT'; ticket: null | { publicId; ticketTypeName; holderInitials }; usedAt: string|null }` — rate-limité |
+| `POST /orgs/:orgId/events/:eventId/checkin/sync` | SCANNER+ | `{ deviceId, scans: [{ scanId (uuid), qrPayload, scannedAt }] (1–500, scanId uniques) }` | 200 `{ results: [{ scanId; result: 'ACCEPTED'|'ALREADY_USED'|'INVALID'|'CANCELLED'|'WRONG_EVENT'; usedAt: string|null }] }` — le premier scan (ordre `scannedAt`, puis arrivée serveur) gagne |
+
+**Idempotence du scan par `scanId`** : `CheckIn.scanId` est UNIQUE. Si un `scanId` déjà enregistré est rejoué (scan en ligne dont la réponse s'est perdue, puis sync), le serveur renvoie le **résultat d'origine** (`OK` ⇒ `ACCEPTED` en sync) sans nouvel effet. Un **nouveau** `scanId` sur un billet déjà utilisé ⇒ `ALREADY_USED`, **même depuis le même appareil** (capture d'écran présentée deux fois à la même porte).
+`scannedAt` fourni par l'appareil : sert à l'ordre et au journal, borné à [début des ventes, maintenant + 5 min], jamais pour contourner un `USED` existant.
+
+**Hors-ligne, billet bien signé pour cet événement mais absent du snapshot** (vendu après le snapshot) : le front affiche un écran orange « Billet authentique non présent dans la liste — vérifier en ligne si possible » avec choix humain « Laisser entrer » (scan mis en file de synchro) / « Refuser ».
 
 ## 8. Administration plateforme
 | Méthode & chemin | Auth | Body | Réponse |
@@ -234,3 +245,6 @@ type EventStats = { eventId; generatedAt; currency: 'EUR';
 ## 10. Divers
 - `GET /health` → 200 `{ status: 'ok' }` (sans info de version).
 - En-têtes de sécurité via helmet ; CORS : origine `FRONT_URL` uniquement, `credentials: true`.
+
+## 11. Historique
+- **1.1** (2026-10-06) : format QR `NG1.<eventId>.<publicId>.<sig>` et octets signés précisés ; `scanId` ajouté au scan et à la sync (idempotence) ; `serviceFeePercent` remplacé par `serviceFeeBasisPoints` (entier) + formule ; types `string|null` explicités ; cas « billet signé absent du snapshot ».
