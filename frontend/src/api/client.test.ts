@@ -4,7 +4,7 @@ import { getAccessToken } from '../auth/tokenStore';
 import { injectFault, mock } from '../mocks/core';
 import { server } from '../mocks/server';
 import { DEMO_PASSWORD } from '../mocks/state';
-import { apiPath, apiRequest, login, logout, onAuthEvent, refreshSession, type AuthEvent } from './client';
+import { apiPath, apiRequest, login, logout, onAuthEvent, refreshSession, resolveApiBase, type AuthEvent } from './client';
 import { ApiError } from './errors';
 import type { User } from './types';
 
@@ -142,9 +142,31 @@ describe('client API — erreurs', () => {
   });
 });
 
-describe('apiPath', () => {
+describe('apiPath / construction d’URL (revue F1.1 — H3, B3)', () => {
   it('encode chaque paramètre interpolé (pas de traversée de chemin)', () => {
     expect(apiPath`/orders/${'../admin/orgs'}/cancel`).toBe('/orders/..%2Fadmin%2Forgs/cancel');
     expect(apiPath`/orgs/${'a?b#c'}/events`).toBe('/orgs/a%3Fb%23c/events');
+  });
+
+  it.each(['', '.', '..'])('refuse la valeur de paramètre « %s »', (v) => {
+    expect(() => apiPath`/orders/${v}/cancel`).toThrow('Paramètre de chemin API invalide');
+  });
+
+  it.each(['/orders/../cancel', '/orders/./x', '/orders/%2e%2e/cancel', '/orders/%2E/x', '//evil/x', '/a//b', '/a\\b', '/a?b=1', 'orders'])(
+    'apiRequest refuse le chemin « %s » sans envoyer de requête',
+    async (path) => {
+      await login(BUYER, DEMO_PASSWORD);
+      const before = [...mock.db.calls.values()].reduce((a, b) => a + b, 0);
+      await expect(apiRequest(path)).rejects.toThrow('Chemin API invalide');
+      expect([...mock.db.calls.values()].reduce((a, b) => a + b, 0)).toBe(before);
+    },
+  );
+
+  it('VITE_API_BASE_URL : chemin relatif seulement', () => {
+    expect(resolveApiBase(undefined)).toBe('/api/v1');
+    expect(resolveApiBase('/api/v2')).toBe('/api/v2');
+    for (const bad of ['https://evil.example/api', '//evil.example/api', 'api/v1', '/api/v1/', '/api/../x', '/api/v1?x=1', '']) {
+      expect(() => resolveApiBase(bad)).toThrow('VITE_API_BASE_URL invalide');
+    }
   });
 });

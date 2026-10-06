@@ -10,7 +10,16 @@ import { clearAccessToken, getAccessToken, getAccessTokenExpiry, setAccessToken 
  * - échec du refresh (401) ⇒ événement `expired` ⇒ déconnexion propre côté AuthProvider
  */
 
-export const API_BASE_URL: string = import.meta.env.VITE_API_BASE_URL ?? '/api/v1';
+/**
+ * Base de l'API : chemin RELATIF obligatoire (même origine, cookies SameSite=Strict, CSP connect-src 'self').
+ * Une URL absolue ou un chemin douteux fait échouer le démarrage plutôt que d'envoyer le Bearer ailleurs.
+ */
+export function resolveApiBase(raw: string | undefined): string {
+  const value = raw ?? '/api/v1';
+  if (!/^(\/[A-Za-z0-9_-]+)+$/.test(value)) throw new Error(`VITE_API_BASE_URL invalide : chemin relatif attendu (ex. /api/v1), reçu « ${value} »`);
+  return value;
+}
+export const API_BASE_URL: string = resolveApiBase(import.meta.env.VITE_API_BASE_URL);
 const CSRF_HEADER = { 'X-Requested-With': 'nuits-web' } as const;
 const DEFAULT_TIMEOUT_MS = 15_000;
 /** Rafraîchissement proactif : marge avant l'expiration de l'access token. */
@@ -36,20 +45,33 @@ function emit(e: AuthEvent): void {
 // ---------------------------------------------------------------------------
 /**
  * Gabarit de chemin qui encode CHAQUE paramètre interpolé (`encodeURIComponent`).
- * `apiPath\`/orders/${id}/cancel\`` : un id malveillant ("../admin") ne peut pas changer de route.
+ * `apiPath\`/orders/${id}/cancel\`` : un id malveillant ne peut pas changer de route.
+ * `encodeURIComponent` laisse passer `.` et `..` : ces valeurs (et la valeur vide) sont REFUSÉES,
+ * sinon `/orders/..` + `/cancel` deviendrait `/cancel` avec le Bearer.
  */
 export function apiPath(strings: TemplateStringsArray, ...values: (string | number)[]): string {
   let out = strings[0] ?? '';
   values.forEach((v, i) => {
-    out += encodeURIComponent(String(v)) + (strings[i + 1] ?? '');
+    const raw = String(v);
+    if (raw === '' || raw === '.' || raw === '..') throw new Error('Paramètre de chemin API invalide');
+    out += encodeURIComponent(raw) + (strings[i + 1] ?? '');
   });
   return out;
+}
+
+/** Refuse tout segment `.` / `..`, y compris encodé (%2e) : défense en profondeur si un chemin est construit à la main. */
+function assertSafePath(path: string): void {
+  if (!path.startsWith('/') || path.startsWith('//') || path.includes('\\') || /[?#]/.test(path)) throw new Error('Chemin API invalide');
+  for (const segment of path.split('/').slice(1)) {
+    const normalized = segment.replace(/%2e/gi, '.');
+    if (segment === '' || normalized === '.' || normalized === '..') throw new Error('Chemin API invalide');
+  }
 }
 
 export type QueryValue = string | number | boolean | null | undefined;
 
 function buildUrl(path: string, query?: Record<string, QueryValue>): string {
-  if (!path.startsWith('/') || path.startsWith('//')) throw new Error('Chemin API invalide');
+  assertSafePath(path);
   const qs = new URLSearchParams();
   if (query) {
     for (const [k, v] of Object.entries(query)) {
@@ -139,6 +161,7 @@ async function toApiError(res: Response): Promise<ApiError> {
 }
 
 async function rawRequest<T>(path: string, opts: RequestOptions, token: string | null): Promise<T> {
+  const url = buildUrl(path, opts.query); // hors du try : un chemin invalide n'est pas une « erreur réseau »
   const headers: Record<string, string> = { Accept: opts.responseKind === 'blob' ? '*/*' : 'application/json', ...opts.headers };
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -146,7 +169,7 @@ async function rawRequest<T>(path: string, opts: RequestOptions, token: string |
   const { signal, dispose, timedOut } = combineSignals(opts.timeoutMs ?? DEFAULT_TIMEOUT_MS, opts.signal);
   let res: Response;
   try {
-    res = await fetch(buildUrl(path, opts.query), {
+    res = await fetch(url, {
       method: opts.method ?? 'GET',
       headers,
       body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
