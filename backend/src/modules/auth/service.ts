@@ -7,6 +7,7 @@ import { randomToken, sha256Hex } from '../../lib/crypto.js';
 import { ACCESS_TOKEN_TTL_SECONDS, signAccessToken } from '../../lib/jwt.js';
 import { enqueueEmail } from '../../lib/outbox.js';
 import { addMinutes } from '../../lib/time.js';
+import { normalizeEmail } from '../../lib/email.js';
 import * as repo from './repo.js';
 
 export const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -36,10 +37,6 @@ export interface SessionResult {
   refreshToken: string;
 }
 
-/** Normalisation unique des emails (unicité insensible à la casse). */
-export function normalizeEmail(email: string): string {
-  return email.trim().toLowerCase();
-}
 
 let dummyHash: Promise<string> | null = null;
 /** Hash factice : un email inconnu coûte le même temps de calcul qu'un email connu (anti-énumération par timing). */

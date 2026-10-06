@@ -316,3 +316,24 @@ describe('mot de passe oublié / changement', () => {
     await login(u, 'nouveau-mot-de-passe-42');
   });
 });
+
+describe('unicité de l’email insensible à la casse (B1.1 M6)', () => {
+  it('A@x.com puis a@x.com ⇒ un seul compte', async () => {
+    await api().post(`${A}/register`).send({ email: 'Casse@Exemple.com', password: PASSWORD, displayName: 'A' }).expect(202);
+    await api().post(`${A}/register`).send({ email: 'casse@exemple.com', password: PASSWORD, displayName: 'B' }).expect(202);
+    await api().post(`${A}/register`).send({ email: 'CASSE@EXEMPLE.COM', password: PASSWORD, displayName: 'C' }).expect(202);
+    expect(await getDb().user.count()).toBe(1);
+  });
+
+  it('la base refuse un doublon de casse ou une adresse non normalisée, même en écriture directe', async () => {
+    await createUser({ email: 'direct@exemple.com' });
+    await expect(createUser({ email: 'Direct@Exemple.com' })).rejects.toThrow();
+    await expect(createUser({ email: ' autre@exemple.com' })).rejects.toThrow();
+  });
+
+  it('connexion avec une casse ou une forme Unicode différente', async () => {
+    // « é » composé (NFC) en base, saisi décomposé (NFD) à la connexion.
+    await createUser({ email: 'andré@exemple.com' });
+    await api().post(`${A}/login`).send({ email: 'ANDRÉ@exemple.com'.normalize('NFD'), password: PASSWORD }).expect(200);
+  });
+});
