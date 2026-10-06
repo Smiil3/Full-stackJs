@@ -23,7 +23,7 @@ export function PwaUpdatePrompt() {
         <button type="button" className="btn btn--small" onClick={() => void updateServiceWorker(true)}>
           Mettre à jour
         </button>
-        <button type="button" className="btn btn--secondary btn--small" onClick={() => setNeedRefresh(false)}>
+        <button type="button" className="btn btn--secondary btn--small" onClick={() => { setNeedRefresh(false); }}>
           Plus tard
         </button>
       </div>
@@ -33,7 +33,7 @@ export function PwaUpdatePrompt() {
     return (
       <div className="alert alert--success row" role="status">
         <span>L’application est prête à fonctionner hors-ligne.</span>
-        <button type="button" className="btn btn--secondary btn--small" onClick={() => setOfflineReady(false)}>
+        <button type="button" className="btn btn--secondary btn--small" onClick={() => { setOfflineReady(false); }}>
           OK
         </button>
       </div>
