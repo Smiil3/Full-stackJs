@@ -1,4 +1,4 @@
-import type { OrderStatus } from '../api/types';
+import type { EventStatus, OrderStatus } from '../api/types';
 
 export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   PENDING_PAYMENT: 'En attente de paiement',
@@ -8,3 +8,5 @@ export const ORDER_STATUS_LABELS: Record<OrderStatus, string> = {
   CANCELLED: 'Annulée',
   REFUNDED: 'Remboursée',
 };
+
+export const EVENT_STATUS_LABELS: Record<EventStatus, string> = { DRAFT: 'Brouillon', PUBLISHED: 'Publié', CANCELLED: 'Annulé' };
