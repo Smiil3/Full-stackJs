@@ -28,6 +28,12 @@ describe('connexion', () => {
     await waitFor(() => expect(router.state.location.pathname).toBe('/'));
   });
 
+  it.each(['constructor', '__proto__', 'toString'])('M6 : ?info=%s ⇒ aucun message, pas de plantage', async (info) => {
+    await renderApp(`/login?info=${info}`);
+    expect(await screen.findByRole('heading', { name: 'Connexion' })).toBeInTheDocument();
+    expect(screen.queryByRole('status')).toBeNull();
+  });
+
   it('identifiants invalides ⇒ message générique, mot de passe effacé', async () => {
     const user = userEvent.setup();
     await renderApp('/login');

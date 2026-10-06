@@ -1,3 +1,4 @@
+import { lookup } from '../../lib/lookup';
 import { useState, type SubmitEvent } from 'react';
 import { useNavigate } from 'react-router';
 import { dropSession } from '../../api/client';
@@ -54,7 +55,7 @@ export function AccountPage() {
         {user.memberships.map((m) => (
           <div key={m.orgId} className="kv__row">
             <dt>{m.orgName}</dt>
-            <dd>{ROLE_LABELS[m.role]}</dd>
+            <dd>{lookup(ROLE_LABELS, m.role) ?? 'Rôle inconnu'}</dd>
           </div>
         ))}
       </dl>

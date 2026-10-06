@@ -9,6 +9,8 @@
  *   « soit 14:00 chez vous, New York (UTC−5) »
  */
 
+import { lookup } from './lookup';
+
 const LOCALE = 'fr-FR';
 const MINUS = '−'; // signe moins typographique
 
@@ -71,7 +73,7 @@ export function userTimeZone(): string {
 export function timeZoneCity(tz: string): string {
   if (tz === 'UTC' || tz === 'Etc/UTC') return 'UTC';
   const last = tz.split('/').pop() ?? tz;
-  return CITY_FR[last] ?? last.replace(/_/g, ' ');
+  return lookup(CITY_FR, last) ?? last.replace(/_/g, ' ');
 }
 
 /** « heure de Paris », « heure d'Amsterdam », « heure UTC ». */

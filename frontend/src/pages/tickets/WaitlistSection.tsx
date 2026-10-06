@@ -3,6 +3,7 @@ import { apiPath } from '../../api/client';
 import { useAcceptOffer, useLeaveWaitlist, useMyWaitlist } from '../../api/hooks/waitlist';
 import { Countdown } from '../../components/Countdown';
 import { ErrorAlert } from '../../components/ErrorAlert';
+import { lookup } from '../../lib/lookup';
 
 const STATUS: Record<string, string> = { CONVERTED: 'Offre acceptée', EXPIRED: 'Offre expirée', LEFT: 'Inscription retirée' };
 
@@ -40,7 +41,7 @@ export function WaitlistSection() {
                 </button>
               </>
             ) : (
-              <p className="muted">{STATUS[w.status] ?? w.status}</p>
+              <p className="muted">{lookup(STATUS, w.status) ?? 'Statut inconnu'}</p>
             )}
             {w.status === 'WAITING' || w.status === 'OFFERED' ? (
               <button type="button" className="btn btn--secondary btn--small" disabled={leave.isPending} onClick={() => leave.mutate(w.id)}>

@@ -1,10 +1,11 @@
+import { lookup } from '../lib/lookup';
 import type { Membership, OrgRole, User } from '../api/types';
 
 const RANK: Record<OrgRole, number> = { SCANNER: 1, MANAGER: 2, OWNER: 3 };
 
 /** OWNER ⊃ MANAGER ⊃ SCANNER. Contrôle d'AFFICHAGE uniquement : l'API vérifie à chaque requête. */
 export function roleAtLeast(role: OrgRole, min: OrgRole): boolean {
-  return RANK[role] >= RANK[min];
+  return (lookup(RANK, role) ?? 0) >= RANK[min];
 }
 
 export function membershipFor(user: User | null, orgId: string | undefined): Membership | undefined {

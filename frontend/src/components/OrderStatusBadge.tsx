@@ -1,5 +1,6 @@
 import type { OrderStatus } from '../api/types';
 import { ORDER_STATUS_LABELS } from '../lib/labels';
+import { lookup } from '../lib/lookup';
 
 const TONE: Record<OrderStatus, string> = {
   PENDING_PAYMENT: 'low',
@@ -11,5 +12,5 @@ const TONE: Record<OrderStatus, string> = {
 };
 
 export function OrderStatusBadge({ status }: { status: OrderStatus }) {
-  return <span className={`badge badge--${TONE[status]}`}>{ORDER_STATUS_LABELS[status]}</span>;
+  return <span className={`badge badge--${lookup(TONE, status) ?? 'low'}`}>{lookup(ORDER_STATUS_LABELS, status) ?? 'Statut inconnu'}</span>;
 }

@@ -1,3 +1,4 @@
+import { lookup } from '../lib/lookup';
 import { ERROR_CODES, type ErrorCode, type ErrorDetails } from './types';
 
 /** Codes propres au client (jamais renvoyés par l'API). */
@@ -75,7 +76,7 @@ const MESSAGES: Record<AnyErrorCode, string> = {
 /** Message français lisible, enrichi des `details` contractuels quand ils sont utiles. */
 export function errorMessage(error: unknown): string {
   if (!isApiError(error)) return MESSAGES.INTERNAL_ERROR;
-  const base = MESSAGES[error.code];
+  const base = lookup(MESSAGES, error.code) ?? MESSAGES.INTERNAL_ERROR;
   const d = error.details;
   if (error.code === 'LIMIT_EXCEEDED' && d && typeof d.max === 'number') {
     const owned = typeof d.alreadyOwned === 'number' && d.alreadyOwned > 0 ? ` Vous en avez déjà ${d.alreadyOwned}.` : '';

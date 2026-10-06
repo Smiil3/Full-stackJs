@@ -5,6 +5,7 @@ import { errorMessage, isApiError } from '../../api/errors';
 import { useAuth } from '../../auth/AuthContext';
 import { safeRedirectPath } from '../../auth/safeRedirect';
 import { Field } from '../../components/Field';
+import { lookup } from '../../lib/lookup';
 
 const NOTICES: Record<string, string> = {
   verified: 'Votre adresse email est confirmée. Vous pouvez vous connecter.',
@@ -18,7 +19,7 @@ export function LoginPage() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const next = safeRedirectPath(params.get('next'));
-  const notice = NOTICES[params.get('info') ?? ''];
+  const notice = lookup(NOTICES, params.get('info'));
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<unknown>(null);
