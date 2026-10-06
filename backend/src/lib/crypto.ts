@@ -9,31 +9,60 @@ export function sha256Hex(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
-/** Comparaison à temps constant de deux chaînes (longueurs différentes ⇒ false sans fuite de timing sur le contenu). */
+/** Comparaison à temps constant de deux chaînes (via leurs empreintes de taille fixe : pas de fuite sur la longueur). */
 export function safeEqual(a: string, b: string): boolean {
   const ha = createHash('sha256').update(a).digest();
   const hb = createHash('sha256').update(b).digest();
-  return timingSafeEqual(ha, hb) && a.length === b.length;
+  return timingSafeEqual(ha, hb);
 }
 
 const GCM_IV_BYTES = 12;
+const GCM_TAG_BYTES = 16;
+const KID_RE = /^[a-z0-9]{1,16}$/;
 
-/** Chiffrement AES-256-GCM : sortie `v1.<iv>.<tag>.<ciphertext>` en base64url. */
-export function encryptString(plain: string, key: Buffer): string {
+export interface Keyring {
+  /** Clé utilisée pour chiffrer. */
+  current: { id: string; key: Buffer };
+  /** Toutes les clés acceptées en déchiffrement (courante + anciennes, pour la rotation). */
+  byId: ReadonlyMap<string, Buffer>;
+}
+
+/**
+ * Chiffrement AES-256-GCM authentifié, lié à son contexte par AAD
+ * (ex. `org:<orgId>:bank_iban`) : un chiffré recopié sur une autre ligne ne se déchiffre pas.
+ * Format : `v1.<kid>.<iv>.<tag>.<ciphertext>` (base64url) — le kid permet la rotation de clé.
+ */
+export function encryptString(plain: string, keyring: Keyring, aad: string): string {
   const iv = randomBytes(GCM_IV_BYTES);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  const cipher = createCipheriv('aes-256-gcm', keyring.current.key, iv, { authTagLength: GCM_TAG_BYTES });
+  cipher.setAAD(Buffer.from(aad, 'utf8'));
   const ciphertext = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
   const tag = cipher.getAuthTag();
-  return ['v1', iv.toString('base64url'), tag.toString('base64url'), ciphertext.toString('base64url')].join('.');
+  return ['v1', keyring.current.id, iv.toString('base64url'), tag.toString('base64url'), ciphertext.toString('base64url')].join('.');
 }
 
-export function decryptString(payload: string, key: Buffer): string {
-  const [version, iv, tag, ciphertext] = payload.split('.');
-  if (version !== 'v1' || !iv || !tag || ciphertext === undefined) throw new Error('Format chiffré inconnu');
-  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64url'));
-  decipher.setAuthTag(Buffer.from(tag, 'base64url'));
-  return Buffer.concat([decipher.update(Buffer.from(ciphertext, 'base64url')), decipher.final()]).toString('utf8');
+export function decryptString(payload: string, keyring: Keyring, aad: string): string {
+  const parts = payload.split('.');
+  const [version, kid, ivB64, tagB64, ctB64] = parts;
+  if (parts.length !== 5 || version !== 'v1' || !kid || !KID_RE.test(kid) || !ivB64 || !tagB64 || ctB64 === undefined) {
+    throw new Error('Format chiffré inconnu');
+  }
+  const key = keyring.byId.get(kid);
+  if (!key) throw new Error('Clé de chiffrement inconnue');
+  const iv = Buffer.from(ivB64, 'base64url');
+  const tag = Buffer.from(tagB64, 'base64url');
+  if (iv.length !== GCM_IV_BYTES || tag.length !== GCM_TAG_BYTES) throw new Error('IV ou tag invalide');
+  const decipher = createDecipheriv('aes-256-gcm', key, iv, { authTagLength: GCM_TAG_BYTES });
+  decipher.setAAD(Buffer.from(aad, 'utf8'));
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(Buffer.from(ctB64, 'base64url')), decipher.final()]).toString('utf8');
 }
+
+/** Contextes AAD des champs chiffrés. */
+export const aad = {
+  orgBankIban: (orgId: string) => `org:${orgId}:bank_iban`,
+  orderTransferIban: (orderId: string) => `order:${orderId}:transfer_iban`,
+};
 
 const TRANSFER_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 

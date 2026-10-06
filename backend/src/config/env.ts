@@ -1,4 +1,5 @@
 import Joi from 'joi';
+import type { Keyring } from '../lib/crypto.js';
 
 /**
  * Configuration validée au démarrage (fail fast) : une variable manquante,
@@ -16,7 +17,8 @@ export interface Env {
   jwtIssuer: string;
   jwtAudience: string;
   refreshCookieSecure: boolean;
-  dataEncryptionKey: Buffer;
+  /** Trousseau AES-256-GCM : clé courante (chiffrement) + anciennes clés (déchiffrement seulement). */
+  dataKeyring: Keyring;
   ticketSigningPrivateKeyFile: string;
   ticketSigningPublicKeyFile: string;
   smtp: { host: string; port: number; secure: boolean; user: string | null; password: string | null };
@@ -36,6 +38,11 @@ const secret256 = Joi.string()
     'secret.short': '{{#label}} doit décoder en au moins 32 octets (générer avec : node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64url\'))")',
   });
 
+/** Clé AES-256 : base64 standard encodant exactement 32 octets. */
+const key32 = Joi.string().base64()
+  .custom((value: string, helpers) => (Buffer.from(value, 'base64').length === 32 ? value : helpers.error('key.length')))
+  .messages({ 'key.length': '{{#label}} doit encoder exactement 32 octets' });
+
 /** Variables portant un secret : jamais de valeur d'exemple, toutes distinctes entre elles. */
 const SECRET_KEYS = ['JWT_ACCESS_SECRET', 'PSP_API_KEY', 'PSP_WEBHOOK_SECRET', 'DATA_ENCRYPTION_KEY'] as const;
 const PLACEHOLDER_KEYS = [...SECRET_KEYS, 'DATABASE_URL', 'SMTP_PASSWORD'] as const;
@@ -53,9 +60,12 @@ const schema = Joi.object({
   JWT_AUDIENCE: Joi.string().min(1).max(100).required(),
   REFRESH_COOKIE_SECURE: Joi.boolean().truthy('true').falsy('false').required()
     .when('NODE_ENV', { is: 'production', then: Joi.valid(true) }),
-  DATA_ENCRYPTION_KEY: Joi.string().base64().required()
-    .custom((value: string, helpers) => (Buffer.from(value, 'base64').length === 32 ? value : helpers.error('any.invalid')))
-    .messages({ 'any.invalid': 'DATA_ENCRYPTION_KEY doit encoder exactement 32 octets' }),
+  DATA_ENCRYPTION_KEY: key32.required(),
+  DATA_ENCRYPTION_KEY_ID: Joi.string().pattern(/^[a-z0-9]{1,16}$/).default('k1'),
+  // Anciennes clés pour la rotation : "kid:base64,kid:base64" (déchiffrement uniquement).
+  DATA_ENCRYPTION_PREVIOUS_KEYS: Joi.string().allow('').max(2000).default('')
+    .pattern(/^(?:[a-z0-9]{1,16}:[A-Za-z0-9+/]{43}=)(?:,[a-z0-9]{1,16}:[A-Za-z0-9+/]{43}=)*$/)
+    .messages({ 'string.pattern.base': 'DATA_ENCRYPTION_PREVIOUS_KEYS doit être de la forme kid:base64(32 octets),…' }),
   TICKET_SIGNING_PRIVATE_KEY_FILE: Joi.string().min(1).required(),
   TICKET_SIGNING_PUBLIC_KEY_FILE: Joi.string().min(1).required(),
   SMTP_HOST: Joi.string().hostname().required(),
@@ -106,6 +116,8 @@ interface RawEnv {
   JWT_AUDIENCE: string;
   REFRESH_COOKIE_SECURE: boolean;
   DATA_ENCRYPTION_KEY: string;
+  DATA_ENCRYPTION_KEY_ID: string;
+  DATA_ENCRYPTION_PREVIOUS_KEYS: string;
   TICKET_SIGNING_PRIVATE_KEY_FILE: string;
   TICKET_SIGNING_PUBLIC_KEY_FILE: string;
   SMTP_HOST: string;
@@ -148,7 +160,7 @@ export function parseEnv(source: NodeJS.ProcessEnv): Env {
     jwtIssuer: raw.JWT_ISSUER,
     jwtAudience: raw.JWT_AUDIENCE,
     refreshCookieSecure: raw.REFRESH_COOKIE_SECURE,
-    dataEncryptionKey: Buffer.from(raw.DATA_ENCRYPTION_KEY, 'base64'),
+    dataKeyring: buildKeyring(raw),
     ticketSigningPrivateKeyFile: raw.TICKET_SIGNING_PRIVATE_KEY_FILE,
     ticketSigningPublicKeyFile: raw.TICKET_SIGNING_PUBLIC_KEY_FILE,
     smtp: {
@@ -168,6 +180,20 @@ export function parseEnv(source: NodeJS.ProcessEnv): Env {
     },
     workerIntervalMs: raw.WORKER_INTERVAL_MS,
   };
+}
+
+function buildKeyring(raw: RawEnv): Keyring {
+  const current = { id: raw.DATA_ENCRYPTION_KEY_ID, key: Buffer.from(raw.DATA_ENCRYPTION_KEY, 'base64') };
+  const byId = new Map<string, Buffer>();
+  if (raw.DATA_ENCRYPTION_PREVIOUS_KEYS !== '') {
+    for (const entry of raw.DATA_ENCRYPTION_PREVIOUS_KEYS.split(',')) {
+      const [id, b64] = entry.split(':');
+      if (id && b64) byId.set(id, Buffer.from(b64, 'base64'));
+    }
+  }
+  if (byId.has(current.id)) throw new EnvValidationError([`DATA_ENCRYPTION_PREVIOUS_KEYS réutilise l’identifiant courant ${current.id}`]);
+  byId.set(current.id, current.key);
+  return { current, byId };
 }
 
 let cached: Env | null = null;

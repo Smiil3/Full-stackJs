@@ -8,7 +8,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import argon2 from 'argon2';
 import { getEnv } from '../src/config/env.js';
 import { disconnectDb, getDb } from '../src/lib/db.js';
-import { encryptString, randomToken, transferReference } from '../src/lib/crypto.js';
+import { aad, encryptString, randomToken, transferReference } from '../src/lib/crypto.js';
 import { isValidIban, maskIban, normalizeIban } from '../src/lib/iban.js';
 import { addHours, HOUR_MS } from '../src/lib/time.js';
 import type { Role } from '../src/generated/prisma/client.js';
@@ -50,19 +50,15 @@ async function main(): Promise<void> {
   ];
   const orgs = [];
   for (const def of orgDefs) {
-    const org = await db.organization.create({
+    const org = await db.organization.create({ data: { name: def.name, slug: def.slug } });
+    await db.organizationSettings.create({
       data: {
-        name: def.name,
-        slug: def.slug,
-        settings: {
-          create: {
-            contactEmail: `contact@${def.slug}.test`,
-            bankBeneficiary: def.name,
-            bankIbanEncrypted: encryptString(ibanPlain, env.dataEncryptionKey),
-            bankIbanMasked: maskIban(ibanPlain),
-            bankBic: 'AGRIFRPP',
-          },
-        },
+        orgId: org.id,
+        contactEmail: `contact@${def.slug}.test`,
+        bankBeneficiary: def.name,
+        bankIbanEncrypted: encryptString(ibanPlain, env.dataKeyring, aad.orgBankIban(org.id)),
+        bankIbanMasked: maskIban(ibanPlain),
+        bankBic: 'AGRIFRPP',
       },
     });
     const roles: [Role, string][] = [['OWNER', 'Proprio'], ['MANAGER', 'Gestion'], ['SCANNER', 'Scan']];
@@ -163,14 +159,15 @@ async function main(): Promise<void> {
   // 4. Une commande par virement en attente pour l'acheteur de démo.
   const fosse = await db.ticketType.findFirstOrThrow({ where: { eventId: electro.id, name: 'Fosse' } });
   await db.$transaction(async (tx) => {
+    const orderId = randomUUID();
     await tx.order.create({
       data: {
-        userId: buyer.id, eventId: electro.id, status: 'AWAITING_TRANSFER', paymentMethod: 'TRANSFER',
+        id: orderId, userId: buyer.id, eventId: electro.id, status: 'AWAITING_TRANSFER', paymentMethod: 'TRANSFER',
         idempotencyKey: randomUUID(), requestHash: '0'.repeat(64),
         subtotalCents: 3600, serviceFeeCents: 0, totalCents: 3600, refundPercent: 100, serviceFeeRefundable: false,
         cancellableUntil: addHours(electro.startsAt, -48), expiresAt: addHours(now, 72),
         transferReference: transferReference(), transferBeneficiary: nuits.name,
-        transferIbanEncrypted: encryptString(ibanPlain, env.dataEncryptionKey), transferIbanMasked: maskIban(ibanPlain), transferBic: 'AGRIFRPP',
+        transferIbanEncrypted: encryptString(ibanPlain, env.dataKeyring, aad.orderTransferIban(orderId)), transferIbanMasked: maskIban(ibanPlain), transferBic: 'AGRIFRPP',
         items: { create: [{ ticketTypeId: fosse.id, quantity: 2, unitPriceCents: 1800 }] },
       },
     });

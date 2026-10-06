@@ -64,3 +64,22 @@ describe('base de données', () => {
     await expect(db.waitlistEntry.create({ data: base })).rejects.toThrow();
   });
 });
+
+describe('chiffrement des IBAN en base (B1.1 H3)', () => {
+  it('un IBAN chiffré copié vers la ligne d’un autre collectif ne se déchiffre pas', async () => {
+    const { getEnv } = await import('../../src/config/env.js');
+    const { aad, decryptString, encryptString } = await import('../../src/lib/crypto.js');
+    const db = getDb();
+    const keyring = getEnv().dataKeyring;
+    const a = await db.organization.create({ data: { name: 'A', slug: 'org-a' } });
+    const b = await db.organization.create({ data: { name: 'B', slug: 'org-b' } });
+    const encA = encryptString('FR7630006000011234567890189', keyring, aad.orgBankIban(a.id));
+    await db.organizationSettings.create({ data: { orgId: a.id, bankIbanEncrypted: encA } });
+    // Attaquant avec accès en écriture à la base : recopie le chiffré de A sur B.
+    await db.organizationSettings.create({ data: { orgId: b.id, bankIbanEncrypted: encA } });
+    const rowB = await db.organizationSettings.findUniqueOrThrow({ where: { orgId: b.id } });
+    expect(() => decryptString(rowB.bankIbanEncrypted!, keyring, aad.orgBankIban(b.id))).toThrow();
+    const rowA = await db.organizationSettings.findUniqueOrThrow({ where: { orgId: a.id } });
+    expect(decryptString(rowA.bankIbanEncrypted!, keyring, aad.orgBankIban(a.id))).toBe('FR7630006000011234567890189');
+  });
+});
