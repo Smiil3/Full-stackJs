@@ -4,6 +4,7 @@ import { cleanup } from '@testing-library/react';
 import { afterAll, afterEach, beforeAll } from 'vitest';
 import { __resetClientForTests } from '../api/client';
 import { __resetServerClock } from '../api/serverClock';
+import { __resetCheckoutLaunched } from '../api/hooks/orders';
 import { resetMockDb } from '../mocks/core';
 import { server } from '../mocks/server';
 
@@ -25,6 +26,7 @@ afterEach(() => {
   resetMockDb();
   __resetClientForTests();
   __resetServerClock();
+  __resetCheckoutLaunched();
 });
 afterAll(() => {
   server.close();

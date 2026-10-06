@@ -31,14 +31,31 @@ describe('page commande', () => {
     expect((mock.db.calls.get('GET /orders/:orderId') ?? 0)).toBeGreaterThanOrEqual(2);
   });
 
-  it('après 60 s sans confirmation : arrêt du polling et message d’attente', async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['Date'] });
+  it('H1 : après 60 s sans confirmation, arrêt du polling SANS réafficher « Payer » (pas de double paiement)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
     const order = await createOrder();
     await renderApp(`/orders/${order.id}?payment=success`);
     await screen.findByText(/Paiement en cours de confirmation/);
-    vi.setSystemTime(Date.now() + 61_000);
-    expect(await screen.findByText(/prend plus de temps que prévu/, {}, { timeout: 3000 })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Payer/ })).toBeNull();
+    await vi.advanceTimersByTimeAsync(61_000);
+    expect(await screen.findByText(/prend plus de temps que prévu/)).toBeInTheDocument();
+    const calls = mock.db.calls.get('GET /orders/:orderId') ?? 0;
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(mock.db.calls.get('GET /orders/:orderId') ?? 0).toBe(calls); // polling arrêté
+    expect(screen.queryByRole('button', { name: /Payer/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Actualiser' })).toBeInTheDocument();
     vi.useRealTimers();
+  });
+
+  it('H1 : paiement lancé puis retour sans paramètre ⇒ pas de « Payer », confirmation attendue', async () => {
+    const user = userEvent.setup();
+    const order = await createOrder();
+    const { router } = await renderApp(`/orders/${order.id}`);
+    await user.click(await screen.findByRole('button', { name: /Payer/ }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/mock-psp/${order.id}`));
+    await router.navigate(`/orders/${order.id}`);
+    expect(await screen.findByText(/Paiement en cours de confirmation/)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Payer/ })).toBeNull();
   });
 
   it('retour PSP « failed » : message et nouvel essai possible', async () => {

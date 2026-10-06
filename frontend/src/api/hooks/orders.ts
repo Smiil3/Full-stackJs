@@ -61,6 +61,17 @@ export function useOrder(orderId: string | undefined, opts: { pollUntilPaid?: bo
   });
 }
 
+/**
+ * Commandes pour lesquelles un paiement a été lancé dans cette session (mémoire uniquement).
+ * Tant que le serveur n'a pas confirmé, on ne repropose JAMAIS « Payer » (risque de double paiement).
+ */
+const checkoutLaunched = new Set<string>();
+export const markCheckoutLaunched = (orderId: string) => checkoutLaunched.add(orderId);
+export const wasCheckoutLaunched = (orderId: string) => checkoutLaunched.has(orderId);
+export const __resetCheckoutLaunched = () => {
+  checkoutLaunched.clear();
+};
+
 export function useCheckout() {
   return useMutation({ mutationFn: (orderId: string) => apiRequest<CheckoutResponse>(apiPath`/orders/${orderId}/checkout`, { method: 'POST' }) });
 }
