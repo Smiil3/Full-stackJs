@@ -61,7 +61,7 @@ describe('rôles', () => {
     await api().get(`/api/v1/orgs/${a.id}/events/${eventId}`).set(a.scanner.auth).expect(403);
     const checkin = await api().get(`/api/v1/orgs/${a.id}/checkin/events`).set(a.scanner.auth).expect(200);
     expect(checkin.body.items).toHaveLength(1);
-    expect(Object.keys(checkin.body.items[0] as object).sort()).toEqual(['endsAt', 'id', 'isOnline', 'startsAt', 'status', 'timezone', 'title', 'venue']);
+    expect(Object.keys(checkin.body.items[0] as object).sort()).toEqual(['endsAt', 'id', 'isOnline', 'offlineCheckinEnabled', 'startsAt', 'status', 'timezone', 'title', 'venue']);
     const res = await api().get(`/api/v1/orgs/${a.id}/settings`).set(a.scanner.auth);
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe('FORBIDDEN');

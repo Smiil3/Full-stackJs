@@ -80,6 +80,7 @@ describe('annulation self-service', () => {
     const { orderId, eventId } = await paidOrder({ quantity: 2 });
     const tickets = (await api().get('/api/v1/me/tickets').set(buyer.auth)).body.items as { qrPayload: string }[];
     await cancel(orderId).expect(200);
+    await getDb().event.update({ where: { id: eventId }, data: { offlineCheckinEnabled: true } });
     const scan = await api().post(`/api/v1/orgs/${org.id}/events/${eventId}/checkin/scan`).set(org.scanner.auth)
       .send({ qrPayload: tickets[0]!.qrPayload, deviceId: randomUUID(), scanId: randomUUID() }).expect(200);
     expect(scan.body.result).toBe('CANCELLED');

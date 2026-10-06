@@ -7,6 +7,7 @@ export const checkinEventsResponse = Joi.object({
   items: Joi.array().items(Joi.object({
     id: uuidStrict, title: Joi.string(), venue: nullable(Joi.string()), isOnline: Joi.boolean(),
     startsAt: isoDateOutput, endsAt: isoDateOutput, timezone: Joi.string(), status: Joi.string().valid('PUBLISHED'),
+    offlineCheckinEnabled: Joi.boolean(),
   })),
 });
 

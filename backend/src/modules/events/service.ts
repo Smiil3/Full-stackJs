@@ -47,6 +47,7 @@ export function toEventAdmin(event: EventWithTypes, settings: OrganizationSettin
     salesStartAt: iso(event.salesStartAt),
     salesEndAt: iso(event.salesEndAt),
     overrides: overridesOf(event),
+    offlineCheckinEnabled: event.offlineCheckinEnabled,
     effectiveRules: toPublicRules(resolveEventSettings(settings, event)),
     ticketTypes: event.ticketTypes.map(toTicketTypeAdmin),
     createdAt: iso(event.createdAt),
@@ -173,6 +174,9 @@ export async function updateEvent(orgId: string, actor: { userId: string; role: 
       ? await tx.order.count({ where: { eventId, status: { in: ['PENDING_PAYMENT', 'AWAITING_TRANSFER', 'PAID'] } } })
       : 0;
     const isReport = rescheduled && activeOrders > 0;
+    const offlineChanged = body.offlineCheckinEnabled !== undefined && body.offlineCheckinEnabled !== current.offlineCheckinEnabled;
+    // Mode secours hors-ligne : décision réservée au propriétaire du collectif.
+    if (body.offlineCheckinEnabled !== undefined && actor.role !== 'OWNER') throw errors.forbidden();
     if (isReport) {
       if (actor.role !== 'OWNER') throw errors.forbidden();
       if (!body.rescheduleReason) throw errors.validation([{ path: 'rescheduleReason', message: 'Le motif du report est obligatoire.' }]);
@@ -187,13 +191,20 @@ export async function updateEvent(orgId: string, actor: { userId: string; role: 
     if (body.address !== undefined) data.address = body.address;
     if (body.isOnline !== undefined) data.isOnline = body.isOnline;
     if (body.timezone !== undefined) data.timezone = body.timezone;
+    if (body.offlineCheckinEnabled !== undefined) data.offlineCheckinEnabled = body.offlineCheckinEnabled;
     await tx.event.update({ where: { id: current.id }, data });
+    if (offlineChanged) {
+      await writeAudit(tx, {
+        orgId, actorId: actor.userId, action: 'event.offline_checkin', target: `event:${eventId}`,
+        meta: { from: current.offlineCheckinEnabled, to: body.offlineCheckinEnabled },
+      });
+    }
     if (isReport && body.rescheduleReason) {
       await applyReschedule(tx, current, dates, body.rescheduleReason, settings, actor.userId);
     } else {
       await writeAudit(tx, {
         orgId, actorId: actor.userId, action: 'event.update', target: `event:${eventId}`,
-        meta: { fields: Object.keys(body).filter((k) => k !== 'overrides'), overrides },
+        meta: { fields: Object.keys(body).filter((k) => k !== 'overrides' && k !== 'offlineCheckinEnabled'), overrides },
       });
     }
     return load(tx, orgId, eventId);

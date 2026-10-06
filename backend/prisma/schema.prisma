@@ -239,6 +239,8 @@ model Event {
   salesEndAt   DateTime    @db.Timestamptz(3)
   cancelledAt  DateTime?   @db.Timestamptz(3)
   cancelReason String?     @db.VarChar(500)
+  /// Mode secours : contrôle hors-ligne (téléchargement de la liste des billets) autorisé. Défaut : en ligne seulement.
+  offlineCheckinEnabled Boolean @default(false)
 
   // Surcharges des réglages du collectif (null = hérite).
   cardHoldMinutes           Int?

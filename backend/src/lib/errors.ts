@@ -22,6 +22,7 @@ export type ErrorCode =
   | 'PAYMENT_METHOD_UNAVAILABLE'
   | 'AMOUNT_MISMATCH'
   | 'WAITLIST_DISABLED'
+  | 'OFFLINE_CHECKIN_DISABLED'
   | 'PAYLOAD_TOO_LARGE'
   | 'UNSUPPORTED_MEDIA_TYPE'
   | 'RATE_LIMITED'
@@ -58,7 +59,7 @@ export const errors = {
   csrf: () => new AppError(403, 'CSRF_CHECK_FAILED', 'Requête refusée.'),
   notFound: () => new AppError(404, 'NOT_FOUND', 'Ressource introuvable.'),
   conflict: (message: string, details?: ErrorDetails) => new AppError(409, 'CONFLICT', message, details),
-  state: (code: Extract<ErrorCode, 'SOLD_OUT' | 'SALES_CLOSED' | 'ORDER_EXPIRED' | 'INVALID_STATE' | 'IDEMPOTENCY_CONFLICT' | 'ALREADY_IN_WAITLIST' | 'NOT_SOLD_OUT' | 'OFFER_EXPIRED' | 'CANCELLATION_CLOSED' | 'WAITLIST_DISABLED'>, message: string, details?: ErrorDetails) =>
+  state: (code: Extract<ErrorCode, 'SOLD_OUT' | 'SALES_CLOSED' | 'ORDER_EXPIRED' | 'INVALID_STATE' | 'IDEMPOTENCY_CONFLICT' | 'ALREADY_IN_WAITLIST' | 'NOT_SOLD_OUT' | 'OFFER_EXPIRED' | 'CANCELLATION_CLOSED' | 'WAITLIST_DISABLED' | 'OFFLINE_CHECKIN_DISABLED'>, message: string, details?: ErrorDetails) =>
     new AppError(409, code, message, details),
   unprocessable: (code: Extract<ErrorCode, 'LIMIT_EXCEEDED' | 'PAYMENT_METHOD_UNAVAILABLE' | 'AMOUNT_MISMATCH'>, message: string, details?: ErrorDetails) =>
     new AppError(422, code, message, details),

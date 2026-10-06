@@ -25,6 +25,7 @@ afterEach(() => {
 
 async function eventWithTickets(quantity = 2) {
   const { eventId, ticketTypeIds } = await createEvent(org, { ticketTypes: [{ name: 'Entrée', capacity: 50, priceCents: 0 }], publish: true });
+  await getDb().event.update({ where: { id: eventId }, data: { offlineCheckinEnabled: true } });
   const res = await api().post('/api/v1/orders').set(buyer.auth).set('Idempotency-Key', randomUUID())
     .send({ eventId, paymentMethod: 'CARD', items: [{ ticketTypeId: ticketTypeIds[0]!, quantity }] }).expect(201);
   const tickets = ((await api().get('/api/v1/me/tickets').set(buyer.auth)).body.items as { qrPayload: string; publicId: string; event: { id: string } }[])
@@ -205,5 +206,37 @@ describe('clés de signature (B6.1 M4 / B3)', () => {
     expect(() => withKeys({ priv: loose.priv, pub: loose.pub }, prod)).toThrow(/lisible/);
     const tight = writePair(0o400);
     expect(() => withKeys({ priv: tight.priv, pub: tight.pub }, prod)).not.toThrow();
+  });
+});
+
+describe('mode secours hors-ligne (contrat 1.13)', () => {
+  it('désactivé par défaut : snapshot ⇒ 409 OFFLINE_CHECKIN_DISABLED ; scan et sync restent possibles', async () => {
+    const { eventId, ticketTypeIds } = await createEvent(org, { ticketTypes: [{ name: 'A', capacity: 5, priceCents: 0 }], publish: true });
+    const res = await api().get(url(eventId, 'snapshot')).set(org.scanner.auth);
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('OFFLINE_CHECKIN_DISABLED');
+    await api().post('/api/v1/orders').set(buyer.auth).set('Idempotency-Key', randomUUID())
+      .send({ eventId, paymentMethod: 'CARD', items: [{ ticketTypeId: ticketTypeIds[0]!, quantity: 1 }] }).expect(201);
+    const ticket = ((await api().get('/api/v1/me/tickets').set(buyer.auth)).body.items as { qrPayload: string; event: { id: string } }[]).find((t) => t.event.id === eventId)!;
+    expect((await scan(eventId, ticket.qrPayload).expect(200)).body.result).toBe('OK');
+    await api().post(url(eventId, 'sync')).set(org.scanner.auth)
+      .send({ deviceId: randomUUID(), scans: [{ scanId: randomUUID(), qrPayload: ticket.qrPayload, scannedAt: new Date().toISOString() }] }).expect(200);
+  });
+
+  it('seul un OWNER active le mode secours ; bascule tracée ; visible dans EventAdmin et la liste de contrôle', async () => {
+    const { eventId } = await createEvent(org, { ticketTypes: [{ name: 'A', capacity: 5, priceCents: 0 }], publish: true });
+    const evUrl = `/api/v1/orgs/${org.id}/events/${eventId}`;
+    await api().patch(evUrl).set(org.manager.auth).send({ offlineCheckinEnabled: true }).expect(403);
+    expect((await getDb().event.findUniqueOrThrow({ where: { id: eventId } })).offlineCheckinEnabled).toBe(false);
+    const on = await api().patch(evUrl).set(org.owner.auth).send({ offlineCheckinEnabled: true }).expect(200);
+    expect(on.body.offlineCheckinEnabled).toBe(true);
+    await api().get(url(eventId, 'snapshot')).set(org.scanner.auth).expect(200);
+    const list = await api().get(`/api/v1/orgs/${org.id}/checkin/events`).set(org.scanner.auth).expect(200);
+    expect((list.body.items as { id: string; offlineCheckinEnabled: boolean }[]).find((e) => e.id === eventId)?.offlineCheckinEnabled).toBe(true);
+    await api().patch(evUrl).set(org.owner.auth).send({ offlineCheckinEnabled: false }).expect(200);
+    const audits = await getDb().auditLog.findMany({ where: { action: 'event.offline_checkin' }, orderBy: { createdAt: 'asc' } });
+    expect(audits.map((a) => a.meta)).toEqual([{ from: false, to: true }, { from: true, to: false }]);
+    // Un MANAGER garde la main sur les autres champs.
+    await api().patch(evUrl).set(org.manager.auth).send({ title: 'Nouveau titre' }).expect(200);
   });
 });

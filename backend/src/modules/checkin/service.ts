@@ -12,7 +12,7 @@ export async function listCheckinEvents(orgId: string) {
   const since = new Date(clock.now().getTime() - 24 * 3600_000);
   const rows = await getDb().event.findMany({
     where: { orgId, status: 'PUBLISHED', endsAt: { gt: since } },
-    select: { id: true, title: true, venue: true, isOnline: true, startsAt: true, endsAt: true, timezone: true, status: true },
+    select: { id: true, title: true, venue: true, isOnline: true, startsAt: true, endsAt: true, timezone: true, status: true, offlineCheckinEnabled: true },
     orderBy: [{ startsAt: 'asc' }, { id: 'asc' }],
     take: 100,
   });
@@ -20,6 +20,7 @@ export async function listCheckinEvents(orgId: string) {
     items: rows.map((e) => ({
       id: e.id, title: e.title, venue: e.venue, isOnline: e.isOnline,
       startsAt: iso(e.startsAt), endsAt: iso(e.endsAt), timezone: e.timezone, status: e.status,
+      offlineCheckinEnabled: e.offlineCheckinEnabled,
     })),
   };
 }
@@ -31,7 +32,7 @@ const CHECKIN_WINDOW_MS = 24 * 3600_000;
  * moins de 24 h ; CANCELLED est signalé à l'appelant (le scan répond alors CANCELLED) ; tout autre cas ⇒ 404.
  */
 async function eventOfOrg(db: Tx, orgId: string, eventId: string, allowCancelled = false) {
-  const event = await db.event.findFirst({ where: { id: eventId, orgId }, select: { id: true, salesStartAt: true, status: true, endsAt: true } });
+  const event = await db.event.findFirst({ where: { id: eventId, orgId }, select: { id: true, salesStartAt: true, status: true, endsAt: true, offlineCheckinEnabled: true } });
   if (!event || event.endsAt.getTime() <= clock.now().getTime() - CHECKIN_WINDOW_MS) throw errors.notFound();
   if (event.status === 'CANCELLED' && allowCancelled) return event;
   if (event.status !== 'PUBLISHED') throw errors.notFound();
@@ -53,7 +54,11 @@ function brief(t: TicketWithHolder) {
 /** Liste téléchargée par la PWA avant l'ouverture des portes (vérification hors-ligne). */
 export async function snapshot(orgId: string, eventId: string) {
   const db = getDb();
-  await eventOfOrg(db, orgId, eventId);
+  const event = await eventOfOrg(db, orgId, eventId);
+  // Contrôle EN LIGNE par défaut : la liste des billets n'est téléchargeable qu'en mode secours activé.
+  if (!event.offlineCheckinEnabled) {
+    throw errors.state('OFFLINE_CHECKIN_DISABLED', 'Le contrôle hors-ligne n’est pas activé pour cet événement.');
+  }
   const tickets = await db.ticket.findMany({ where: { eventId }, include: ticketInclude, orderBy: [{ createdAt: 'asc' }, { id: 'asc' }] });
   return {
     eventId,

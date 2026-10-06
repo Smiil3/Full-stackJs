@@ -16,6 +16,8 @@ beforeEach(async () => {
 /** Événement publié avec un type gratuit (billets émis immédiatement) et un acheteur qui a 2 billets. */
 async function eventWithTickets(o: OrgFixture = org, who: LoggedIn = buyer, quantity = 2) {
   const { eventId, ticketTypeIds } = await createEvent(o, { ticketTypes: [{ name: 'Entrée', capacity: 50, priceCents: 0 }], publish: true });
+  // Mode secours hors-ligne activé (snapshot) pour ces scénarios.
+  await getDb().event.update({ where: { id: eventId }, data: { offlineCheckinEnabled: true } });
   await api().post('/api/v1/orders').set(who.auth).set('Idempotency-Key', randomUUID())
     .send({ eventId, paymentMethod: 'CARD', items: [{ ticketTypeId: ticketTypeIds[0]!, quantity }] }).expect(201);
   const tickets = await api().get('/api/v1/me/tickets').set(who.auth).expect(200);

@@ -13,7 +13,7 @@ export interface EventCreateBody {
   title: string; description?: string | null; venue?: string | null; address?: string | null; isOnline: boolean;
   startsAt: string; endsAt: string; timezone: string; salesStartAt: string; salesEndAt: string; overrides?: OverridesInput;
 }
-export type EventPatchBody = Partial<EventCreateBody> & { rescheduleReason?: string };
+export type EventPatchBody = Partial<EventCreateBody> & { rescheduleReason?: string; offlineCheckinEnabled?: boolean };
 
 const eventFields = {
   title: text().min(1).max(150),
@@ -44,6 +44,8 @@ export const eventPatchBody = Joi.object<EventPatchBody>({
   // Surcharges : un objet vide n'a aucun effet ⇒ refusé (pas d'entrée d'audit vide).
   overrides: overrides.min(1),
   rescheduleReason: text({ multiline: true }).min(1).max(500),
+  // Mode secours hors-ligne : OWNER uniquement (contrôlé dans le service).
+  offlineCheckinEnabled: Joi.boolean(),
 }).min(1);
 
 export interface TicketTypeBody {
@@ -95,7 +97,7 @@ export const eventAdminResponse = Joi.object({
   id: uuidStrict, orgId: uuidStrict, title: Joi.string(), description: nullable(Joi.string()), venue: nullable(Joi.string()),
   address: nullable(Joi.string()), isOnline: Joi.boolean(), startsAt: isoDateOutput, endsAt: isoDateOutput, timezone: Joi.string(),
   status: Joi.string().valid('DRAFT', 'PUBLISHED', 'CANCELLED'), salesStartAt: isoDateOutput, salesEndAt: isoDateOutput,
-  overrides: overridesResponse, effectiveRules: publicRulesResponse, ticketTypes: Joi.array().items(ticketTypeAdminResponse),
+  overrides: overridesResponse, offlineCheckinEnabled: Joi.boolean(), effectiveRules: publicRulesResponse, ticketTypes: Joi.array().items(ticketTypeAdminResponse),
   createdAt: isoDateOutput, updatedAt: isoDateOutput,
 });
 export const eventAdminPage = pageOf(eventAdminResponse);
