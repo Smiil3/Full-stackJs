@@ -1,0 +1,55 @@
+// @vitest-environment node
+import { ESLint, type Linter } from 'eslint';
+import tseslint from 'typescript-eslint';
+import { describe, expect, it } from 'vitest';
+import { securityConfigs } from './eslint.security.js';
+
+const eslint = new ESLint({
+  cwd: import.meta.dirname,
+  overrideConfigFile: true,
+  overrideConfig: [
+    { files: ['**/*.{ts,tsx}'], languageOptions: { parser: tseslint.parser, parserOptions: { ecmaFeatures: { jsx: true } } } },
+    ...(securityConfigs as Linter.Config[]),
+  ],
+});
+
+async function ruleIds(code: string, filePath: string): Promise<string[]> {
+  const [result] = await eslint.lintText(code, { filePath });
+  return (result?.messages ?? []).map((m) => m.ruleId ?? m.message);
+}
+
+describe('règles ESLint de sécurité (revue F1.1 — B5)', () => {
+  it.each([
+    ['localStorage.setItem("t", x)', 'no-restricted-globals'],
+    ['window.localStorage.setItem("t", x)', 'no-restricted-properties'],
+    ['globalThis.sessionStorage.getItem("t")', 'no-restricted-properties'],
+    ['self.indexedDB.open("x")', 'no-restricted-properties'],
+    ['indexedDB.open("x")', 'no-restricted-globals'],
+    ['document.cookie = "a=b"', 'no-restricted-properties'],
+    ['fetch("/api/v1/orders")', 'no-restricted-globals'],
+    ['window.fetch("/x")', 'no-restricted-properties'],
+    ['el.innerHTML = x', 'no-restricted-syntax'],
+    ['document.write(x)', 'no-restricted-syntax'],
+    ['eval(x)', 'no-eval'],
+    ['new Function(x)', 'no-new-func'],
+  ])('interdit « %s » dans un fichier applicatif', async (code, rule) => {
+    expect(await ruleIds(`declare const x: string; declare const el: HTMLElement; ${code};\n`, 'src/pages/Page.tsx')).toContain(rule);
+  });
+
+  it('interdit dangerouslySetInnerHTML', async () => {
+    expect(await ruleIds('export const A = (h: string) => <div dangerouslySetInnerHTML={{ __html: h }} />;\n', 'src/pages/A.tsx')).toContain('no-restricted-syntax');
+  });
+
+  it('fetch autorisé UNIQUEMENT dans src/api/client.ts (mais pas localStorage)', async () => {
+    expect(await ruleIds('fetch("/x");\n', 'src/api/client.ts')).toEqual([]);
+    expect(await ruleIds('localStorage.getItem("x");\n', 'src/api/client.ts')).toContain('no-restricted-globals');
+    expect(await ruleIds('fetch("/x");\n', 'src/api/hooks/orders.ts')).toContain('no-restricted-globals');
+  });
+
+  it('IndexedDB autorisé uniquement dans src/offline/ et src/scanner/db.ts', async () => {
+    expect(await ruleIds('indexedDB.open("x");\n', 'src/offline/tickets.ts')).toEqual([]);
+    expect(await ruleIds('indexedDB.open("x");\n', 'src/scanner/db.ts')).toEqual([]);
+    expect(await ruleIds('indexedDB.open("x");\n', 'src/scanner/ScanPage.tsx')).toContain('no-restricted-globals');
+    expect(await ruleIds('fetch("/x");\n', 'src/offline/tickets.ts')).toContain('no-restricted-globals');
+  });
+});

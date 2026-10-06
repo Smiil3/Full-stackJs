@@ -79,7 +79,7 @@ export default defineConfig(({ mode, command }) => {
   test: {
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
-    include: ['src/**/*.test.{ts,tsx}', 'vite.config.test.ts'],
+    include: ['src/**/*.test.{ts,tsx}', 'vite.config.test.ts', 'eslint.security.test.ts'],
     restoreMocks: true,
     css: { modules: { classNameStrategy: 'non-scoped' } },
   },

@@ -11,7 +11,9 @@
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "allowJs": true,
+    "checkJs": false
   },
-  "include": ["vite.config.ts", "vite.config.test.ts", "security-headers.ts", "playwright.config.ts", "e2e"]
+  "include": ["vite.config.ts", "vite.config.test.ts", "security-headers.ts", "eslint.security.js", "eslint.security.test.ts", "playwright.config.ts", "e2e"]
 }
