@@ -16,6 +16,7 @@ import { OrdersPage } from './pages/orders/OrdersPage';
 import { EventPage } from './pages/public/EventPage';
 import { EventsPage } from './pages/public/EventsPage';
 import { TicketsPage } from './pages/tickets/TicketsPage';
+import { WaitlistOfferPage } from './pages/tickets/WaitlistOfferPage';
 import { AdminOrgsPage } from './pages/admin/AdminOrgsPage';
 import { AuditPage } from './pages/org/AuditPage';
 import { DashboardPage } from './pages/org/DashboardPage';
@@ -52,6 +53,7 @@ export const routes: RouteObject[] = [
       { path: 'me/orders', element: <RequireAuth><OrdersPage /></RequireAuth> },
       { path: 'orders/:orderId', element: <ValidIds><RequireAuth><OrderPage /></RequireAuth></ValidIds> },
       { path: 'me/tickets', element: <RequireAuth allowOffline><TicketsPage /></RequireAuth> },
+      { path: 'waitlist/:entryId', element: <ValidIds><RequireAuth><WaitlistOfferPage /></RequireAuth></ValidIds> },
       // Back-office : gardes = confort d'affichage, l'API vérifie le rôle à chaque requête.
       { path: 'org', element: <RequireAuth><OrgHomePage /></RequireAuth> },
       {

@@ -25,4 +25,13 @@ export function writeThemePreference(value: ThemePreference): void {
     // préférence non mémorisée : rien de grave
   }
 }
+
+/** Réservé aux tests : oublie la préférence. */
+export function __clearThemePreference(): void {
+  try {
+    localStorage.removeItem(KEY);
+  } catch {
+    // rien à effacer
+  }
+}
 /* eslint-enable no-restricted-globals */

@@ -6,6 +6,7 @@ import { afterAll, afterEach, beforeAll } from 'vitest';
 import { __resetClientForTests } from '../api/client';
 import { runSessionCleanups } from '../auth/sessionCleanup';
 import '../scanner/cleanup';
+import { __clearThemePreference } from '../lib/themePreference';
 import { clearLogoutPending } from '../offline/pendingLogout'; // comme App.tsx : purge du scanner en fin de session
 import { __resetServerClock } from '../api/serverClock';
 import { __resetUrlTokens } from '../pages/account/useUrlToken';
@@ -35,6 +36,8 @@ afterEach(async () => {
   __resetClientForTests();
   __resetServerClock();
   __resetUrlTokens();
+  __clearThemePreference();
+  if (typeof document !== 'undefined') delete document.documentElement.dataset.theme; // suites « node » : pas de DOM
 });
 afterAll(() => {
   server.close();

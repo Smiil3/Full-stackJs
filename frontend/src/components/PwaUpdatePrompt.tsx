@@ -44,9 +44,11 @@ export function PwaUpdatePrompt() {
 
   if (needRefresh) {
     return (
-      <div className={`alert row ${insist ? 'alert--warning' : 'alert--info'}`} role={insist ? 'alert' : 'status'}>
-        {insist ? <strong>Mise à jour en attente depuis plus de 24 h : installez-la avant le prochain contrôle d’accès.</strong> : null}
-        <span>Une nouvelle version de l’application est disponible.</span>
+      <div className="pwa-update" role={insist ? 'alert' : 'status'}>
+        <p>
+          {insist ? <strong>Mise à jour en attente depuis plus de 24 h : installez-la avant le prochain contrôle d’accès. </strong> : null}
+          Une nouvelle version est prête.
+        </p>
         <button
           type="button"
           className="btn btn--small"
@@ -57,7 +59,13 @@ export function PwaUpdatePrompt() {
         >
           Mettre à jour
         </button>
-        <button type="button" className="btn btn--secondary btn--small" onClick={() => { setNeedRefresh(false); }}>
+        <button
+          type="button"
+          className="btn btn--ghost btn--small"
+          onClick={() => {
+            setNeedRefresh(false);
+          }}
+        >
           Plus tard
         </button>
       </div>
@@ -65,9 +73,15 @@ export function PwaUpdatePrompt() {
   }
   if (offlineReady) {
     return (
-      <div className="alert alert--success row" role="status">
-        <span>L’application est prête à fonctionner hors-ligne.</span>
-        <button type="button" className="btn btn--secondary btn--small" onClick={() => { setOfflineReady(false); }}>
+      <div className="pwa-update" role="status">
+        <p>L’application est prête à fonctionner hors-ligne.</p>
+        <button
+          type="button"
+          className="btn btn--secondary btn--small"
+          onClick={() => {
+            setOfflineReady(false);
+          }}
+        >
           OK
         </button>
       </div>
