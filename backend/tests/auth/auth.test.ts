@@ -169,7 +169,13 @@ describe('refresh token rotatif', () => {
     const results = await Promise.all(
       Array.from({ length: 5 }, () => api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', u.cookie)),
     );
+    // Rotation atomique : un seul gagnant ; les perdants sont traités comme une réutilisation
+    // (règle stricte, sans période de grâce) ⇒ la famille entière est révoquée.
     expect(results.filter((r) => r.status === 200)).toHaveLength(1);
+    expect(results.filter((r) => r.status === 401).every((r) => r.body.error.code === 'INVALID_REFRESH_TOKEN')).toBe(true);
+    const winner = results.find((r) => r.status === 200)!;
+    await api().post(`${A}/refresh`).set(csrfHeaders).set('Cookie', refreshCookieOf(winner)).expect(401);
+    expect(await getDb().refreshToken.count({ where: { userId: u.id, revokedAt: null } })).toBe(0);
   });
 
   it('jeton expiré, inconnu ou absent ⇒ 401', async () => {

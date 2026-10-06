@@ -19,7 +19,11 @@ function loadEnvOrExit() {
 const env = loadEnvOrExit();
 const logger = getLogger();
 const server = createApp().listen(env.port, () => {
-  logger.info({ port: env.port, env: env.nodeEnv }, 'API démarrée');
+  // Configuration réseau effective journalisée au démarrage (aucun secret).
+  logger.info(
+    { port: env.port, env: env.nodeEnv, trustProxyHops: env.trustProxyHops, frontUrl: env.frontUrl, refreshCookieSecure: env.refreshCookieSecure },
+    'API démarrée',
+  );
 });
 
 function shutdown(signal: string): void {

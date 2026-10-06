@@ -33,6 +33,7 @@ export function buildLimiters(config: RateLimitConfig) {
     register: limiter(config, 60 * 60_000, 10),
     emailActions: limiter(config, 60 * 60_000, 10),
     refresh: limiter(config, 60_000, 30),
+    webhook: limiter(config, 60_000, 120),
     orders: limiter(config, 60_000, 20),
     scan: limiter(config, 60_000, 240),
   };

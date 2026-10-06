@@ -3,8 +3,9 @@ import { describe, expect, it } from 'vitest';
 import express from 'express';
 import supertest from 'supertest';
 import Joi from 'joi';
-import { parseEnv, EnvValidationError } from '../../src/config/env.js';
-import { endpoint } from '../../src/middlewares/validate.js';
+import { parseEnv, EnvValidationError, resetEnvCache } from '../../src/config/env.js';
+import { checkResponse, endpoint } from '../../src/middlewares/validate.js';
+import { createApp } from '../../src/app.js';
 import { errorHandler, notFoundHandler } from '../../src/middlewares/errorHandler.js';
 import { pinoHttp } from 'pino-http';
 import { getLogger } from '../../src/lib/logger.js';
@@ -78,10 +79,111 @@ describe('application', () => {
     expect(bad.body.error.code).toBe('VALIDATION_ERROR');
     const big = await api().post('/api/v1/nexiste-pas').set('Content-Type', 'application/json').send({ a: 'x'.repeat(20_000) });
     expect(big.status).toBe(413);
+    expect(big.body.error.code).toBe('PAYLOAD_TOO_LARGE');
+  });
+
+  it('corps non JSON ⇒ 415 UNSUPPORTED_MEDIA_TYPE (B1.1 M10)', async () => {
+    const res = await api().post('/api/v1/auth/login').set('Content-Type', 'text/plain').send('email=a&password=b');
+    expect(res.status).toBe(415);
+    expect(res.body.error.code).toBe('UNSUPPORTED_MEDIA_TYPE');
+    const form = await api().post('/api/v1/auth/login').type('form').send({ email: 'a@test.fr', password: 'x' });
+    expect(form.status).toBe(415);
+  });
+
+  it('requestId toujours généré par le serveur, jamais repris du client (B1.1 M5)', async () => {
+    const res = await api().get('/health').set('X-Request-Id', 'client-chosen-id-123');
+    expect(res.headers['x-request-id']).not.toBe('client-chosen-id-123');
+    expect(res.headers['x-request-id']).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it('HSTS activé en production', async () => {
+    const saved = { ...process.env };
+    try {
+      Object.assign(process.env, { NODE_ENV: 'production', REFRESH_COOKIE_SECURE: 'true' });
+      resetEnvCache();
+      const res = await supertest(createApp()).get('/health');
+      expect(res.headers['strict-transport-security']).toMatch(/max-age=31536000/);
+    } finally {
+      process.env = saved;
+      resetEnvCache();
+    }
   });
 });
 
-describe('validate / endpoint', () => {
+describe('ordre des middlewares et limites (B1.1 M1/M2)', () => {
+  it('le limiteur global passe avant le parseur JSON', async () => {
+    const strict = supertest(createApp({ rateLimitMultiplier: 0.01 })); // global : 3 / min
+    for (let i = 0; i < 3; i += 1) {
+      const r = await strict.post('/api/v1/auth/login').set('Content-Type', 'application/json').send('{"malformé');
+      expect(r.status).toBe(400);
+    }
+    const blocked = await strict.post('/api/v1/auth/login').set('Content-Type', 'application/json').send('{"malformé');
+    expect(blocked.status).toBe(429);
+    expect(blocked.body.error.code).toBe('RATE_LIMITED');
+    expect(Number(blocked.headers['retry-after'])).toBeGreaterThan(0);
+  });
+
+  it('le webhook a son propre limiteur et n’est pas parsé en JSON', async () => {
+    const strict = supertest(createApp({ rateLimitMultiplier: 0.01 })); // webhook : 1 / min
+    const first = await strict.post('/api/v1/webhooks/psp').set('Content-Type', 'application/json').send('{"pas du json');
+    // Corps brut : le parseur JSON n'intervient pas (sinon 400 « JSON invalide »).
+    expect(first.body.error?.message).not.toMatch(/JSON invalide/);
+    const second = await strict.post('/api/v1/webhooks/psp').set('Content-Type', 'application/json').send('{}');
+    expect(second.status).toBe(429);
+  });
+
+  it('webhook : corps brut au-delà de 64 ko ⇒ 413', async () => {
+    const res = await api().post('/api/v1/webhooks/psp').set('Content-Type', 'application/json').send(`{"a":"${'x'.repeat(70_000)}"}`);
+    expect(res.status).toBe(413);
+    expect(res.body.error.code).toBe('PAYLOAD_TOO_LARGE');
+  });
+});
+
+describe('validation des entrées sur la vraie pile (createApp)', () => {
+  it('champ inconnu dans le body ⇒ 400 avec le chemin du champ', async () => {
+    const res = await api().post('/api/v1/auth/login').send({ email: 'a@test.fr', password: 'x', isAdmin: true }).expect(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    expect(res.body.error.details.fields).toEqual([{ path: 'isAdmin', message: expect.any(String) }]);
+  });
+
+  it('pas de conversion de type dans le body JSON et toutes les erreurs remontées', async () => {
+    const res = await api().post('/api/v1/auth/register').send({ email: 12, password: 123456789012345, displayName: true }).expect(400);
+    const paths = (res.body.error.details.fields as { path: string }[]).map((f) => f.path).sort();
+    expect(paths).toEqual(['displayName', 'email', 'password']);
+  });
+
+  it('__proto__ / constructor dans le body ⇒ 400 (pas de pollution de prototype)', async () => {
+    for (const key of ['__proto__', 'constructor', 'prototype']) {
+      const raw = `{"email":"a@test.fr","password":"x","${key}":{"isPlatformAdmin":true}}`;
+      const res = await api().post('/api/v1/auth/login').set('Content-Type', 'application/json').send(raw);
+      expect(res.status).toBe(400);
+      expect(res.body.error.code).toBe('VALIDATION_ERROR');
+    }
+    expect(({} as Record<string, unknown>)['isPlatformAdmin']).toBeUndefined();
+  });
+});
+
+describe('validation des réponses (contrat de sortie)', () => {
+  it('en production : les champs non déclarés (passwordHash) sont retirés', () => {
+    const saved = { ...process.env };
+    try {
+      Object.assign(process.env, { NODE_ENV: 'production', REFRESH_COOKIE_SECURE: 'true' });
+      resetEnvCache();
+      const out: unknown = checkResponse(Joi.object({ id: Joi.string(), email: Joi.string() }), { id: '1', email: 'a@b.fr', passwordHash: '$argon2id$x' });
+      expect(out).toEqual({ id: '1', email: 'a@b.fr' });
+      expect(() => {
+        checkResponse(Joi.object({ id: Joi.string(), email: Joi.string() }), { id: '1' });
+      }).toThrow();
+    } finally {
+      process.env = saved;
+      resetEnvCache();
+    }
+  });
+});
+
+// Les violations du contrat de SORTIE ne sont pas provoquables via les routes réelles (qui le respectent) :
+// on monte une route jouet avec le même endpoint() et le même errorHandler que l'application.
+describe('endpoint() — réponse non conforme', () => {
   function miniApp(response: Joi.Schema, result: unknown, fail = false) {
     const app = express();
     app.use(pinoHttp({ logger: getLogger() }));
@@ -104,20 +206,8 @@ describe('validate / endpoint', () => {
   }
   const schema = Joi.object({ ok: Joi.boolean() });
 
-  it('champ inconnu dans le body ⇒ 400 VALIDATION_ERROR avec le chemin du champ', async () => {
-    const res = await miniApp(schema, { ok: true }).post('/t/1').send({ name: 'a', qty: 1, isAdmin: true }).expect(400);
-    expect(res.body.error.code).toBe('VALIDATION_ERROR');
-    expect(res.body.error.details.fields).toEqual([{ path: 'isAdmin', message: expect.any(String) }]);
-  });
-
   it('champ inconnu dans la query ⇒ 400', async () => {
     await miniApp(schema, { ok: true }).post('/t/1?evil=1').send({ name: 'a', qty: 1 }).expect(400);
-  });
-
-  it('toutes les erreurs sont remontées et le body n’est pas converti ("5" n’est pas un nombre)', async () => {
-    const res = await miniApp(schema, { ok: true }).post('/t/abc').send({ qty: '5' }).expect(400);
-    const paths = (res.body.error.details.fields as { path: string }[]).map((f) => f.path).sort();
-    expect(paths).toEqual(['id', 'name', 'qty']);
   });
 
   it('entrée valide ⇒ réponse conforme', async () => {
@@ -158,6 +248,11 @@ describe('configuration — secrets (B1.1 H1)', () => {
     expect(() => parseEnv({ ...env, PSP_WEBHOOK_SECRET: env['PSP_API_KEY'] })).toThrow(/distincts/);
     expect(() => parseEnv({ ...env, JWT_ACCESS_SECRET: env['PSP_WEBHOOK_SECRET'] })).toThrow(/distincts/);
   });
+  it('refuse un nombre de proxys de confiance absurde (B1.1 M3)', () => {
+    expect(() => parseEnv({ ...base(), TRUST_PROXY_HOPS: '4' })).toThrow(/TRUST_PROXY_HOPS/);
+    expect(parseEnv({ ...base(), TRUST_PROXY_HOPS: '1' }).trustProxyHops).toBe(1);
+  });
+
   it('exige du base64url décodant en au moins 32 octets', () => {
     expect(() => parseEnv({ ...base(), PSP_API_KEY: 'A'.repeat(42) })).toThrow(/32 octets/); // 31 octets
     expect(() => parseEnv({ ...base(), PSP_API_KEY: '+/'.repeat(30) })).toThrow(/base64url/);

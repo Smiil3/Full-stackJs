@@ -35,15 +35,16 @@ export const errorHandler: ErrorRequestHandler = (err: unknown, req, res, _next)
     res.status(err.status).json(body(err.code, err.message, err.details));
     return;
   }
-  if (isBodyParserError(err)) {
-    if (err.type === 'entity.too.large') {
-      res.status(413).json(body('VALIDATION_ERROR', 'Corps de requête trop volumineux.'));
-      return;
+  if (isBodyParserError(err) && err.status >= 400 && err.status < 500) {
+    // Erreurs du parseur de corps : le statut d'origine est conservé, avec un code du contrat.
+    if (err.status === 413) {
+      res.status(413).json(body('PAYLOAD_TOO_LARGE', 'Corps de requête trop volumineux.'));
+    } else if (err.status === 415) {
+      res.status(415).json(body('UNSUPPORTED_MEDIA_TYPE', 'Encodage du corps de requête non supporté.'));
+    } else {
+      res.status(err.status).json(body('VALIDATION_ERROR', 'Corps de requête JSON invalide.'));
     }
-    if (err.status === 400 || err.type === 'entity.parse.failed' || err.type === 'encoding.unsupported' || err.type === 'charset.unsupported') {
-      res.status(400).json(body('VALIDATION_ERROR', 'Corps de requête JSON invalide.'));
-      return;
-    }
+    return;
   }
   if (err instanceof Prisma.PrismaClientKnownRequestError) {
     if (err.code === 'P2002') {

@@ -54,7 +54,8 @@ const schema = Joi.object({
   DATABASE_URL: Joi.string().uri({ scheme: ['postgresql', 'postgres'] }).required(),
   FRONT_URL: httpUrl.required(),
   API_PUBLIC_URL: httpUrl.required(),
-  TRUST_PROXY_HOPS: Joi.number().integer().min(0).max(5).default(0),
+  // Nombre EXACT de proxys de confiance (0–3) : au-delà, un client peut forger son IP via X-Forwarded-For.
+  TRUST_PROXY_HOPS: Joi.number().integer().min(0).max(3).default(0),
   JWT_ACCESS_SECRET: secret256.required(),
   JWT_ISSUER: Joi.string().min(1).max(100).required(),
   JWT_AUDIENCE: Joi.string().min(1).max(100).required(),
@@ -64,8 +65,17 @@ const schema = Joi.object({
   DATA_ENCRYPTION_KEY_ID: Joi.string().pattern(/^[a-z0-9]{1,16}$/).default('k1'),
   // Anciennes clés pour la rotation : "kid:base64,kid:base64" (déchiffrement uniquement).
   DATA_ENCRYPTION_PREVIOUS_KEYS: Joi.string().allow('').max(2000).default('')
-    .pattern(/^(?:[a-z0-9]{1,16}:[A-Za-z0-9+/]{43}=)(?:,[a-z0-9]{1,16}:[A-Za-z0-9+/]{43}=)*$/)
-    .messages({ 'string.pattern.base': 'DATA_ENCRYPTION_PREVIOUS_KEYS doit être de la forme kid:base64(32 octets),…' }),
+    .custom((value: string, helpers) => {
+      if (value === '') return value;
+      for (const entry of value.split(',')) {
+        const [kid, b64, ...rest] = entry.split(':');
+        if (rest.length > 0 || !kid || !/^[a-z0-9]{1,16}$/.test(kid) || !b64 || Buffer.from(b64, 'base64').length !== 32) {
+          return helpers.error('keys.format');
+        }
+      }
+      return value;
+    })
+    .messages({ 'keys.format': 'DATA_ENCRYPTION_PREVIOUS_KEYS doit être de la forme kid:base64(32 octets),…' }),
   TICKET_SIGNING_PRIVATE_KEY_FILE: Joi.string().min(1).required(),
   TICKET_SIGNING_PUBLIC_KEY_FILE: Joi.string().min(1).required(),
   SMTP_HOST: Joi.string().hostname().required(),

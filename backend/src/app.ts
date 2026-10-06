@@ -6,11 +6,23 @@ import { pinoHttp } from 'pino-http';
 import Joi from 'joi';
 import { getEnv } from './config/env.js';
 import { getLogger } from './lib/logger.js';
-import { genRequestId } from './middlewares/requestId.js';
+import { clientRequestId, genRequestId } from './middlewares/requestId.js';
+import { requireJsonContentType } from './middlewares/contentType.js';
 import { errorHandler, notFoundHandler } from './middlewares/errorHandler.js';
 import { buildLimiters } from './middlewares/rateLimit.js';
 import { endpoint } from './middlewares/validate.js';
 import { buildApiRouter, buildWebhookRouter } from './routes.js';
+
+export const JSON_BODY_LIMIT = '10kb';
+export const WEBHOOK_BODY_LIMIT = '64kb';
+
+const FORBIDDEN_JSON_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/** Refuse dès le parsing toute clé JSON pouvant servir à une pollution de prototype (⇒ 400). */
+function rejectPrototypeKeys(key: string, value: unknown): unknown {
+  if (FORBIDDEN_JSON_KEYS.has(key)) throw new SyntaxError('Clé JSON interdite');
+  return value;
+}
 
 export interface AppOptions {
   /** Multiplicateur des plafonds de rate limiting (tests). */
@@ -32,6 +44,11 @@ export function createApp(options: AppOptions = {}): Express {
       // Les URL peuvent contenir des jetons (liens de mail rejoués) : on ne journalise que le chemin.
       serializers: {
         req: (req: { id: unknown; method: string; url: string }) => ({ id: req.id, method: req.method, path: req.url.split('?')[0] }),
+      },
+      // L'identifiant fourni par le client n'est jamais réutilisé comme requestId : il est journalisé à part, filtré.
+      customProps: (req) => {
+        const fromClient = clientRequestId(req);
+        return fromClient ? { clientRequestId: fromClient } : {};
       },
       customLogLevel: (_req, res, err) => (err || res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info'),
     }),
@@ -71,12 +88,22 @@ export function createApp(options: AppOptions = {}): Express {
     Promise.resolve({ status: 'ok' }),
   ));
 
-  // Webhook PSP : corps brut (signature HMAC calculée sur les octets exacts), monté AVANT le parseur JSON.
-  app.use('/api/v1/webhooks', express.raw({ type: 'application/json', limit: '64kb' }), buildWebhookRouter());
+  // Webhook PSP : limiteur dédié puis corps brut (signature HMAC calculée sur les octets exacts),
+  // monté AVANT le parseur JSON pour que le corps ne soit jamais réinterprété.
+  app.use(
+    '/api/v1/webhooks',
+    limiters.webhook,
+    requireJsonContentType,
+    express.raw({ type: 'application/json', limit: WEBHOOK_BODY_LIMIT }),
+    buildWebhookRouter(),
+  );
 
-  app.use(express.json({ limit: '10kb', strict: true, type: 'application/json' }));
+  // Le limiteur global passe avant tout parsing : une rafale de corps volumineux ou malformés est coupée tôt.
+  app.use('/api/v1', limiters.global);
+  app.use(requireJsonContentType);
+  app.use(express.json({ limit: JSON_BODY_LIMIT, strict: true, type: 'application/json', reviver: rejectPrototypeKeys }));
   app.use(cookieParser());
-  app.use('/api/v1', limiters.global, buildApiRouter(limiters));
+  app.use('/api/v1', buildApiRouter(limiters));
 
   app.use(notFoundHandler);
   app.use(errorHandler);
