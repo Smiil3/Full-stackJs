@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { API, apiLogin, createVerifiedBuyer } from './fixtures';
+import { API, apiLogin, createVerifiedBuyer, setOfflineCheckin } from './fixtures';
 import { waitForMail } from './mailpit';
 
 /**
@@ -11,6 +11,8 @@ test.skip(!PASSWORD, 'SEED_PASSWORD requis');
 
 test('achat carte ⇒ mail ⇒ billet QR ⇒ scan OK puis DÉJÀ UTILISÉ', async ({ browser, request }) => {
   const account = await createVerifiedBuyer(request);
+  const ev = ((await (await request.get(`${API}/events?pageSize=50`)).json()) as { items: { id: string; title: string; orgId: string }[] }).items.find((e) => e.title === 'Jazz au Hangar');
+  if (ev) await setOfflineCheckin(request, PASSWORD, ev.orgId, ev.id, false); // mode par défaut
 
   // 1. Achat par carte (prestataire simulé)
   const buyer = await browser.newPage();
@@ -48,8 +50,8 @@ test('achat carte ⇒ mail ⇒ billet QR ⇒ scan OK puis DÉJÀ UTILISÉ', asyn
   await scanner.getByLabel('Adresse email').fill('scanner@nuits.test');
   await scanner.getByLabel('Mot de passe').fill(PASSWORD);
   await scanner.getByRole('button', { name: 'Se connecter' }).click();
+  // Mode par défaut : contrôle EN LIGNE, aucune liste téléchargée.
   const card = scanner.locator('li', { has: scanner.getByRole('heading', { name: 'Jazz au Hangar' }) });
-  await card.getByRole('button', { name: /Préparer l’entrée hors-ligne|Mettre à jour la liste hors-ligne/ }).click();
   await card.getByRole('link', { name: 'Contrôler les entrées' }).click();
   for (const expected of [/^OK/, /DÉJÀ UTILISÉ à \d{2}:\d{2}/]) {
     await scanner.getByLabel('Saisie manuelle du code').fill(qr);

@@ -25,3 +25,10 @@ export async function apiLogin(request: APIRequestContext, email: string, passwo
   expect(res.ok()).toBe(true);
   return ((await res.json()) as { accessToken: string }).accessToken;
 }
+
+/** Active / désactive le mode secours hors-ligne d'un événement (OWNER), pour des tests rejouables. */
+export async function setOfflineCheckin(request: APIRequestContext, ownerPassword: string, orgId: string, eventId: string, enabled: boolean): Promise<void> {
+  const owner = await apiLogin(request, 'owner@nuits.test', ownerPassword);
+  const res = await request.patch(`${API}/orgs/${orgId}/events/${eventId}`, { headers: { Authorization: `Bearer ${owner}` }, data: { offlineCheckinEnabled: enabled } });
+  expect(res.ok()).toBe(true);
+}

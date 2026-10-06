@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { API, apiLogin, createVerifiedBuyer } from './fixtures';
+import { API, apiLogin, createVerifiedBuyer, setOfflineCheckin } from './fixtures';
 
 /** Billet d'une commande remboursée (annulation par l'acheteur) ⇒ « BILLET ANNULÉ » à l'entrée. */
 const PASSWORD = process.env.SEED_PASSWORD ?? '';
@@ -23,6 +23,7 @@ test('commande remboursée ⇒ scan « BILLET ANNULÉ » (en ligne et hors-ligne
   expect((await request.post(`${API}/orgs/${event.orgId}/orders/${order.id}/confirm-transfer`, { headers: { Authorization: `Bearer ${manager}` }, data: { receivedAmountCents: order.totalCents } })).ok()).toBe(true);
   const { items } = (await (await request.get(`${API}/me/tickets`, { headers: { Authorization: `Bearer ${buyerToken}` } })).json()) as { items: { qrPayload: string }[] };
   const qr = items[0]?.qrPayload ?? '';
+  await setOfflineCheckin(request, PASSWORD, event.orgId, event.id, true);
 
   // Le scanner prépare sa liste AVANT l'annulation (cas réel : liste téléchargée le matin).
   await page.goto('/login?next=%2Fscan');

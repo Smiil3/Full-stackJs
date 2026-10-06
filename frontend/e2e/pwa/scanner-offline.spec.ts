@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { API, apiLogin, createVerifiedBuyer } from '../real/fixtures';
+import { API, apiLogin, createVerifiedBuyer, setOfflineCheckin } from '../real/fixtures';
 
 /**
  * Scanner PWA : après une première visite en ligne, l'application se RECHARGE sans réseau (service
@@ -29,6 +29,7 @@ test('rechargement hors-ligne de l’application, contrôle local puis resynchro
   ).json()) as { id: string; totalCents: number };
   const manager = await apiLogin(request, 'manager@nuits.test', PASSWORD);
   await request.post(`${API}/orgs/${event.orgId}/orders/${order.id}/confirm-transfer`, { headers: { Authorization: `Bearer ${manager}` }, data: { receivedAmountCents: order.totalCents } });
+  await setOfflineCheckin(request, PASSWORD, event.orgId, event.id, true);
   const qr = ((await (await request.get(`${API}/me/tickets`, { headers: { Authorization: `Bearer ${buyer}` } })).json()) as { items: { qrPayload: string }[] }).items[0]?.qrPayload ?? '';
 
   // 1re visite en ligne : connexion, préparation de la liste, service worker installé.
@@ -56,7 +57,6 @@ test('rechargement hors-ligne de l’application, contrôle local puis resynchro
   await page.getByRole('button', { name: 'Vérifier' }).click();
   await expect(page.getByRole('alertdialog')).toContainText('OK');
   await expect(page.getByRole('alertdialog')).toContainText('Vérifié hors-ligne');
-  await page.getByRole('alertdialog').getByRole('button', { name: 'Scanner le suivant' }).click();
   await expect(page.getByText(/1 scan en attente de synchro/)).toBeVisible();
 
   // Retour du réseau : session restaurée, synchro automatique.

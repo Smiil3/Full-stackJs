@@ -1,5 +1,5 @@
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
-import { API, apiLogin, createVerifiedBuyer } from './fixtures';
+import { API, apiLogin, createVerifiedBuyer, setOfflineCheckin } from './fixtures';
 
 /**
  * Contrôle d'accès contre l'API RÉELLE : billets obtenus par virement validé (données créées par le
@@ -39,6 +39,7 @@ async function scan(page: Page, code: string) {
 test('scanner : OK puis DÉJÀ UTILISÉ en ligne ; hors-ligne puis resynchronisation', async ({ page, context, request }) => {
   const { eventId, orgId, qrs } = await buyTickets(request, 2);
   expect(qrs).toHaveLength(2);
+  await setOfflineCheckin(request, PASSWORD, orgId, eventId, true); // mode secours activé par le propriétaire
 
   await page.goto('/login?next=%2Fscan');
   await page.getByLabel('Adresse email').fill('scanner@nuits.test');
@@ -46,7 +47,9 @@ test('scanner : OK puis DÉJÀ UTILISÉ en ligne ; hors-ligne puis resynchronisa
   await page.getByRole('button', { name: 'Se connecter' }).click();
   const card = page.locator('li', { has: page.getByRole('heading', { name: 'Jazz au Hangar' }) });
   await card.getByRole('button', { name: /Préparer l’entrée hors-ligne|Mettre à jour la liste hors-ligne/ }).click();
+  await expect(card.getByText(/liste de \d+ billets téléchargée/)).toBeVisible();
   await card.getByRole('link', { name: 'Contrôler les entrées' }).click();
+  await expect(page.getByText(/risque de double entrée/)).toBeVisible();
   await expect(page).toHaveURL(new RegExp(`/scan/${orgId}/${eventId}$`));
 
   // En ligne
@@ -55,7 +58,7 @@ test('scanner : OK puis DÉJÀ UTILISÉ en ligne ; hors-ligne puis resynchronisa
   await result.getByRole('button', { name: 'Scanner le suivant' }).click();
   result = await scan(page, qrs[0] ?? '');
   await expect(result).toContainText(/DÉJÀ UTILISÉ à \d{2}:\d{2}/);
-  await result.getByRole('button', { name: 'Scanner le suivant' }).click();
+  await result.getByRole('button', { name: 'Scanner le suivant' }).click(); // un refus reste affiché jusqu'à un appui
 
   // Hors-ligne
   await context.setOffline(true);
@@ -63,7 +66,7 @@ test('scanner : OK puis DÉJÀ UTILISÉ en ligne ; hors-ligne puis resynchronisa
   result = await scan(page, qrs[1] ?? '');
   await expect(result).toContainText('OK');
   await expect(result).toContainText('Vérifié hors-ligne');
-  await result.getByRole('button', { name: 'Scanner le suivant' }).click();
+  await expect(page.getByText(/Vérification locale/)).toBeVisible();
   await expect(page.getByText(/1 scan en attente de synchro/)).toBeVisible();
 
   // Retour du réseau : synchro automatique
