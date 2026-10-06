@@ -8,6 +8,7 @@ import { ACCESS_TOKEN_TTL_SECONDS, signAccessToken } from '../../lib/jwt.js';
 import { enqueueEmail } from '../../lib/outbox.js';
 import { addMinutes } from '../../lib/time.js';
 import { withResponseFloor } from '../../lib/timing.js';
+import { consumeQuota } from '../../lib/rateLimitStore.js';
 import { normalizeEmail } from '../../lib/email.js';
 import * as repo from './repo.js';
 
@@ -99,6 +100,12 @@ async function checkAccountPassword(user: { id: string; passwordHash: string }, 
 
 /** Plafonds PAR ADRESSE des mails d'authentification (silencieux côté réponse). */
 export const MAIL_MIN_INTERVAL_MINUTES = 2;
+
+/** Quotas par adresse email (en plus des quotas par IP), appliqués que le compte existe ou non. */
+const QUOTA = {
+  login: { windowMs: 15 * 60_000, max: 30 },
+  mail: { windowMs: 60 * 60_000, max: 5 },
+};
 export const MAIL_MAX_PER_DAY = 10;
 
 /**
@@ -183,6 +190,7 @@ export function register(input: { email: string; password: string; displayName: 
 
 async function registerInner(input: { email: string; password: string; displayName: string }): Promise<void> {
   const email = normalizeEmail(input.email);
+  await consumeQuota('acct:register', email, QUOTA.mail.windowMs, QUOTA.mail.max);
   const passwordHash = await hashPassword(input.password);
   const displayName = input.displayName.trim();
   if (displayName === '') throw errors.validation([{ path: 'displayName', message: '"displayName" est requis' }]);
@@ -240,6 +248,7 @@ export function resendVerification(rawEmail: string): Promise<void> {
 
 async function resendVerificationInner(rawEmail: string): Promise<void> {
   const email = normalizeEmail(rawEmail);
+  await consumeQuota('acct:resend', email, QUOTA.mail.windowMs, QUOTA.mail.max);
   await transaction(async (tx) => {
     const user = await tx.user.findUnique({ where: { email } });
     if (!user || user.emailVerifiedAt) return;
@@ -255,6 +264,7 @@ async function resendVerificationInner(rawEmail: string): Promise<void> {
  */
 export async function login(rawEmail: string, password: string): Promise<SessionResult> {
   const email = normalizeEmail(rawEmail);
+  await consumeQuota('acct:login', email, QUOTA.login.windowMs, QUOTA.login.max);
   const user = await repo.findUserByEmail(email);
   if (!user) {
     await verifyPassword(await getDummyHash(), password);
@@ -338,6 +348,7 @@ export function forgotPassword(rawEmail: string): Promise<void> {
 
 async function forgotPasswordInner(rawEmail: string): Promise<void> {
   const email = normalizeEmail(rawEmail);
+  await consumeQuota('acct:forgot', email, QUOTA.mail.windowMs, QUOTA.mail.max);
   await transaction(async (tx) => {
     const user = await tx.user.findUnique({ where: { email } });
     if (!user) return;

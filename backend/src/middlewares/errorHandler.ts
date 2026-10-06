@@ -32,6 +32,12 @@ export const errorHandler: ErrorRequestHandler = (err: unknown, req, res, _next)
   }
   if (err instanceof AppError) {
     if (err.status >= 500) req.log.error({ err }, 'erreur applicative');
+    if (err.code === 'RATE_LIMITED') {
+      const retryAfter = err.details?.['retryAfterSeconds'];
+      if (typeof retryAfter === 'number') res.setHeader('Retry-After', String(retryAfter));
+      res.status(429).json(body(err.code, err.message));
+      return;
+    }
     res.status(err.status).json(body(err.code, err.message, err.details));
     return;
   }

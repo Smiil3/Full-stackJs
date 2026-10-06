@@ -512,3 +512,14 @@ model AuditLog {
   @@index([orgId, createdAt])
   @@map("audit_logs")
 }
+
+/// Compteurs de rate limiting partagés (multi-instance, survivent au redémarrage).
+/// La clé est un hash SHA-256 (préfixe:identifiant) : ni IP ni email en clair.
+model RateLimitBucket {
+  key     String   @id @db.VarChar(100)
+  hits    Int
+  resetAt DateTime @db.Timestamptz(3)
+
+  @@index([resetAt])
+  @@map("rate_limit_buckets")
+}

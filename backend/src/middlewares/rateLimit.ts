@@ -1,5 +1,6 @@
 import type { RequestHandler } from 'express';
 import { rateLimit, type Options } from 'express-rate-limit';
+import { PgRateLimitStore } from '../lib/rateLimitStore.js';
 
 export interface RateLimitConfig {
   /** Multiplie tous les plafonds (1 en production ; élevé en test pour ne pas gêner les autres scénarios). */
@@ -7,11 +8,12 @@ export interface RateLimitConfig {
 }
 
 /**
- * Limiteur en mémoire (une seule instance d'API). Réponse au format d'erreur du contrat + Retry-After.
- * Limite connue : avec plusieurs instances, il faudrait un store partagé (documenté dans SECURITY.md).
+ * Limiteur par IP, compteurs dans PostgreSQL (partagés entre instances, conservés au redémarrage).
+ * Réponse au format d'erreur du contrat + Retry-After.
  */
-export function limiter(config: RateLimitConfig, windowMs: number, max: number, extra: Partial<Options> = {}): RequestHandler {
+export function limiter(config: RateLimitConfig, name: string, windowMs: number, max: number, extra: Partial<Options> = {}): RequestHandler {
   return rateLimit({
+    store: new PgRateLimitStore(`ip:${name}`),
     windowMs,
     limit: Math.max(1, Math.floor(max * config.multiplier)),
     standardHeaders: 'draft-7',
@@ -28,14 +30,14 @@ export function limiter(config: RateLimitConfig, windowMs: number, max: number, 
 
 export function buildLimiters(config: RateLimitConfig) {
   return {
-    global: limiter(config, 60_000, 300),
-    login: limiter(config, 15 * 60_000, 20),
-    register: limiter(config, 60 * 60_000, 10),
-    emailActions: limiter(config, 60 * 60_000, 10),
-    refresh: limiter(config, 60_000, 30),
-    webhook: limiter(config, 60_000, 120),
-    orders: limiter(config, 60_000, 20),
-    scan: limiter(config, 60_000, 240),
+    global: limiter(config, 'global', 60_000, 300),
+    login: limiter(config, 'login', 15 * 60_000, 20),
+    register: limiter(config, 'register', 60 * 60_000, 10),
+    emailActions: limiter(config, 'email', 60 * 60_000, 10),
+    refresh: limiter(config, 'refresh', 60_000, 30),
+    webhook: limiter(config, 'webhook', 60_000, 120),
+    orders: limiter(config, 'orders', 60_000, 20),
+    scan: limiter(config, 'scan', 60_000, 240),
   };
 }
 
