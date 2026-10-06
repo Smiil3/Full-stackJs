@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import type { ScanOutcome } from '../engine';
 import { describeOutcome } from './describeOutcome';
 
@@ -21,7 +21,8 @@ export function ResultOverlay(props: { outcome: ScanOutcome; timezone: string; o
   const pointerOnAdmit = useRef(false);
 
   // Chaque nouveau résultat : focus sur le TITRE (jamais sur « Laisser entrer »), délai de garde réarmé.
-  useEffect(() => {
+  // Effets « layout » : actifs dès l'affichage, avant qu'une touche de la douchette puisse être traitée.
+  useLayoutEffect(() => {
     const outcome = props.outcome;
     armedRef.current = false;
     titleRef.current?.focus();
@@ -35,7 +36,7 @@ export function ResultOverlay(props: { outcome: ScanOutcome; timezone: string; o
   }, [props.outcome]);
 
   // Pendant le délai de garde, Entrée / Espace n'atteignent aucun élément de la page.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const swallow = (e: globalThis.KeyboardEvent) => {
       if (!armedRef.current && (e.key === 'Enter' || e.key === ' ')) {
         e.preventDefault();
