@@ -2,6 +2,7 @@ import type { ClientRateLimitInfo, Options, Store } from 'express-rate-limit';
 import { sha256Hex } from './crypto.js';
 import { getDb } from './db.js';
 import { AppError } from './errors.js';
+import { getEnv } from '../config/env.js';
 
 /** Clé stockée : hash du préfixe et de l'identifiant (IP, email…) — aucune donnée personnelle en clair. */
 function bucketKey(prefix: string, id: string): string {
@@ -59,7 +60,7 @@ export class PgRateLimitStore implements Store {
  */
 export async function consumeQuota(prefix: string, id: string, windowMs: number, max: number): Promise<void> {
   const { totalHits, resetTime } = await hit(prefix, id, windowMs);
-  if (totalHits > max) {
+  if (totalHits > Math.max(1, Math.floor(max * getEnv().rateLimitMultiplier))) {
     const retryAfter = Math.max(1, Math.ceil((resetTime.getTime() - Date.now()) / 1000));
     throw new AppError(429, 'RATE_LIMITED', 'Trop de requêtes, veuillez patienter.', { retryAfterSeconds: retryAfter });
   }

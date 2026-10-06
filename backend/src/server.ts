@@ -20,7 +20,7 @@ function loadEnvOrExit() {
 const env = loadEnvOrExit();
 const logger = getLogger();
 await warmUpAuth();
-const server = createApp().listen(env.port, () => {
+const server = createApp({ rateLimitMultiplier: env.rateLimitMultiplier }).listen(env.port, () => {
   // Configuration réseau effective journalisée au démarrage (aucun secret).
   logger.info(
     { port: env.port, env: env.nodeEnv, trustProxyHops: env.trustProxyHops, frontUrl: env.frontUrl, refreshCookieSecure: env.refreshCookieSecure },

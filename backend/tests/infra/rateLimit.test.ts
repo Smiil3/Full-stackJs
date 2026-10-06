@@ -49,3 +49,12 @@ describe('rate limiting partagé en base (B2.1 M8)', () => {
     await app.post(`${A}/forgot-password`).send({ email: 'autre@test.fr' }).expect(202);
   });
 });
+
+describe('multiplicateur de rate limiting', () => {
+  it('> 1 refusé en production', async () => {
+    const { parseEnv } = await import('../../src/config/env.js');
+    expect(() => parseEnv({ ...process.env, NODE_ENV: 'production', REFRESH_COOKIE_SECURE: 'true', AUTH_RESPONSE_FLOOR_MS: '400', RATE_LIMIT_MULTIPLIER: '10' }))
+      .toThrow(/RATE_LIMIT_MULTIPLIER/);
+    expect(parseEnv({ ...process.env, NODE_ENV: 'development', AUTH_RESPONSE_FLOOR_MS: '400', RATE_LIMIT_MULTIPLIER: '10' }).rateLimitMultiplier).toBe(10);
+  });
+});

@@ -27,6 +27,7 @@ export interface Env {
   psp: { baseUrl: string; port: number; apiKey: string; webhookSecret: string; webhookUrl: string };
   workerIntervalMs: number;
   authResponseFloorMs: number;
+  rateLimitMultiplier: number;
 }
 
 const httpUrl = Joi.string().uri({ scheme: ['http', 'https'] });
@@ -107,6 +108,10 @@ const schema = Joi.object({
   PSP_WEBHOOK_SECRET: secret256.required(),
   PSP_WEBHOOK_URL: httpUrl.required(),
   WORKER_INTERVAL_MS: Joi.number().integer().min(500).max(600_000).default(5000),
+  // Multiplicateur des plafonds de rate limiting (IP et par adresse). > 1 réservé au dev / e2e (toutes les
+  // requêtes viennent de 127.0.0.1) ; refusé en production.
+  RATE_LIMIT_MULTIPLIER: Joi.number().min(0.01).max(1000).default(1)
+    .when('NODE_ENV', { is: 'production', then: Joi.number().max(1) }),
   // Temps de réponse plancher des actions d'authentification anonymes (anti-oracle de timing).
   // Réductible uniquement en test, pour garder une suite rapide.
   AUTH_RESPONSE_FLOOR_MS: Joi.number().integer().max(5000).default(400)
@@ -166,6 +171,7 @@ interface RawEnv {
   PSP_WEBHOOK_URL: string;
   WORKER_INTERVAL_MS: number;
   AUTH_RESPONSE_FLOOR_MS: number;
+  RATE_LIMIT_MULTIPLIER: number;
 }
 
 export class EnvValidationError extends Error {
@@ -214,6 +220,7 @@ export function parseEnv(source: NodeJS.ProcessEnv): Env {
     },
     workerIntervalMs: raw.WORKER_INTERVAL_MS,
     authResponseFloorMs: raw.AUTH_RESPONSE_FLOOR_MS,
+    rateLimitMultiplier: raw.RATE_LIMIT_MULTIPLIER,
   };
 }
 
