@@ -6,7 +6,7 @@ import type { Order } from '../../api/types';
 import { injectFault, mock } from '../../mocks/core';
 import { markPaid } from '../../mocks/domain';
 import { DEMO_PASSWORD, IDS } from '../../mocks/state';
-import { openCheckinWindow, renderApp } from '../../test/renderApp';
+import { expectLoggedOut, openCheckinWindow, openMenu, renderApp } from '../../test/renderApp';
 import { __wipeScannerForTests, pendingCount } from '../db';
 
 /** Concert : mode secours AUTORISÉ (seed mock). Nuit Électro : contrôle en ligne uniquement. */
@@ -232,13 +232,14 @@ describe('scanner — mode SECOURS hors-ligne', () => {
     setOnline(false);
     await scanManually(user, qr ?? '');
     await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull(), { timeout: 4000 });
+    await openMenu(user);
     await user.click(screen.getByRole('button', { name: 'Se déconnecter' }));
     const d1 = await screen.findByRole('dialog', { name: 'Passages non transmis' });
     expect(d1).toHaveTextContent('1 passage(s) non transmis');
     await user.click(within(d1).getByRole('button', { name: 'Déconnecter quand même' }));
     const d2 = await screen.findByRole('dialog', { name: 'Confirmer la déconnexion ?' });
     await user.click(within(d2).getByRole('button', { name: 'Me déconnecter' }));
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Se déconnecter' })).toBeNull());
+    await expectLoggedOut();
     expect(await pendingCount()).toBe(1); // jamais effacée
   });
 

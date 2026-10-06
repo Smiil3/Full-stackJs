@@ -9,7 +9,7 @@ import { markPaid, offerToWaitlist } from '../../mocks/domain';
 import { server } from '../../mocks/server';
 import { DEMO_PASSWORD, IDS } from '../../mocks/state';
 import { loadTickets } from '../../offline/tickets';
-import { BUYER, renderApp } from '../../test/renderApp';
+import { BUYER, expectLoggedOut, openMenu, renderApp } from '../../test/renderApp';
 
 async function buy(qty = 2) {
   await login(BUYER, DEMO_PASSWORD);
@@ -149,8 +149,10 @@ describe('mes billets', () => {
     await renderApp('/me/tickets');
     await screen.findAllByRole('img', { name: /QR code/ });
     expect(await loadTickets(null)).not.toBeNull();
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Se déconnecter' }));
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Se déconnecter' })).toBeNull());
+    const user = userEvent.setup();
+    await openMenu(user);
+    await user.click(screen.getByRole('button', { name: 'Se déconnecter' }));
+    await expectLoggedOut();
     expect(await loadTickets(null)).toBeNull();
   });
 

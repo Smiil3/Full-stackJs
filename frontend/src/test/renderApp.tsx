@@ -39,3 +39,15 @@ export async function openCheckinWindow(...eventIds: string[]): Promise<void> {
     e.salesEndAt = e.startsAt; // invariant : fin des ventes ≤ fin de l'événement
   }
 }
+
+/** Ouvre le menu du site (burger) : la navigation secondaire et la déconnexion y sont rangées. */
+export async function openMenu(user: { click: (el: Element) => Promise<void> }) {
+  const { screen } = await import('@testing-library/react');
+  await user.click(screen.getByRole('button', { name: 'Ouvrir le menu' }));
+}
+
+/** Déconnexion terminée : le menu propose de nouveau « Se connecter ». */
+export async function expectLoggedOut() {
+  const { screen } = await import('@testing-library/react');
+  await screen.findByText(/Se connecter/, { selector: 'a' });
+}

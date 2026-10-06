@@ -600,7 +600,7 @@ describe('changement de collectif dans la même session (revue F3.1)', () => {
     const { router } = await renderApp(ORG, { as: OWNER });
     expect(await screen.findByRole('link', { name: /Garonne Électrique/ })).toBeInTheDocument();
     await act(() => router.navigate(ORG_B));
-    expect(screen.getByText(/Collectif :/)).toHaveTextContent('Collectif Rive Droite');
+    expect(screen.getByRole('combobox', { name: /ESPACE/ })).toHaveDisplayValue('Collectif Rive Droite');
     expect(screen.queryByRole('link', { name: /Garonne Électrique/ })).toBeNull();
     expect(await screen.findByRole('link', { name: 'Rive Droite Jazz Club' })).toBeInTheDocument();
   });
