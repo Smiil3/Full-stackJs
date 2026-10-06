@@ -24,20 +24,32 @@ function revokeAll(userId: string): void {
 
 const norm = (email: string) => email.trim().toLowerCase();
 
+/** Extrait de liste de mots de passe courants (le back utilise une liste complète). */
+const COMMON_PASSWORDS = new Set(['motdepasse123', 'password1234', '123456789012', 'azertyuiop12', 'qwertyuiop12', 'motdepasse2026', 'bordeaux2026!']);
+
 export const authHandlers = [
   route('post', '/auth/register', async ({ request }) => {
     const v = await readBody(request, ['email', 'password', 'displayName']);
-    const email = v.email('email');
+    const email = v.str('email', { max: 254, pattern: /^[\x21-\x7e]+@[\x21-\x7e]+\.[\x21-\x7e]+$/ }); // ASCII uniquement (contrat v1.5)
     const password = v.str('password', { min: 12, max: 128 });
     const displayName = v.str('displayName', { min: 1, max: 80 });
+    if (typeof password === 'string' && new TextEncoder().encode(password).length > 256) v.custom('password', 'Mot de passe trop long');
+    if (typeof password === 'string' && COMMON_PASSWORDS.has(password.toLowerCase())) v.custom('password', 'Mot de passe trop courant');
     v.done();
     const db = mock.db;
-    if (email && password && displayName && !db.users.some((u) => u.email === norm(email))) {
-      const user: MockUser = { id: crypto.randomUUID(), email: norm(email), password, displayName: displayName.trim(), emailVerified: false, isPlatformAdmin: false };
-      db.users.push(user);
-      const token = crypto.randomUUID();
-      db.verifyTokens.set(token, user.id);
-      mockOutbox.push({ to: user.email, kind: 'verify', token });
+    if (email && password && displayName) {
+      const existing = db.users.find((u) => u.email === norm(email));
+      if (!existing || !existing.emailVerified) {
+        // Compte non vérifié existant : la dernière inscription gagne, les anciens liens sont invalidés.
+        const user: MockUser = existing ?? { id: crypto.randomUUID(), email: norm(email), password, displayName: '', emailVerified: false, isPlatformAdmin: false };
+        user.password = password;
+        user.displayName = displayName.trim();
+        if (!existing) db.users.push(user);
+        for (const [t, uid] of db.verifyTokens) if (uid === user.id) db.verifyTokens.delete(t);
+        const token = crypto.randomUUID();
+        db.verifyTokens.set(token, user.id);
+        mockOutbox.push({ to: user.email, kind: 'verify', token });
+      }
     }
     return json(GENERIC_202, 202);
   }),
@@ -51,6 +63,7 @@ export const authHandlers = [
     if (!user || !token) return fail(400, 'VALIDATION_ERROR', 'Lien invalide ou expiré', { fields: [{ path: 'token', message: 'Lien invalide ou expiré' }] });
     user.emailVerified = true;
     mock.db.verifyTokens.delete(token);
+    revokeAll(user.id); // contrat v1.5 : toutes les sessions existantes sont révoquées
     return noContent();
   }),
 
@@ -74,6 +87,7 @@ export const authHandlers = [
     v.done();
     const user = mock.db.users.find((u) => u.email === norm(email ?? ''));
     if (!user || user.password !== password) return fail(401, 'INVALID_CREDENTIALS', 'Identifiants invalides');
+    if (!user.emailVerified) return fail(403, 'EMAIL_NOT_VERIFIED', 'Email non vérifié'); // contrat v1.5 : aucune session créée
     return json(issueSession(user));
   }),
 

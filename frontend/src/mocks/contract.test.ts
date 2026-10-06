@@ -46,6 +46,23 @@ describe('MSW — couverture du contrat', () => {
     const verify = mockOutbox.at(-1);
     await apiRequest('/auth/verify-email', { method: 'POST', auth: false, body: { token: verify?.token } });
     expect(mock.db.users.find((u) => u.email === 'nonverifie@example.test')?.emailVerified).toBe(true);
+    expect((await login('nonverifie@example.test', DEMO_PASSWORD)).user.emailVerified).toBe(true);
+  });
+
+  it('auth v1.5 : inscription ASCII, mot de passe courant refusé, dernière inscription gagne, vérif ⇒ sessions révoquées', async () => {
+    const { mockOutbox } = await import('./handlers/auth');
+    const reg = (email: string, password: string) => apiRequest('/auth/register', { method: 'POST', auth: false, body: { email, password, displayName: 'Test' } });
+    await expect(reg('josé@exemple.fr', 'un-mot-de-passe-solide')).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    await expect(reg('neuf@example.test', 'motdepasse123')).rejects.toMatchObject({ code: 'VALIDATION_ERROR', details: { fields: [{ path: 'password', message: 'Mot de passe trop courant' }] } });
+    await reg('neuf@example.test', 'premier-mot-de-passe');
+    const first = mockOutbox.at(-1)?.token;
+    await reg('neuf@example.test', 'second-mot-de-passe');
+    const second = mockOutbox.at(-1)?.token;
+    await expect(apiRequest('/auth/verify-email', { method: 'POST', auth: false, body: { token: first } })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    await login('acheteur@example.test', DEMO_PASSWORD);
+    await apiRequest('/auth/verify-email', { method: 'POST', auth: false, body: { token: second } });
+    await expect(login('neuf@example.test', 'premier-mot-de-passe')).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS' });
+    await login('neuf@example.test', 'second-mot-de-passe');
   });
 
   it('catalogue : liste paginée, détail, brouillon invisible, query inconnue refusée', async () => {
@@ -82,8 +99,10 @@ describe('MSW — couverture du contrat', () => {
     const list = await apiRequest<Page<Order>>('/orders');
     expect(list.total).toBe(1);
     await logout();
-    await login('nonverifie@example.test', DEMO_PASSWORD);
-    await expect(post('/orders', body, { 'Idempotency-Key': crypto.randomUUID() })).rejects.toMatchObject({ code: 'EMAIL_NOT_VERIFIED' });
+    // Contrat v1.5 : un compte non vérifié ne peut pas se connecter (mot de passe correct) ; aucune session.
+    await expect(login('nonverifie@example.test', DEMO_PASSWORD)).rejects.toMatchObject({ status: 403, code: 'EMAIL_NOT_VERIFIED' });
+    await expect(login('nonverifie@example.test', 'mauvais')).rejects.toMatchObject({ code: 'INVALID_CREDENTIALS' });
+    expect(mock.db.refreshCookie).toBeNull();
   });
 
   it('commandes : expiration ⇒ ORDER_EXPIRED ; commande d’un autre ⇒ 404', async () => {
