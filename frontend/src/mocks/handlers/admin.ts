@@ -1,4 +1,4 @@
-import { currentUser, fail, json, mock, notFound, readBody, route } from '../core';
+import { currentUser, fail, json, mock, notFound, paginate, readBody, readQuery, route } from '../core';
 import { DEFAULT_SETTINGS } from '../state';
 
 function requirePlatformAdmin(request: Request) {
@@ -9,9 +9,11 @@ function requirePlatformAdmin(request: Request) {
 }
 
 export const adminHandlers = [
-  route('get', '/admin/orgs', ({ request }) => {
+  route('get', '/admin/orgs', ({ request, url }) => {
     requirePlatformAdmin(request);
-    return json({ items: mock.db.orgs.map((o) => ({ ...o })) });
+    const q = readQuery(url, []);
+    const sorted = [...mock.db.orgs].sort((a, b) => a.name.localeCompare(b.name, 'fr')).map((o) => ({ ...o }));
+    return json(paginate(sorted, q.page, q.pageSize)); // contrat v1.8 : paginé, tri par nom
   }),
 
   route('post', '/admin/orgs', async ({ request }) => {

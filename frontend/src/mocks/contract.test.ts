@@ -312,7 +312,10 @@ describe('MSW — couverture du contrat', () => {
     const org = await post<{ slug: string }>('/admin/orgs', { name: 'Nouveau collectif', slug: 'nouveau', ownerEmail: 'acheteur@example.test' });
     expect(org.slug).toBe('nouveau');
     await expect(post('/admin/orgs', { name: 'Doublon', slug: 'nouveau', ownerEmail: 'acheteur@example.test' })).rejects.toMatchObject({ code: 'CONFLICT' });
-    expect((await apiRequest<{ items: unknown[] }>('/admin/orgs')).items).toHaveLength(3);
+    const page = await apiRequest<Page<{ name: string }>>('/admin/orgs', { query: { pageSize: 2 } });
+    expect(page.total).toBe(3);
+    expect(page.items.map((o) => o.name)).toEqual(['Collectif Rive Droite', 'Les Nuits de la Garonne']); // tri par nom
+    expect((await apiRequest<Page<{ name: string }>>('/admin/orgs', { query: { page: 2, pageSize: 2 } })).items.map((o) => o.name)).toEqual(['Nouveau collectif']);
   });
 
   it('commande à 0 € ⇒ PAID immédiatement (contrat v1.2)', async () => {
