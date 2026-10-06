@@ -11,7 +11,7 @@ import { PwaUpdatePrompt } from './PwaUpdatePrompt';
 import { WaitlistOfferBanner } from './WaitlistOfferBanner';
 
 export function Layout() {
-  const { status, user, logout } = useAuth();
+  const { status, user, logout, notice } = useAuth();
   const online = useOnline();
   const navigate = useNavigate();
   const canManage = user?.memberships.some((m) => roleAtLeast(m.role, 'MANAGER')) ?? false;
@@ -92,6 +92,16 @@ export function Layout() {
       {!online || status === 'offline' ? (
         <p className={styles.offline} role="status">
           Vous êtes hors-ligne : les informations affichées peuvent ne pas être à jour.
+        </p>
+      ) : null}
+      {notice === 'logout-pending' ? (
+        <p className={styles.offline} role="status">
+          Vous êtes déconnecté·e sur cet appareil. La déconnexion sera terminée côté serveur dès le retour du réseau.
+        </p>
+      ) : null}
+      {notice === 'csrf' ? (
+        <p className={styles.offline} role="status">
+          Votre session n’a pas pu être restaurée (contrôle de sécurité). Merci de vous reconnecter.
         </p>
       ) : null}
       <WaitlistOfferBanner />

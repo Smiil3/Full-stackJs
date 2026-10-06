@@ -1,5 +1,5 @@
 import { QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup as cleanupRender, render, screen, waitFor } from '@testing-library/react';
 import { useEffect } from 'react';
 import { describe, expect, it } from 'vitest';
 import { createQueryClient } from '../api/queryClient';
@@ -76,6 +76,37 @@ describe('AuthProvider', () => {
       window.dispatchEvent(new Event('online'));
     });
     expect(await screen.findByText('authenticated:acheteur@example.test')).toBeInTheDocument();
+  });
+
+  it('F6-H1 : déconnexion hors-ligne ⇒ jamais de session restaurée au redémarrage ; révocation envoyée d’abord', async () => {
+    const { injectFault } = await import('../mocks/core');
+    const first = setup();
+    await screen.findByText('anonymous:-');
+    await act(() => first.auth().login('scanner@nuits.test', DEMO_PASSWORD));
+    injectFault({ route: 'POST /auth/logout', status: 0, code: 'INTERNAL_ERROR', network: true }); // pas de réseau
+    await act(() => first.auth().logout());
+    expect(mock.db.refreshCookie).not.toBeNull(); // le serveur n'a pas pu révoquer
+    cleanupRender();
+    // Rechargement de l'application, réseau revenu : le cookie est encore valable…
+    const refreshBefore = mock.db.calls.get('POST /auth/refresh') ?? 0;
+    setup();
+    expect(await screen.findByText('anonymous:-')).toBeInTheDocument();
+    expect(mock.db.calls.get('POST /auth/refresh') ?? 0).toBe(refreshBefore); // … mais aucun refresh
+    expect(mock.db.refreshCookie).toBeNull(); // la déconnexion a été terminée côté serveur
+    const { isLogoutPending } = await import('../offline/pendingLogout');
+    expect(await isLogoutPending()).toBe(false);
+  });
+
+  it('F6-H1 : redémarrage encore hors-ligne ⇒ anonyme et déconnexion toujours en attente', async () => {
+    const { injectFault } = await import('../mocks/core');
+    const { setLogoutPending, isLogoutPending } = await import('../offline/pendingLogout');
+    mock.db.refreshCookie = { token: 'x', userId: mock.db.users[0]?.id ?? '' };
+    await setLogoutPending();
+    injectFault({ route: 'POST /auth/logout', status: 0, code: 'INTERNAL_ERROR', network: true });
+    setup();
+    expect(await screen.findByText('anonymous:-')).toBeInTheDocument();
+    expect(mock.db.calls.get('POST /auth/refresh') ?? 0).toBe(0);
+    expect(await isLogoutPending()).toBe(true);
   });
 
   it('logout ⇒ cache TanStack Query vidé et nettoyages hors-ligne exécutés', async () => {

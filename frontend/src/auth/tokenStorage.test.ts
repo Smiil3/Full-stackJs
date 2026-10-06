@@ -23,7 +23,8 @@ describe('access token : mémoire uniquement', () => {
       expect(token).toBeTruthy();
       expect(setItem).not.toHaveBeenCalled();
       expect(cookieSetter).not.toHaveBeenCalled();
-      expect(idbOpen).not.toHaveBeenCalled();
+      // Seule base autorisée pendant l'authentification : le drapeau « déconnexion en attente » (sans secret).
+      expect(idbOpen.mock.calls.map((c: unknown[]) => c[0]).filter((name) => name !== 'nuits-session')).toEqual([]);
       for (const store of [localStorage, sessionStorage]) {
         for (let i = 0; i < store.length; i++) {
           const key = store.key(i) ?? '';

@@ -1,4 +1,5 @@
 import { ApiError, isApiError, isErrorCode } from './errors';
+import { clearLogoutPending, setLogoutPending } from '../offline/pendingLogout';
 import { parseAuthSession } from './guards';
 import { recordServerDate } from './serverClock';
 import type { AuthSession, ErrorDetails } from './types';
@@ -385,6 +386,8 @@ export async function login(email: string, password: string): Promise<AuthSessio
   const session = parseAuthSession(raw);
   if (startedAt !== generation) throw sessionChanged();
   acceptSession(session);
+  // Nouvelle session ouverte en ligne : une ancienne déconnexion en attente ne doit pas la révoquer.
+  await clearLogoutPending().catch(() => undefined);
   broadcast({ type: 'login' });
   return session;
 }
@@ -396,10 +399,26 @@ export async function logout(): Promise<void> {
   await settleRefresh(); // le serveur révoque ainsi la DERNIÈRE rotation du cookie
   try {
     await withAuthLock(() => rawRequest<undefined>('/auth/logout', { method: 'POST', headers: { ...CSRF_HEADER } }, token));
-  } catch {
-    // Hors-ligne ou déjà expiré : la déconnexion locale a déjà eu lieu.
+  } catch (e) {
+    // 401 : session déjà invalide côté serveur, rien à faire. Sinon (réseau, 5xx, CSRF…) le cookie n'a
+    // PAS été révoqué : drapeau « déconnexion en attente », la session ne sera jamais restaurée.
+    if (!(isApiError(e) && e.status === 401)) await setLogoutPending().catch(() => undefined);
   }
   broadcast({ type: 'logout' });
+}
+
+/**
+ * Termine une déconnexion restée en attente (au démarrage, avant tout refresh).
+ * Renvoie true si le serveur a révoqué la session (ou qu'elle était déjà invalide).
+ */
+export async function completePendingLogout(): Promise<boolean> {
+  try {
+    await withAuthLock(() => rawRequest<undefined>('/auth/logout', { method: 'POST', headers: { ...CSRF_HEADER } }, null));
+  } catch (e) {
+    if (!(isApiError(e) && e.status === 401)) return false;
+  }
+  await clearLogoutPending().catch(() => undefined);
+  return true;
 }
 
 /** Réservé aux tests. */

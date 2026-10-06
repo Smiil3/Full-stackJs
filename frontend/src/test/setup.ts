@@ -5,7 +5,8 @@ import { onlineManager } from '@tanstack/react-query';
 import { afterAll, afterEach, beforeAll } from 'vitest';
 import { __resetClientForTests } from '../api/client';
 import { runSessionCleanups } from '../auth/sessionCleanup';
-import '../scanner/cleanup'; // comme App.tsx : purge du scanner en fin de session
+import '../scanner/cleanup';
+import { clearLogoutPending } from '../offline/pendingLogout'; // comme App.tsx : purge du scanner en fin de session
 import { __resetServerClock } from '../api/serverClock';
 import { __resetCheckoutLaunched } from '../api/hooks/orders';
 import { __resetUrlTokens } from '../pages/account/useUrlToken';
@@ -29,6 +30,7 @@ afterEach(async () => {
   Reflect.deleteProperty(navigator, 'onLine'); // tests qui simulent une coupure réseau
   onlineManager.setOnline(true);
   await runSessionCleanups(); // clés d'idempotence, billets hors-ligne…
+  await clearLogoutPending();
   server.resetHandlers();
   resetMockDb();
   __resetClientForTests();

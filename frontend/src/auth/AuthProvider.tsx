@@ -1,10 +1,11 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { apiRequest, login as apiLogin, logout as apiLogout, onAuthEvent, refreshSession } from '../api/client';
+import { apiRequest, completePendingLogout, login as apiLogin, logout as apiLogout, onAuthEvent, refreshSession } from '../api/client';
+import { isLogoutPending } from '../offline/pendingLogout';
 import { isApiError } from '../api/errors';
 import { parseUser } from '../api/guards';
 import type { User } from '../api/types';
-import { AuthContext, type AuthContextValue, type AuthStatus } from './AuthContext';
+import { AuthContext, type AuthContextValue, type AuthNotice, type AuthStatus } from './AuthContext';
 import { runSessionCleanups } from './sessionCleanup';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -12,6 +13,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('loading');
   const [user, setUser] = useState<User | null>(null);
   const [sessionEndRedirect, setSessionEndRedirect] = useState<string | null>(null);
+  const [notice, setNotice] = useState<AuthNotice | null>(null);
+
+  // Déconnexion en attente : finalisée dès le retour du réseau.
+  useEffect(() => {
+    if (notice !== 'logout-pending') return;
+    const retry = () => {
+      void completePendingLogout().then((done) => {
+        if (done) setNotice(null);
+      });
+    };
+    window.addEventListener('online', retry);
+    return () => {
+      window.removeEventListener('online', retry);
+    };
+  }, [notice]);
   const userIdRef = useRef<string | null>(null);
 
   /**
@@ -46,15 +62,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setStatus('anonymous');
       }
     });
-    // Restauration de session au chargement via le cookie HttpOnly (promesse partagée côté client).
-    refreshSession().catch((err: unknown) => {
-      if (isApiError(err) && err.code === 'SESSION_CHANGED') return; // un login/logout a eu lieu entre-temps
-      if (isApiError(err) && (err.code === 'NETWORK_ERROR' || err.code === 'TIMEOUT' || err.status >= 500)) {
-        setStatus((s) => (s === 'loading' ? 'offline' : s));
-      } else {
+    void (async () => {
+      // Déconnexion restée en attente (faite hors-ligne) : la terminer AVANT tout refresh, ne jamais
+      // restaurer la session (téléphone de contrôle prêté…).
+      if (await isLogoutPending().catch(() => false)) {
+        const done = await completePendingLogout();
+        setNotice(done ? null : 'logout-pending');
         setStatus((s) => (s === 'loading' ? 'anonymous' : s));
+        return;
       }
-    });
+      // Restauration de session au chargement via le cookie HttpOnly (promesse partagée côté client).
+      refreshSession().catch((err: unknown) => {
+        if (isApiError(err) && err.code === 'SESSION_CHANGED') return; // un login/logout a eu lieu entre-temps
+        if (isApiError(err) && (err.code === 'NETWORK_ERROR' || err.code === 'TIMEOUT' || err.status >= 500)) {
+          setStatus((s) => (s === 'loading' ? 'offline' : s));
+        } else {
+          setStatus((s) => (s === 'loading' ? 'anonymous' : s));
+        }
+      });
+    })();
     return off;
   }, [wipe]);
 
@@ -77,6 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(async () => {
     await apiLogout();
     await runSessionCleanups();
+    if (await isLogoutPending().catch(() => false)) setNotice('logout-pending');
   }, []);
   const reloadUser = useCallback(async () => {
     const me = parseUser(await apiRequest<unknown>('/auth/me'));
@@ -85,8 +112,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ status, user, login, logout, reloadUser, sessionEndRedirect, setSessionEndRedirect }),
-    [status, user, login, logout, reloadUser, sessionEndRedirect],
+    () => ({ status, user, login, logout, reloadUser, sessionEndRedirect, setSessionEndRedirect, notice }),
+    [status, user, login, logout, reloadUser, sessionEndRedirect, notice],
   );
   return <AuthContext value={value}>{children}</AuthContext>;
 }
