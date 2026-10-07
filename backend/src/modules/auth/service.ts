@@ -345,6 +345,8 @@ export async function resetPassword(token: string, password: string): Promise<vo
       data: { passwordHash, failedLoginCount: 0, lockedUntil: null, lastFailedLoginAt: null, tokenVersion: { increment: 1 }, emailVerifiedAt: clock.now() },
     });
     await repo.revokeAllForUser(tx, userId);
+    // La réinitialisation lève aussi les verrous par couple (compte, IP) — audit M'1.
+    await repo.clearAllLocks(tx, userId);
     await repo.invalidateEmailTokens(tx, userId, 'RESET_PASSWORD');
     await enqueueEmail(tx, user.email, 'passwordChanged', { displayName: user.displayName });
     return true;

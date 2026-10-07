@@ -22,6 +22,7 @@ export interface TemplatePayloads {
   eventCancelled: { displayName: string; eventTitle: string; reason: string; amount: string | null; transferRefundPending: boolean };
   eventRescheduled: { displayName: string; eventTitle: string; oldDate: string; newDate: string; reason: string };
   bankDetailsChanged: { displayName: string; orgName: string; changedBy: string; ibanMasked: string };
+  accountLocked: { displayName: string; minutes: number; resetLink: string };
   financialRulesChanged: { displayName: string; orgName: string; eventTitle: string; changedBy: string; changes: string };
   memberAdded: { displayName: string; orgName: string; role: string; addedBy: string };
 }
@@ -164,6 +165,16 @@ export function renderTemplate<T extends MailTemplate>(template: T, data: Templa
           'Si ce changement n’est pas légitime, contactez immédiatement les autres propriétaires du collectif.',
         ]),
         text: `Bonjour ${s('displayName')},\nLes coordonnées bancaires de ${s('orgName')} ont été modifiées par ${s('changedBy')} (IBAN ${s('ibanMasked')}).`,
+      };
+    case 'accountLocked':
+      return {
+        subject: 'Connexion à votre compte temporairement bloquée',
+        html: layout('Connexion temporairement bloquée', [
+          `Bonjour ${e(s('displayName'))},`,
+          `De nombreuses tentatives de connexion avec un mauvais mot de passe ont visé votre compte, depuis plusieurs adresses : la connexion est bloquée pendant ${e(s('minutes'))} minutes. Vos sessions ouvertes ne sont pas coupées.`,
+          'Si ce n’était pas vous, nous vous conseillons de réinitialiser votre mot de passe : la réinitialisation lève immédiatement tous les blocages.',
+        ], { label: 'Réinitialiser mon mot de passe', url: s('resetLink') }),
+        text: `Bonjour ${s('displayName')},\nDe nombreuses tentatives de connexion ont visé votre compte : connexion bloquée ${s('minutes')} minutes. Réinitialisez votre mot de passe pour lever le blocage : ${s('resetLink')}`,
       };
     case 'financialRulesChanged':
       return {

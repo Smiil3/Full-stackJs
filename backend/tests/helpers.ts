@@ -99,3 +99,12 @@ export async function bearerFor(userId: string): Promise<{ Authorization: string
   const { signAccessToken } = await import('../src/lib/jwt.js');
   return { Authorization: `Bearer ${await signAccessToken(userId, 0)}` };
 }
+
+/**
+ * Valeur requise par la suite du test : échec LISIBLE (« … absente : <quoi> ») au lieu d'un TypeError obscur
+ * sur un `!` (cookie, en-tête, ligne en base).
+ */
+export function expectDefined<T>(value: T | null | undefined, what: string): T {
+  if (value === null || value === undefined) throw new Error(`Valeur attendue absente : ${what}`);
+  return value;
+}
