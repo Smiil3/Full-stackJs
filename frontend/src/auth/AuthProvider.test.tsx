@@ -119,7 +119,7 @@ describe('AuthProvider', () => {
     injectFault({ route: 'POST /auth/refresh', status: 403, code: 'CSRF_CHECK_FAILED' });
     const { auth } = setup();
     expect(await screen.findByText('anonymous:-')).toBeInTheDocument();
-    expect(auth().notice).toBe('csrf');
+    await waitFor(() => expect(auth().notice).toBe('csrf')); // contexte recopié par un effet après le rendu
     await act(() => auth().login('acheteur@example.test', DEMO_PASSWORD));
     expect(auth().notice).toBeNull();
   });
@@ -137,7 +137,7 @@ describe('AuthProvider', () => {
       window.dispatchEvent(new Event('online'));
       expect(screen.getByText('anonymous:-')).toBeInTheDocument();
     });
-    expect(auth().notice).toBe('csrf');
+    await waitFor(() => expect(auth().notice).toBe('csrf')); // contexte recopié par un effet après le rendu
   });
 
   it('logout ⇒ cache TanStack Query vidé et nettoyages hors-ligne exécutés', async () => {
