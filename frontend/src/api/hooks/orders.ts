@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../../auth/AuthContext';
 import { registerSessionCleanup } from '../../auth/sessionCleanup';
 import { apiPath, apiRequest, sessionGeneration } from '../client';
+import { isApiError } from '../errors';
 import { qk } from '../queryKeys';
 import type { CheckoutResponse, CreateOrderBody, Order, Page } from '../types';
 
@@ -9,9 +10,13 @@ import type { CheckoutResponse, CreateOrderBody, Order, Page } from '../types';
  * Idempotency-Key : UNE clé par tentative de commande, conservée au niveau MODULE (survit au
  * démontage du formulaire, ex. aller-retour de page après une coupure réseau), indexée par
  * (utilisateur, empreinte du panier). Même panier ⇒ même clé ⇒ le serveur rend la même commande.
- * Panier différent ⇒ nouvelle clé. Clé oubliée après confirmation et à la fin de session.
+ * Panier différent ⇒ nouvelle clé. Clé OUBLIÉE (audit M5) : après confirmation, quand la commande
+ * rendue est EXPIRED / CANCELLED (une clé = une commande pour toujours), sur erreur non transitoire,
+ * après ATTEMPT_KEY_TTL_MS, et à la fin de session. Seules les erreurs transitoires (réseau, délai,
+ * 5xx, 429) la conservent : c'est là qu'un rejeu doit retrouver la même commande.
  */
-const attemptKeys = new Map<string, string>();
+export const ATTEMPT_KEY_TTL_MS = 30 * 60_000;
+const attemptKeys = new Map<string, { key: string; createdAt: number }>();
 registerSessionCleanup(() => {
   attemptKeys.clear();
 });
@@ -23,14 +28,36 @@ registerSessionCleanup(() => {
 export const captureSession = () => ({ gen: sessionGeneration() });
 export const sameSession = (ctx: { gen: number } | undefined) => ctx !== undefined && ctx.gen === sessionGeneration();
 
-export function idempotencyKeyFor(userId: string, fingerprint: string): string {
+export function idempotencyKeyFor(userId: string, fingerprint: string, now: number = Date.now()): string {
   const slot = `${userId}|${fingerprint}`;
-  let key = attemptKeys.get(slot);
-  if (!key) {
-    key = crypto.randomUUID();
-    attemptKeys.set(slot, key);
-  }
+  const kept = attemptKeys.get(slot);
+  if (kept && now - kept.createdAt < ATTEMPT_KEY_TTL_MS) return kept.key;
+  const key = crypto.randomUUID();
+  attemptKeys.set(slot, { key, createdAt: now });
   return key;
+}
+
+/** Erreurs après lesquelles un rejeu doit retrouver la MÊME commande (la clé est conservée). */
+export function isTransientOrderError(e: unknown): boolean {
+  if (!isApiError(e)) return true; // erreur inconnue : prudence, la commande a pu être créée
+  return e.code === 'NETWORK_ERROR' || e.code === 'TIMEOUT' || e.code === 'RATE_LIMITED' || e.code === 'SESSION_CHANGED' || e.status >= 500;
+}
+
+/**
+ * Envoie la commande avec la clé de la tentative. Commande rendue déjà EXPIRED / CANCELLED (réponse
+ * perdue d'une tentative ancienne) ⇒ clé oubliée et UN nouvel envoi avec une clé neuve.
+ */
+export async function createOrderWithKey(userId: string, body: CreateOrderBody, post: (key: string) => Promise<Order>): Promise<Order> {
+  const fingerprint = orderFingerprint(body);
+  try {
+    const order = await post(idempotencyKeyFor(userId, fingerprint));
+    if (order.status !== 'EXPIRED' && order.status !== 'CANCELLED') return order;
+    forgetIdempotencyKey(userId, fingerprint);
+    return await post(idempotencyKeyFor(userId, fingerprint));
+  } catch (e) {
+    if (!isTransientOrderError(e)) forgetIdempotencyKey(userId, fingerprint);
+    throw e;
+  }
 }
 
 export function forgetIdempotencyKey(userId: string, fingerprint: string): void {
@@ -51,7 +78,7 @@ export function useCreateOrder() {
   const userId = user?.id ?? 'anonyme';
   return useMutation({
     mutationFn: (body: CreateOrderBody) =>
-      apiRequest<Order>('/orders', { method: 'POST', body, headers: { 'Idempotency-Key': idempotencyKeyFor(userId, orderFingerprint(body)) } }),
+      createOrderWithKey(userId, body, (key) => apiRequest<Order>('/orders', { method: 'POST', body, headers: { 'Idempotency-Key': key } })),
     onMutate: captureSession,
     onSuccess: (order, body, ctx) => {
       if (!sameSession(ctx)) return;
