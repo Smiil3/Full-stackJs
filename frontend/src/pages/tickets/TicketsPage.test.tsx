@@ -24,6 +24,19 @@ async function buy(qty = 2) {
   return order;
 }
 
+/** Onglet masqué pendant `ms` puis de nouveau visible (horloge simulée). */
+async function awayThenBack(ms: number) {
+  const vis = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+  document.dispatchEvent(new Event('visibilitychange'));
+  const t0 = Date.now();
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(t0 + ms);
+  vis.mockReturnValue('visible');
+  document.dispatchEvent(new Event('visibilitychange'));
+  clock.mockRestore();
+  vis.mockRestore();
+  await Promise.resolve();
+}
+
 describe('mes billets', () => {
   it('une carte par commande ; QR en plein écran avec navigation entre les billets', async () => {
     const user = userEvent.setup();
@@ -144,11 +157,24 @@ describe('mes billets', () => {
     await screen.findByRole('img', { name: /QR code du billet Fosse/ });
     slowRefresh();
     const refreshes = mock.db.calls.get('POST /auth/refresh') ?? 0;
-    document.dispatchEvent(new Event('visibilitychange'));
+    await awayThenBack(61_000); // absence d'au moins 60 s
     expect(await screen.findByText('Vérification de la session…')).toBeInTheDocument();
     expect(screen.queryByRole('img', { name: /QR code/ })).toBeNull();
     expect(await screen.findByRole('img', { name: /QR code du billet Fosse/ })).toBeInTheDocument();
     expect(mock.db.calls.get('POST /auth/refresh') ?? 0).toBe(refreshes + 1);
+  });
+
+  it('B17-g : bref passage ailleurs (< 60 s) ⇒ aucune revérification ; hors-ligne ⇒ aucune non plus', async () => {
+    await buy(1);
+    await renderApp('/me/tickets');
+    await screen.findByRole('button', { name: 'Afficher le QR code' });
+    const refreshes = mock.db.calls.get('POST /auth/refresh') ?? 0;
+    await awayThenBack(20_000);
+    await awayThenBack(59_000);
+    Object.defineProperty(navigator, 'onLine', { configurable: true, get: () => false });
+    await awayThenBack(120_000);
+    expect(mock.db.calls.get('POST /auth/refresh') ?? 0).toBe(refreshes);
+    expect(screen.getByRole('button', { name: 'Afficher le QR code' })).toBeInTheDocument();
   });
 
   it('billet utilisé / annulé : pas de QR, statut affiché', async () => {
