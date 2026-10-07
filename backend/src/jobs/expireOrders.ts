@@ -1,11 +1,14 @@
+import { TimeBudget } from '../lib/budget.js';
 import { clock } from '../lib/clock.js';
+import { mapLimit } from '../lib/concurrency.js';
+import { withTxRetry } from '../lib/txRetry.js';
 import { getDb, transaction } from '../lib/db.js';
 import { getLogger } from '../lib/logger.js';
 import { enqueueEmail } from '../lib/outbox.js';
 import { releaseHeld } from '../modules/orders/repo.js';
 import { distributeMany, lockWaitlistEntries } from '../modules/waitlist/distribute.js';
 import { reconcileOrder } from './reconcilePayments.js';
-import { EXPIRE_ORDERS_PER_TICK, MAX_EXPIRE_FAILURES } from '../config/worker.js';
+import { EXPIRE_ORDERS_PER_TICK, MAX_EXPIRE_FAILURES, RECONCILE_CONCURRENCY } from '../config/worker.js';
 import { RECONCILE_GRACE_MS } from '../config/payments.js';
 
 /**
@@ -19,7 +22,7 @@ import { RECONCILE_GRACE_MS } from '../config/payments.js';
  * - une commande en erreur est comptée (expireFailures), journalisée et sautée : le reste du lot avance.
  * Retourne les types de places dont des places ont été libérées (pour la liste d'attente).
  */
-export async function expireOrders(): Promise<{ expired: number; failed: number; ticketTypeIds: string[] }> {
+export async function expireOrders(budget: TimeBudget = TimeBudget.unlimited()): Promise<{ expired: number; failed: number; ticketTypeIds: string[] }> {
   const released = new Set<string>();
   const skipped: string[] = [];
   let expired = 0;
@@ -32,7 +35,8 @@ export async function expireOrders(): Promise<{ expired: number; failed: number;
       AND EXISTS (SELECT 1 FROM "psp_sessions" s WHERE s."orderId" = o."id")
     ORDER BY o."expiresAt", o."id"
     LIMIT ${EXPIRE_ORDERS_PER_TICK}`;
-  for (const candidate of toReconcile) {
+  // Consultations du PSP en parallèle borné (audit M3) ; une commande non consultée faute de budget n'est pas expirée.
+  const { notStarted } = await mapLimit(toReconcile, RECONCILE_CONCURRENCY, async (candidate) => {
     let outcome;
     try {
       outcome = await reconcileOrder(candidate.id);
@@ -41,12 +45,14 @@ export async function expireOrders(): Promise<{ expired: number; failed: number;
       outcome = 'unreachable' as const;
     }
     if (outcome === 'unreachable' && now.getTime() - candidate.expiresAt.getTime() < RECONCILE_GRACE_MS) skipped.push(candidate.id);
-  }
-  for (let i = 0; i < EXPIRE_ORDERS_PER_TICK; i += 1) {
+  }, () => budget.exhausted());
+  for (const candidate of notStarted) skipped.push(candidate.id);
+  for (let i = 0; i < EXPIRE_ORDERS_PER_TICK && !budget.exhausted(); i += 1) {
     // Objet mutable : la valeur est renseignée dans la transaction (closure).
     const current: { id: string | null } = { id: null };
     try {
-      const done = await transaction(async (tx) => {
+      // Interblocage / conflit de sérialisation : rejoué ici avant de compter un échec (audit B2).
+      const done = await withTxRetry(() => transaction(async (tx) => {
         const rows = await tx.$queryRaw<{ id: string }[]>`
           SELECT "id" FROM "orders"
           WHERE "status" IN ('PENDING_PAYMENT', 'AWAITING_TRANSFER') AND "expiresAt" <= ${now}
@@ -56,13 +62,14 @@ export async function expireOrders(): Promise<{ expired: number; failed: number;
           LIMIT 1
           FOR UPDATE SKIP LOCKED`;
         const id = rows[0]?.id;
-        if (!id) return false;
+        if (!id) return null;
         current.id = id;
         const { count } = await tx.order.updateMany({
           where: { id, status: { in: ['PENDING_PAYMENT', 'AWAITING_TRANSFER'] } },
-          data: { status: 'EXPIRED' },
+          // Succès : le compteur d'échecs repart de zéro (audit B2).
+          data: { status: 'EXPIRED', expireFailures: 0 },
         });
-        if (count !== 1) return true;
+        if (count !== 1) return [];
         const order = await tx.order.findUniqueOrThrow({
           where: { id },
           include: { items: { orderBy: { ticketTypeId: 'asc' } }, user: { select: { email: true, displayName: true } }, event: { select: { title: true } } },
@@ -72,11 +79,12 @@ export async function expireOrders(): Promise<{ expired: number; failed: number;
         await enqueueEmail(tx, order.user.email, 'orderExpired', { displayName: order.user.displayName, eventTitle: order.event.title });
         // Places libérées : proposées d'abord à la liste d'attente, dans la même transaction.
         await distributeMany(tx, order.items.map((i) => i.ticketTypeId));
-        for (const item of order.items) released.add(item.ticketTypeId);
-        expired += 1;
-        return true;
-      });
-      if (!done) break;
+        return order.items.map((i) => i.ticketTypeId);
+      }));
+      // Comptes tenus APRÈS validation (une tentative rejouée ne compte pas deux fois).
+      if (done === null) break;
+      if (done.length > 0) expired += 1;
+      for (const typeId of done) released.add(typeId);
     } catch (err) {
       const candidate = current.id;
       if (candidate === null) throw err;

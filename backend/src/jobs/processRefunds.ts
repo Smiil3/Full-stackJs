@@ -1,3 +1,4 @@
+import { TimeBudget } from '../lib/budget.js';
 import { clock } from '../lib/clock.js';
 import { getDb } from '../lib/db.js';
 import { getLogger } from '../lib/logger.js';
@@ -45,7 +46,7 @@ async function recordOutcome(
  * 3. Échec définitif ou essais épuisés ⇒ MANUAL_REQUIRED (visible par l'organisateur), jamais un échec silencieux.
  * Chaque remboursement est isolé : une erreur (même de base de données) n'interrompt pas le lot.
  */
-export async function processRefunds(): Promise<{ succeeded: number; manual: number }> {
+export async function processRefunds(budget: TimeBudget = TimeBudget.unlimited()): Promise<{ succeeded: number; manual: number }> {
   const db = getDb();
   // Une seule horloge : celle de l'application, qui pose aussi les échéances.
   const now = clock.now();
@@ -68,6 +69,8 @@ export async function processRefunds(): Promise<{ succeeded: number; manual: num
   let succeeded = 0;
   let manual = 0;
   for (const row of leased) {
+    // Budget épuisé : les remboursements non tentés seront repris à l'expiration de leur bail (5 min).
+    if (budget.exhausted()) break;
     try {
       try {
         const result = await getPspClient().createRefund({ paymentId: row.providerPaymentId, amountCents: row.amountCents, idempotencyKey: row.id });

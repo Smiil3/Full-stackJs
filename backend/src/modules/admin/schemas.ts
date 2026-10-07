@@ -12,3 +12,11 @@ export const createOrgBody = Joi.object<CreateOrgBody>({
 export const adminOrgResponse = Joi.object({ id: uuidStrict, name: Joi.string(), slug: Joi.string(), createdAt: isoDateOutput });
 export const adminOrgList = pageOf(adminOrgResponse);
 export const adminOrgsQuery = Joi.object<PageQuery>(pageQuery);
+
+export const stuckOrderResponse = Joi.object({
+  id: uuidStrict, orgId: uuidStrict, eventId: uuidStrict, eventTitle: Joi.string(), buyerEmail: Joi.string(),
+  status: Joi.string().valid('PENDING_PAYMENT', 'AWAITING_TRANSFER'), paymentMethod: Joi.string().valid('CARD', 'TRANSFER'),
+  totalCents: Joi.number().integer(), expiresAt: isoDateOutput.allow(null), expireFailures: Joi.number().integer(), createdAt: isoDateOutput,
+});
+export const stuckOrderPage = pageOf(stuckOrderResponse);
+export const stuckOrderParams = Joi.object<{ orderId: string }>({ orderId: Joi.string().guid({ version: ['uuidv4', 'uuidv7'] }).lowercase().required() });

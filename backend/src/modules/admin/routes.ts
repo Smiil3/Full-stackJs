@@ -16,5 +16,8 @@ export function adminRouter(): Router {
   r.get('/refunds', ...endpoint({ query: refunds.orphanRefundsQuery, response: refunds.refundAdminPage }, c.listOrphanRefunds));
   r.post('/refunds/:refundId/mark-done', ...endpoint({ params: refunds.orphanRefundParams, body: refunds.markDoneBody, response: refunds.refundAdminResponse },
     c.markOrphanRefundDone));
+  // Commandes écartées de l'expiration automatique (contrat 1.17 §8, audit B2).
+  r.get('/stuck-orders', ...endpoint({ query: s.adminOrgsQuery, response: s.stuckOrderPage }, c.listStuckOrders));
+  r.post('/stuck-orders/:orderId/retry', ...endpoint({ params: s.stuckOrderParams, response: s.stuckOrderResponse }, c.retryStuckOrder));
   return r;
 }

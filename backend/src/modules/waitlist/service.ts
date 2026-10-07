@@ -16,6 +16,7 @@ import { withTxRetry } from '../../lib/txRetry.js';
 import { SHA256_HEX_LENGTH } from '../../config/crypto.js';
 import { WAITLIST_OFFERS_PER_TICK, WAITLIST_SWEEP_TYPES_PER_TICK } from '../../config/worker.js';
 import { MAX_EXPIRED_OFFERS_PER_EVENT } from '../../config/waitlist.js';
+import { TimeBudget } from '../../lib/budget.js';
 
 type EntryWithNames = WaitlistEntry & { event: { title: string }; ticketType: { name: string } };
 
@@ -186,11 +187,11 @@ export async function accept(userId: string, entryId: string) {
  * verrouillées avant l'offre elle-même. Anti-gel (contrat 1.17 §6) : à la 2e offre laissée expirer sur l'événement,
  * les autres inscriptions du compte sur cet événement sortent de la liste (EXPIRED).
  */
-export async function expireWaitlistOffers(): Promise<{ expired: number; excluded: number }> {
+export async function expireWaitlistOffers(budget: TimeBudget = TimeBudget.unlimited()): Promise<{ expired: number; excluded: number }> {
   let expired = 0;
   let excluded = 0;
   const skipped: string[] = [];
-  for (let i = 0; i < WAITLIST_OFFERS_PER_TICK; i += 1) {
+  for (let i = 0; i < WAITLIST_OFFERS_PER_TICK && !budget.exhausted(); i += 1) {
     const done = await withTxRetry(() => transaction(async (tx) => {
       const rows = await tx.$queryRaw<{ id: string; eventId: string }[]>`
         SELECT "id", "eventId" FROM "waitlist_entries"

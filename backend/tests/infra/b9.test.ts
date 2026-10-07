@@ -129,7 +129,8 @@ describe('liste d’attente : accumulation bornée (B9 M5)', () => {
 
 describe('worker et horloge (B9 B1 / B2)', () => {
   it('annulations d’événement traitées avant le rapprochement et l’expiration', () => {
-    const names = workerJobs({ sendMail: () => Promise.resolve() }).map(([name]) => name);
+    const names = workerJobs().map(([name]) => name);
+    expect(names).not.toContain('outbox'); // boucle séparée (audit M3)
     expect(names.indexOf('eventCancellations')).toBeLessThan(names.indexOf('reconcilePayments'));
     expect(names.indexOf('reconcilePayments')).toBeLessThan(names.indexOf('expireOrders'));
   });

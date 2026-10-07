@@ -8,6 +8,7 @@ import { withTxRetry } from '../../lib/txRetry.js';
 import { PERCENT_MAX } from '../../config/money.js';
 import { hours } from '../../config/units.js';
 import { RESCHEDULE_ORDERS_PER_TICK } from '../../config/worker.js';
+import { TimeBudget } from '../../lib/budget.js';
 
 const ACTIVE: readonly OrderStatus[] = ['PENDING_PAYMENT', 'AWAITING_TRANSFER', 'PAID'];
 
@@ -71,11 +72,11 @@ export async function applyPendingReschedule(tx: Tx, order: { id: string; pendin
  * idempotent (la commande traitée perd son `pendingRescheduleId`) et repris au passage suivant ;
  * un report sans commande restante est marqué terminé (un nouveau report devient possible).
  */
-export async function processEventReschedules(): Promise<{ processed: number; failed: number; completed: number }> {
+export async function processEventReschedules(budget: TimeBudget = TimeBudget.unlimited()): Promise<{ processed: number; failed: number; completed: number }> {
   let processed = 0;
   let failed = 0;
   const skipped: string[] = [];
-  for (let i = 0; i < RESCHEDULE_ORDERS_PER_TICK; i += 1) {
+  for (let i = 0; i < RESCHEDULE_ORDERS_PER_TICK && !budget.exhausted(); i += 1) {
     const current: { id: string | null } = { id: null };
     try {
       const done = await withTxRetry(() => transaction(async (tx) => {
