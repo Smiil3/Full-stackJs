@@ -156,6 +156,27 @@ describe('back-office : événements', () => {
     expect(await screen.findByText('Publié')).toBeInTheDocument();
   });
 
+  it('B17-d : ajout d’un type de place ⇒ événement, liste du collectif, statistiques et catalogue public invalidés', async () => {
+    const user = userEvent.setup();
+    const { queryClient } = await renderApp(EVENT, { as: OWNER });
+    await screen.findByRole('heading', { name: 'Types de places' });
+    const keys = [
+      ['events', { page: 1, pageSize: 12 }],
+      ['event', IDS.eventConcert],
+      ['org', IDS.orgNuits, 'events', 'ALL', 1],
+      ['org', IDS.orgNuits, 'event', IDS.eventConcert, 'stats'],
+    ];
+    for (const k of keys) queryClient.setQueryData(k, { périmé: false });
+    await user.click(screen.getByRole('button', { name: 'Ajouter un type de place' }));
+    await user.type(screen.getByLabelText('Nom du type de place'), 'Carré or');
+    await user.type(screen.getByLabelText('Capacité (places)'), '20');
+    await user.type(screen.getByLabelText('Prix (€)'), '55');
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+    await waitFor(() => {
+      for (const k of keys) expect(queryClient.getQueryState(k)?.isInvalidated, JSON.stringify(k)).toBe(true);
+    });
+  });
+
   it('publication impossible sans type de place ⇒ message clair', async () => {
     const user = userEvent.setup();
     await renderApp(`${ORG}/events/${IDS.eventDraft}`, { as: MANAGER });

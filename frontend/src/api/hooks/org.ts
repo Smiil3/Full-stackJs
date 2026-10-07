@@ -128,7 +128,18 @@ export function useCreateEvent(orgId: string) {
 export function useEventMutations(orgId: string, eventId: string) {
   const store = useEventCache(orgId);
   const qc = useQueryClient();
-  const refresh = () => qc.invalidateQueries({ queryKey: qk.orgEvent(orgId, eventId) });
+  /**
+   * Après une opération sur les types de places (audit B17-d) : l'événement, la liste des événements
+   * du collectif, ses statistiques et commandes, et le catalogue public (prix « à partir de »,
+   * disponibilités, fiche) sont périmés.
+   */
+  const refresh = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ['org', orgId, 'event', eventId] }),
+      qc.invalidateQueries({ queryKey: ['org', orgId, 'events'] }),
+      qc.invalidateQueries({ queryKey: ['events'] }),
+      qc.invalidateQueries({ queryKey: qk.event(eventId) }),
+    ]);
   const base = ev(orgId, eventId);
   return {
     update: useMutation({ mutationFn: (b: EventPatchBody) => apiRequest<EventAdmin>(base, { method: 'PATCH', body: b }), onSuccess: store }),
