@@ -271,6 +271,14 @@ Un remboursement de commande payée par virement est toujours `MANUAL_REQUIRED` 
 | `GET /admin/orgs` | `isPlatformAdmin` | `page, pageSize` | 200 page `{ id, name, slug, createdAt }` (`{ items, page, pageSize, total }`), tri par nom puis id |
 | `GET /admin/refunds` | `isPlatformAdmin` | `page, pageSize, status?` | 200 page `RefundAdmin` des remboursements **sans commande rattachée** (paiements inattendus) — `orderId`, `eventId`, `eventTitle` à `null`, `buyerEmail` = email PSP si connu sinon `null` |
 | `POST /admin/refunds/:refundId/mark-done` | `isPlatformAdmin` | `{ note (1–500) }` | mêmes règles que la version collectif |
+| `GET /admin/stuck-orders` | `isPlatformAdmin` | `page, pageSize` | 200 page `StuckOrder` : commandes `PENDING_PAYMENT` / `AWAITING_TRANSFER` écartées de l'expiration automatique après 5 échecs, triées par `expiresAt` |
+| `POST /admin/stuck-orders/:orderId/retry` | `isPlatformAdmin` | — | 200 `StuckOrder` : compteur d'échecs remis à 0 ⇒ reprise au prochain passage du worker (AuditLog `order.expire_retry`) · 404 si la commande n'est pas écartée |
+
+```ts
+type StuckOrder = { id; orgId; eventId; eventTitle; buyerEmail; status: 'PENDING_PAYMENT'|'AWAITING_TRANSFER'; paymentMethod: 'CARD'|'TRANSFER';
+  totalCents; expiresAt; expireFailures: number; createdAt }
+```
+Le compteur est remis à 0 à chaque passage réussi ; les erreurs transitoires (interblocage) sont rejouées avant de compter un échec.
 | `POST /admin/orgs` | `isPlatformAdmin` | `{ name (2–80), slug (^[a-z0-9-]{2,40}$), ownerEmail }` | 201 org, propriétaire = compte existant vérifié |
 
 ## 9. Prestataire de paiement simulé (dev / test uniquement)
@@ -297,7 +305,7 @@ Un remboursement de commande payée par virement est toujours `MANUAL_REQUIRED` 
 - En-têtes de sécurité via helmet ; CORS : origine `FRONT_URL` uniquement, `credentials: true`.
 
 ## 11. Historique
-- **1.17** (2026-10-07) : `503 PAYMENT_PROVIDER_UNAVAILABLE` ; surcharges financières réservées à l'OWNER ; anti-gel de la liste d'attente (offres ≤ 360 min, sortie après 2 offres expirées) ; `mark-done` carte vérifié auprès du PSP ; remboursements orphelins visibles par l'admin plateforme (suite au rapport d'audit du 2026-10-06).
+- **1.17** (2026-10-07) : `GET /admin/stuck-orders` + `retry` ; `503 PAYMENT_PROVIDER_UNAVAILABLE` ; surcharges financières réservées à l'OWNER ; anti-gel de la liste d'attente (offres ≤ 360 min, sortie après 2 offres expirées) ; `mark-done` carte vérifié auprès du PSP ; remboursements orphelins visibles par l'admin plateforme (suite au rapport d'audit du 2026-10-06).
 - **1.16** (2026-10-06) : `Order.paymentInProgress`.
 - **1.15** (2026-10-06) : PSP — échéance des sessions, consultation de session (rapprochement), réessais de webhook, débit limité sur signatures invalides seulement ; paiement tardif soumis à toutes les règles ; droits du report étendus aux commandes non payées ; fenêtre de contrôle `startsAt − 12 h` → `endsAt + 24 h`.
 - **1.14** (2026-10-06) : annulation d'événement asynchrone par lots (`cancellationPendingOrders`), refusée après le début ; règles d'équité de la liste d'attente ; plafond revérifié à l'acceptation ; mail de remboursement de virement « à venir ».
