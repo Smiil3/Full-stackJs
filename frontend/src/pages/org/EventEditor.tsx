@@ -36,12 +36,28 @@ type TzChoice = { from: string; localDates: Pick<EventFormState, DateField>; mod
 const LOCKED_DATES: readonly DateField[] = ['startsAt', 'endsAt'];
 
 export function EventEditor(props: Props) {
-  const [initial] = useState<EventFormState>(() => initialEventForm(props.event, props.settings));
+  const [initial, setInitial] = useState<EventFormState>(() => initialEventForm(props.event, props.settings));
   const [form, setForm] = useState<EventFormState>(initial);
+  // Version de l'événement à l'ouverture (audit B17-b) : une version plus récente (autre onglet, autre
+  // membre, types de places) ne remonte plus l'éditeur en silence.
+  const [openedVersion, setOpenedVersion] = useState(props.event?.updatedAt ?? null);
+  const dirty = JSON.stringify(form) !== JSON.stringify(initial);
+  const reloadFromServer = (event: EventAdmin) => {
+    const fresh = initialEventForm(event, props.settings);
+    setInitial(fresh);
+    setForm(fresh);
+    setOpenedVersion(event.updatedAt);
+    setTzChoice(null);
+  };
+  const current = props.event;
+  const changedElsewhere = current !== null && openedVersion !== null && current.updatedAt !== openedVersion;
+  // Garde de réentrance (audit B17-c) : un seul envoi à la fois, y compris pendant la revérification des ventes.
+  const [submitting, setSubmitting] = useState(false);
   const [pendingPatch, setPendingPatch] = useState<EventPatchBody | null>(null);
   const [reason, setReason] = useState('');
   const [tzChoice, setTzChoice] = useState<TzChoice | null>(null);
   const [forbidden, setForbidden] = useState(false);
+  if (changedElsewhere && !dirty) reloadFromServer(current); // rien à perdre : version à jour
   const sold = hasSales(props.event);
   // Contrat v1.7 : report d'un événement vendu réservé à l'OWNER (le serveur renverrait 403).
   const datesLocked = sold && props.role !== 'OWNER';
@@ -60,8 +76,12 @@ export function EventEditor(props: Props) {
       props.onCreate(r.body);
       return;
     }
+    if (submitting) return;
     const patch = diffPatch(props.event, initial, form, r.body);
-    void decideAndSend(patch);
+    setSubmitting(true);
+    void decideAndSend(patch).finally(() => {
+      setSubmitting(false);
+    });
   };
 
   const send = async (patch: EventPatchBody) => {
@@ -218,7 +238,22 @@ export function EventEditor(props: Props) {
           Certaines informations sont à corriger.
         </p>
       ) : null}
-      <button type="submit" className="btn" disabled={props.pending}>
+      {changedElsewhere && dirty ? (
+        <div className="alert alert--warning" role="alert">
+          <div className="stack stack--sm">
+            <p>
+              <strong>Cet événement a été modifié entre-temps</strong> (par une autre personne ou dans un autre onglet). Vos modifications non enregistrées sont conservées ;
+              en enregistrant, seuls les champs que vous avez changés seront envoyés.
+            </p>
+            <p>
+              <button type="button" className="btn btn--secondary btn--small" onClick={() => reloadFromServer(current)}>
+                Abandonner mes modifications et recharger
+              </button>
+            </p>
+          </div>
+        </div>
+      ) : null}
+      <button type="submit" className="btn" disabled={props.pending || submitting}>
         {props.pending ? 'Enregistrement…' : props.submitLabel}
       </button>
 

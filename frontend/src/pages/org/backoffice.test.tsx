@@ -545,6 +545,55 @@ describe('admin plateforme : anomalies (v1.17 §8, audit B2 / B3)', () => {
   });
 });
 
+describe('éditeur d’événement : modifications extérieures et double envoi (audit B17-b, c)', () => {
+  const externalUpdate = async (queryClient: import('@tanstack/react-query').QueryClient, title: string) => {
+    const e = mock.db.events.find((x) => x.id === IDS.eventConcert);
+    if (e) Object.assign(e, { title, updatedAt: new Date(Date.now() + 1000).toISOString() });
+    await act(() => queryClient.invalidateQueries({ queryKey: ['org', IDS.orgNuits, 'event', IDS.eventConcert] }));
+  };
+
+  it('formulaire modifié + événement changé ailleurs ⇒ avertissement, saisie CONSERVÉE, rechargement au choix', async () => {
+    const user = userEvent.setup();
+    const { queryClient } = await renderApp(EVENT, { as: OWNER });
+    await user.click(await screen.findByRole('button', { name: 'Modifier l’événement' }));
+    await user.clear(screen.getByLabelText('Titre'));
+    await user.type(screen.getByLabelText('Titre'), 'Titre en cours de saisie');
+    await externalUpdate(queryClient, 'Titre changé par un autre membre');
+    expect(await screen.findByText(/Cet événement a été modifié entre-temps/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Titre')).toHaveValue('Titre en cours de saisie');
+    await user.click(screen.getByRole('button', { name: 'Abandonner mes modifications et recharger' }));
+    expect(screen.getByLabelText('Titre')).toHaveValue('Titre changé par un autre membre');
+    expect(screen.queryByText(/Cet événement a été modifié entre-temps/)).toBeNull();
+  });
+
+  it('formulaire intact + événement changé ailleurs ⇒ rechargé sans bruit', async () => {
+    const user = userEvent.setup();
+    const { queryClient } = await renderApp(EVENT, { as: OWNER });
+    await user.click(await screen.findByRole('button', { name: 'Modifier l’événement' }));
+    await externalUpdate(queryClient, 'Nouveau titre venu d’ailleurs');
+    await waitFor(() => expect(screen.getByLabelText('Titre')).toHaveValue('Nouveau titre venu d’ailleurs'));
+    expect(screen.queryByText(/modifié entre-temps/)).toBeNull();
+  });
+
+  it('double clic sur « Enregistrer » pendant la revérification des ventes ⇒ un seul envoi', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get(`*/api/v1/orgs/${IDS.orgNuits}/events/${IDS.eventConcert}`, async () => {
+        await delay(150);
+        return undefined;
+      }),
+    );
+    await renderApp(EVENT, { as: OWNER });
+    await user.click(await screen.findByRole('button', { name: 'Modifier l’événement' }));
+    await user.clear(screen.getByLabelText('Titre'));
+    await user.type(screen.getByLabelText('Titre'), 'Titre unique');
+    const before = mock.db.calls.get('PATCH /orgs/:orgId/events/:eventId') ?? 0;
+    await user.dblClick(screen.getByRole('button', { name: 'Enregistrer les modifications' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Enregistrer les modifications' })).toBeNull());
+    expect((mock.db.calls.get('PATCH /orgs/:orgId/events/:eventId') ?? 0) - before).toBe(1);
+  });
+});
+
 describe('règles financières réservées au propriétaire (v1.17, audit M1)', () => {
   it('MANAGER : règles financières en lecture seule « réservé au propriétaire », règles opérationnelles modifiables ; OWNER : tout modifiable', async () => {
     const user = userEvent.setup();

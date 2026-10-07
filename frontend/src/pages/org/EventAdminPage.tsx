@@ -108,7 +108,6 @@ export function EventAdminPage() {
           <h2 id="titre-infos">Informations et règles de vente</h2>
           {editing ? (
             <EventEditor
-              key={event.updatedAt}
               event={event}
               settings={settings.data}
               role={role}
