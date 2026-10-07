@@ -1,7 +1,7 @@
 # Contrat d'API — Billetterie « Les Nuits de la Garonne »
 
 > **Source de vérité commune front / back.** Toute modification passe par le PO (session `fullstack-js`) : demander via une ligne `NEED: changement de contrat …`. Ne jamais diverger silencieusement.
-> Version : 1.17 — 2026-10-06 (voir §11 Historique)
+> Version : 1.18 — 2026-10-07 (voir §11 Historique)
 
 ## 1. Conventions
 
@@ -158,7 +158,7 @@ type WaitlistEntry = { id; eventId; eventTitle; ticketTypeId; ticketTypeName; qu
 | `DELETE /waitlist/:entryId` | Bearer | — | 204 (statut `LEFT` ; si `OFFERED`, les places passent au suivant) |
 | `POST /waitlist/:entryId/accept` | Bearer | — | 201 `Order` (CARD, `PENDING_PAYMENT`, places déjà réservées) · 409 `OFFER_EXPIRED` |
 
-**Règles de la liste d'attente** : file FIFO (`createdAt`, `id`) par type de place. La tête de file est servie en priorité : les places libérées s'accumulent pour elle (bloquées, ni vendues au public ni offertes aux suivants) pendant au plus `min(waitlistOfferMinutes, 30 min)` ; passé ce délai sans assez de places, elle est sautée (elle garde son rang) et la suivante est servie. Le plafond par personne est revérifié à l'acceptation (`LIMIT_EXCEEDED`). Distribution et acceptation possibles seulement tant que les ventes sont ouvertes (`now < min(salesEndAt, startsAt)`) ; inscription possible seulement ventes ouvertes. L'échéance d'une offre fait foi (une offre échue mais pas encore balayée ⇒ `OFFER_EXPIRED`). **Anti-gel** : durée d'une offre bornée par le réglage `waitlistOfferMinutes` (15–360 min) ; un compte qui laisse expirer **deux offres** sur un même événement sort de la liste d'attente de cet événement (statut `EXPIRED`, réinscription refusée : 409 `CONFLICT`).
+**Règles de la liste d'attente** : file FIFO (`createdAt`, `id`) par type de place. La tête de file est servie en priorité : les places libérées s'accumulent pour elle (bloquées, ni vendues au public ni offertes aux suivants) pendant au plus `min(waitlistOfferMinutes, 30 min)` ; passé ce délai sans assez de places, elle est sautée (elle garde son rang) et la suivante est servie. Le plafond par personne est revérifié à l'acceptation (`LIMIT_EXCEEDED`). Distribution et acceptation possibles seulement tant que les ventes sont ouvertes (`now < min(salesEndAt, startsAt)`) ; inscription possible seulement ventes ouvertes. L'échéance d'une offre fait foi (une offre échue mais pas encore balayée ⇒ `OFFER_EXPIRED`). **Anti-gel** : durée d'une offre bornée par le réglage `waitlistOfferMinutes` (15–360 min) ; aucune offre n'est émise s'il reste moins de 15 min avant la fin des ventes (les places vont au public). Compte comme « offre non honorée » : une offre expirée, une offre quittée (`DELETE`) plus de 15 min après son émission, et une commande issue d'une offre qui expire sans paiement. Un compte qui accumule **deux offres non honorées** sur un même événement sort de la liste d'attente de cet événement (statut `EXPIRED`, réinscription refusée : 409 `CONFLICT`). Quitter une offre dans les 15 min n'est pas pénalisé.
 
 ## 7. Back-office collectif (préfixe `/orgs/:orgId`, Bearer)
 
@@ -194,7 +194,7 @@ type TicketTypeAdmin = { id; name; description: string|null; capacity; sold; hel
   earlyUntil: string|null; sortOrder: number }
 type EventAdmin = { id; orgId; title; description: string|null; venue: string|null; address: string|null; isOnline; startsAt; endsAt; timezone;
   status: 'DRAFT'|'PUBLISHED'|'CANCELLED'; salesStartAt; salesEndAt; overrides: EventOverrides; offlineCheckinEnabled: boolean;
-  effectiveRules: EventRulesPublic; ticketTypes: TicketTypeAdmin[]; cancellationPendingOrders: number; createdAt; updatedAt }
+  effectiveRules: EventRulesPublic; ticketTypes: TicketTypeAdmin[]; cancellationPendingOrders: number; reschedulePendingOrders: number; createdAt; updatedAt }
 ```
 | Méthode & chemin | Rôle | Body | Réponse |
 |---|---|---|---|
@@ -269,6 +269,7 @@ Un remboursement de commande payée par virement est toujours `MANUAL_REQUIRED` 
 | Méthode & chemin | Auth | Body | Réponse |
 |---|---|---|---|
 | `GET /admin/orgs` | `isPlatformAdmin` | `page, pageSize` | 200 page `{ id, name, slug, createdAt }` (`{ items, page, pageSize, total }`), tri par nom puis id |
+| `POST /admin/orgs` | `isPlatformAdmin` | `{ name (2–80), slug (^[a-z0-9-]{2,40}$), ownerEmail }` | 201 org, propriétaire = compte existant vérifié |
 | `GET /admin/refunds` | `isPlatformAdmin` | `page, pageSize, status?` | 200 page `RefundAdmin` des remboursements **sans commande rattachée** (paiements inattendus) — `orderId`, `eventId`, `eventTitle` à `null`, `buyerEmail` = email PSP si connu sinon `null` |
 | `POST /admin/refunds/:refundId/mark-done` | `isPlatformAdmin` | `{ note (1–500) }` | mêmes règles que la version collectif |
 | `GET /admin/stuck-orders` | `isPlatformAdmin` | `page, pageSize` | 200 page `StuckOrder` : commandes `PENDING_PAYMENT` / `AWAITING_TRANSFER` écartées de l'expiration automatique après 5 échecs, triées par `expiresAt` |
@@ -279,7 +280,6 @@ type StuckOrder = { id; orgId; eventId; eventTitle; buyerEmail; status: 'PENDING
   totalCents; expiresAt; expireFailures: number; createdAt }
 ```
 Le compteur est remis à 0 à chaque passage réussi ; les erreurs transitoires (interblocage) sont rejouées avant de compter un échec.
-| `POST /admin/orgs` | `isPlatformAdmin` | `{ name (2–80), slug (^[a-z0-9-]{2,40}$), ownerEmail }` | 201 org, propriétaire = compte existant vérifié |
 
 ## 9. Prestataire de paiement simulé (dev / test uniquement)
 
@@ -305,6 +305,7 @@ Le compteur est remis à 0 à chaque passage réussi ; les erreurs transitoires 
 - En-têtes de sécurité via helmet ; CORS : origine `FRONT_URL` uniquement, `credentials: true`.
 
 ## 11. Historique
+- **1.18** (2026-10-07) : anti-gel élargi (offre quittée tardivement, commande d'offre non payée, pas d'offre < 15 min) ; `EventAdmin.reschedulePendingOrders` ; tableau §8 réparé (suite au rapport d'audit n° 2).
 - **1.17** (2026-10-07) : report concurrent ⇒ 409 ; `GET /admin/stuck-orders` + `retry` ; `503 PAYMENT_PROVIDER_UNAVAILABLE` ; surcharges financières réservées à l'OWNER ; anti-gel de la liste d'attente (offres ≤ 360 min, sortie après 2 offres expirées) ; `mark-done` carte vérifié auprès du PSP ; remboursements orphelins visibles par l'admin plateforme (suite au rapport d'audit du 2026-10-06).
 - **1.16** (2026-10-06) : `Order.paymentInProgress`.
 - **1.15** (2026-10-06) : PSP — échéance des sessions, consultation de session (rapprochement), réessais de webhook, débit limité sur signatures invalides seulement ; paiement tardif soumis à toutes les règles ; droits du report étendus aux commandes non payées ; fenêtre de contrôle `startsAt − 12 h` → `endsAt + 24 h`.
