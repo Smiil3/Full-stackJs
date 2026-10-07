@@ -9,6 +9,7 @@ import { errors } from '../../lib/errors.js';
 import { maskIban, normalizeIban } from '../../lib/iban.js';
 import { iso } from '../../lib/schemas.js';
 import * as repo from './repo.js';
+import { requireRoleInTx } from '../../lib/orgRole.js';
 import type { SettingsPatch } from './schemas.js';
 
 export function toSettingsView(s: OrganizationSettings) {
@@ -57,7 +58,7 @@ export async function updateSettings(orgId: string, actorId: string, patch: Sett
   if (patch.bank) await reauthenticate(actorId, patch.currentPassword ?? '');
   const updated = await transaction(async (tx) => {
     // Rôle revérifié APRÈS la ré-authentification (argon2, lente) : un OWNER rétrogradé entre-temps est refusé.
-    if ((await repo.lockActorRole(tx, orgId, actorId)) !== 'OWNER') throw errors.forbidden();
+    await requireRoleInTx(tx, orgId, actorId, 'OWNER');
     await repo.getSettings(tx, orgId);
     await repo.lockSettings(tx, orgId);
     const before = await repo.getSettings(tx, orgId);
@@ -126,6 +127,7 @@ export async function listMembers(orgId: string) {
 export async function addMember(orgId: string, actorId: string, rawEmail: string, role: Role) {
   const email = normalizeEmail(rawEmail);
   const member = await transaction(async (tx) => {
+    await requireRoleInTx(tx, orgId, actorId, 'OWNER');
     const user = await tx.user.findUnique({ where: { email }, select: { id: true, emailVerifiedAt: true } });
     if (!user?.emailVerifiedAt) throw errors.notFound();
     const existing = await tx.membership.findUnique({ where: { userId_orgId: { userId: user.id, orgId } } });
@@ -148,6 +150,7 @@ export async function addMember(orgId: string, actorId: string, rawEmail: string
 export async function updateMemberRole(orgId: string, actorId: string, userId: string, role: Role) {
   const member = await transaction(async (tx) => {
     const owners = await repo.lockOwners(tx, orgId);
+    await requireRoleInTx(tx, orgId, actorId, 'OWNER');
     const current = await repo.findMember(tx, orgId, userId);
     if (!current) throw errors.notFound();
     if (current.role === 'OWNER' && role !== 'OWNER' && owners <= 1) {
@@ -168,6 +171,7 @@ export async function updateMemberRole(orgId: string, actorId: string, userId: s
 export async function removeMember(orgId: string, actorId: string, userId: string): Promise<void> {
   await transaction(async (tx) => {
     const owners = await repo.lockOwners(tx, orgId);
+    await requireRoleInTx(tx, orgId, actorId, 'OWNER');
     const current = await repo.findMember(tx, orgId, userId);
     if (!current) throw errors.notFound();
     if (current.role === 'OWNER' && owners <= 1) throw errors.conflict('Impossible de retirer le dernier propriétaire du collectif.');

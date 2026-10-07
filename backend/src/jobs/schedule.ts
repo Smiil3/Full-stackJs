@@ -5,6 +5,7 @@ import { expireOrders } from './expireOrders.js';
 import { processEventCancellations } from './processEventCancellations.js';
 import { processRefunds } from './processRefunds.js';
 import { reconcileRecentSessions } from './reconcilePayments.js';
+import { processEventReschedules } from '../modules/events/reschedule.js';
 
 export type WorkerJob = [name: string, run: () => Promise<unknown>];
 
@@ -16,6 +17,7 @@ export type WorkerJob = [name: string, run: () => Promise<unknown>];
 export function workerJobs(transport: MailTransport): WorkerJob[] {
   return [
     ['eventCancellations', () => processEventCancellations()],
+    ['eventReschedules', () => processEventReschedules()],
     ['reconcilePayments', () => reconcileRecentSessions()],
     ['expireOrders', () => expireOrders()],
     ['expireWaitlistOffers', () => expireWaitlistOffers()],

@@ -10,3 +10,5 @@ export const WAITLIST_OFFERS_PER_TICK = 200;
 export const CSV_EXPORT_PAGE = 500;
 /** Filet de la liste d'attente : types de places examinés au plus par passage. */
 export const WAITLIST_SWEEP_TYPES_PER_TICK = 100;
+/** Commandes d'un événement reporté traitées au plus par passage (droits du report + mail). */
+export const RESCHEDULE_ORDERS_PER_TICK = 500;

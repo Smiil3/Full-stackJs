@@ -22,3 +22,11 @@ export const SETTINGS_BOUNDS = {
   /** Frais de service proportionnels (points de base, 15 % max). */
   serviceFeeBasisPoints: { min: 0, max: 1500 },
 } as const;
+
+/**
+ * Surcharges d'événement à portée FINANCIÈRE (contrat 1.17 §7.2) : réservées à l'OWNER, auditées champ par champ,
+ * notifiées à tous les OWNER. Les autres surcharges (durées de réservation, plafonds, liste d'attente) restent MANAGER+.
+ */
+export const FINANCIAL_OVERRIDE_KEYS = [
+  'refundPercent', 'serviceFeeFixedCents', 'serviceFeeBasisPoints', 'transferEnabled', 'selfCancellationEnabled', 'cancellationDeadlineHours',
+] as const;

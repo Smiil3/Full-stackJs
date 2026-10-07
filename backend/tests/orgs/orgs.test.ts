@@ -177,7 +177,8 @@ describe('membres', () => {
       api().patch(`/api/v1/orgs/${a.id}/members/${second.id}`).set(a.owner.auth).send({ role: 'MANAGER' }),
       api().patch(`/api/v1/orgs/${a.id}/members/${a.owner.id}`).set(second.auth).send({ role: 'MANAGER' }),
     ]);
-    expect(results.map((r) => r.status).sort()).toEqual([200, 409]);
+    // Le second à passer n'est plus OWNER (rôle relu dans la transaction, audit B12) : 403.
+    expect(results.map((r) => r.status).sort()).toEqual([200, 403]);
     expect(await getDb().membership.count({ where: { orgId: a.id, role: 'OWNER' } })).toBe(1);
   });
 
