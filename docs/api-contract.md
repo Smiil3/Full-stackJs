@@ -43,7 +43,7 @@
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | Content-Type non supporté (JSON attendu) |
 | 422 | `LIMIT_EXCEEDED` | Plafond par commande ou par personne dépassé (`details.max`, `details.alreadyOwned`) |
 | 422 | `PAYMENT_METHOD_UNAVAILABLE` | Virement désactivé ou coordonnées bancaires absentes |
-| 503 | `PAYMENT_PROVIDER_UNAVAILABLE` | Prestataire de paiement injoignable ou en erreur : la réservation est conservée jusqu'à `expiresAt`, l'acheteur peut réessayer (en-tête `Retry-After`) |
+| 503 | `PAYMENT_PROVIDER_UNAVAILABLE` | Prestataire de paiement injoignable ou en erreur : la réservation est conservée jusqu'à `expiresAt`, l'acheteur peut réessayer (en-tête `Retry-After: 30`, pas de `details`) |
 | 422 | `AMOUNT_MISMATCH` | Montant de virement reçu ≠ montant dû |
 | 429 | `RATE_LIMITED` | Trop de requêtes (en-tête `Retry-After`) |
 | 500 | `INTERNAL_ERROR` | Jamais de stack ni de détail technique |
@@ -201,7 +201,7 @@ type EventAdmin = { id; orgId; title; description: string|null; venue: string|nu
 | `GET /orgs/:orgId/events` | MANAGER+ | `page, pageSize, status?` | 200 page `EventAdmin` |
 | `POST /orgs/:orgId/events` | MANAGER+ | `{ title (1–150), description? (≤5000), venue?, address?, isOnline, startsAt, endsAt (> startsAt), timezone, salesStartAt, salesEndAt (≤ endsAt), overrides? }` | 201 `EventAdmin` (DRAFT) |
 | `GET /orgs/:orgId/events/:eventId` | MANAGER+ | — | 200 `EventAdmin` |
-| `PATCH /orgs/:orgId/events/:eventId` | MANAGER+ | champs ci-dessus, tous optionnels ; `overrides` partiel ; `rescheduleReason` (1–500) requis si report | 200 `EventAdmin` · 409 si `CANCELLED` · 403 si report par un MANAGER · **403 si un MANAGER modifie une surcharge financière** · 400 si `rescheduleReason` manquant |
+| `PATCH /orgs/:orgId/events/:eventId` | MANAGER+ | champs ci-dessus, tous optionnels ; `overrides` partiel ; `rescheduleReason` (1–500) requis si report | 200 `EventAdmin` · 409 si `CANCELLED` · 403 si report par un MANAGER · **403 si un MANAGER modifie une surcharge financière** (renvoyer une valeur inchangée est accepté) · 409 `CONFLICT` si un report précédent est encore en cours de traitement · 400 si `rescheduleReason` manquant |
 
 **Surcharges financières réservées à l'OWNER** (création et modification) : `refundPercent`, `serviceFeeFixedCents`, `serviceFeeBasisPoints`, `transferEnabled`, `selfCancellationEnabled`, `cancellationDeadlineHours`. Un MANAGER garde les surcharges opérationnelles (`cardHoldMinutes`, `transferHoldHours`, `maxPerOrder`, `maxPerUser`, `waitlistOfferMinutes`, `waitlistEnabled`). Toute modification d'une surcharge financière ⇒ AuditLog avant/après champ par champ + mail à tous les OWNER.
 
@@ -305,7 +305,7 @@ Le compteur est remis à 0 à chaque passage réussi ; les erreurs transitoires 
 - En-têtes de sécurité via helmet ; CORS : origine `FRONT_URL` uniquement, `credentials: true`.
 
 ## 11. Historique
-- **1.17** (2026-10-07) : `GET /admin/stuck-orders` + `retry` ; `503 PAYMENT_PROVIDER_UNAVAILABLE` ; surcharges financières réservées à l'OWNER ; anti-gel de la liste d'attente (offres ≤ 360 min, sortie après 2 offres expirées) ; `mark-done` carte vérifié auprès du PSP ; remboursements orphelins visibles par l'admin plateforme (suite au rapport d'audit du 2026-10-06).
+- **1.17** (2026-10-07) : report concurrent ⇒ 409 ; `GET /admin/stuck-orders` + `retry` ; `503 PAYMENT_PROVIDER_UNAVAILABLE` ; surcharges financières réservées à l'OWNER ; anti-gel de la liste d'attente (offres ≤ 360 min, sortie après 2 offres expirées) ; `mark-done` carte vérifié auprès du PSP ; remboursements orphelins visibles par l'admin plateforme (suite au rapport d'audit du 2026-10-06).
 - **1.16** (2026-10-06) : `Order.paymentInProgress`.
 - **1.15** (2026-10-06) : PSP — échéance des sessions, consultation de session (rapprochement), réessais de webhook, débit limité sur signatures invalides seulement ; paiement tardif soumis à toutes les règles ; droits du report étendus aux commandes non payées ; fenêtre de contrôle `startsAt − 12 h` → `endsAt + 24 h`.
 - **1.14** (2026-10-06) : annulation d'événement asynchrone par lots (`cancellationPendingOrders`), refusée après le début ; règles d'équité de la liste d'attente ; plafond revérifié à l'acceptation ; mail de remboursement de virement « à venir ».
