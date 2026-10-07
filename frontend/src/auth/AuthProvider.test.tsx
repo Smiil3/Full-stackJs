@@ -130,9 +130,13 @@ describe('AuthProvider', () => {
     injectFault({ route: 'POST /auth/refresh', status: 0, code: 'INTERNAL_ERROR', network: true });
     const { auth } = setup();
     expect(await screen.findByText('offline:-')).toBeInTheDocument();
-    injectFault({ route: 'POST /auth/refresh', status: 403, code: 'CSRF_CHECK_FAILED' });
-    window.dispatchEvent(new Event('online'));
-    expect(await screen.findByText('anonymous:-')).toBeInTheDocument();
+    injectFault({ route: 'POST /auth/refresh', status: 403, code: 'CSRF_CHECK_FAILED', times: 50 });
+    // L'écouteur « online » est posé par un effet APRÈS l'affichage : l'événement est redéclenché
+    // jusqu'à sa prise en compte (sous charge, le premier peut précéder l'écouteur).
+    await waitFor(() => {
+      window.dispatchEvent(new Event('online'));
+      expect(screen.getByText('anonymous:-')).toBeInTheDocument();
+    });
     expect(auth().notice).toBe('csrf');
   });
 
