@@ -1,6 +1,6 @@
 import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { delay, http } from 'msw';
+import { delay, http, HttpResponse } from 'msw';
 import { describe, expect, it, vi } from 'vitest';
 import { __resetClientForTests, apiRequest, login, logout } from '../../api/client';
 import type { Order } from '../../api/types';
@@ -9,7 +9,7 @@ import { markPaid, offerToWaitlist } from '../../mocks/domain';
 import { server } from '../../mocks/server';
 import { DEMO_PASSWORD, IDS } from '../../mocks/state';
 import { loadTickets } from '../../offline/tickets';
-import { BFCACHE_MASK_MAX_MS } from '../../auth/AuthProvider';
+import { BFCACHE_CHECK_MAX_MS } from '../../auth/AuthProvider';
 import { BUYER, expectLoggedOut, openMenu, renderApp } from '../../test/renderApp';
 
 async function buy(qty = 2) {
@@ -117,7 +117,7 @@ describe('mes billets', () => {
     expect(screen.queryByRole('img', { name: /QR code/ })).toBeNull();
   });
 
-  it('B17-f : revérification lente ⇒ masquage levé après 3 s (contenu jamais démonté)', async () => {
+  it('B\'3 : revérification lente ⇒ masque maintenu, « session non vérifiée » après 10 s, levé à la réponse du serveur (jamais démonté)', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] });
     try {
       await buy(1);
@@ -125,18 +125,38 @@ describe('mes billets', () => {
       const heading = await screen.findByRole('heading', { name: 'Mes billets' });
       server.use(
         http.post('*/api/v1/auth/refresh', async () => {
-          await delay(10_000); // réseau très lent
+          await delay(12_000); // réseau très lent (sous le délai client de 15 s), puis réponse du serveur simulé
         }),
       );
       window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
       await screen.findByText('Vérification de la session…', { selector: 'p.page' });
-      await act(() => vi.advanceTimersByTimeAsync(BFCACHE_MASK_MAX_MS));
+      await act(() => vi.advanceTimersByTimeAsync(3000)); // l'ancien plafond : plus de levée sur minuteur
+      expect(heading.closest('[aria-hidden="true"]')).not.toBeNull();
+      await act(() => vi.advanceTimersByTimeAsync(BFCACHE_CHECK_MAX_MS - 3000));
+      expect(screen.getByRole('alert')).toHaveTextContent('Session non vérifiée');
       expect(screen.queryByText('Vérification de la session…', { selector: 'p.page' })).toBeNull();
-      expect(heading.closest('[aria-hidden="true"]')).toBeNull(); // de nouveau visible
+      expect(heading.closest('[aria-hidden="true"]')).not.toBeNull(); // toujours masqué
+      await act(() => vi.advanceTimersByTimeAsync(2000)); // le serveur répond enfin (même compte)
+      await waitFor(() => expect(heading.closest('[aria-hidden="true"]')).toBeNull());
+      expect(screen.queryByText(/Session non vérifiée/)).toBeNull();
       expect(screen.getByRole('heading', { name: 'Mes billets' })).toBe(heading); // même nœud : jamais démonté
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('B\'3 : serveur injoignable au retour du cache ⇒ état explicite, contenu masqué ; « Réessayer » une fois le réseau revenu ⇒ affiché', async () => {
+    await buy(1);
+    await renderApp('/me/tickets');
+    const heading = await screen.findByRole('heading', { name: 'Mes billets' });
+    server.use(http.post('*/api/v1/auth/refresh', () => HttpResponse.error()));
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Session non vérifiée');
+    expect(heading.closest('[aria-hidden="true"]')).not.toBeNull();
+    server.resetHandlers(); // réseau revenu
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Réessayer' }));
+    await waitFor(() => expect(heading.closest('[aria-hidden="true"]')).toBeNull());
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('F6-M3 : retour du cache avant/arrière après fin de session ⇒ plus aucun billet affiché', async () => {
