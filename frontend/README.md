@@ -53,6 +53,7 @@ Uniquement des variables `VITE_*` **non sensibles** : tout ce qu'elles contienne
 | Variable | Défaut | Rôle |
 |---|---|---|
 | `VITE_API_BASE_URL` | `/api/v1` | base de l'API, **chemin relatif obligatoire** (même origine) ; une URL absolue fait échouer le démarrage |
+| `VITE_TICKET_PUBLIC_KEY_JWK` | — | clé **publique** Ed25519 des billets (JWK `{"kty":"OKP","crv":"Ed25519","x":…}`), épinglée pour le mode secours : une liste signée par une autre clé est refusée. **Obligatoire en production** (build et démarrage refusés sinon). Obtention : `npm run ticket-key` (lit `../backend/keys/ticket-signing-public.pem`, ou un chemin passé après `--`) |
 | `VITE_PSP_ORIGIN` | `http://localhost:4001` en dev | seule origine externe vers laquelle le front redirige (paiement) ; **https obligatoire en production** : sinon `npm run build` est refusé (et l'application refuserait de démarrer) |
 
 Le mot de passe des comptes de démonstration pour les tests de bout en bout est lu dans
@@ -129,7 +130,7 @@ Détails et limites : [`../SECURITY.md`](../SECURITY.md) et [`DECISIONS.md`](./D
 
 ## Déploiement
 
-1. `VITE_PSP_ORIGIN=https://<prestataire> npm run build` (Node ≥ 24) ⇒ `dist/` statique.
+1. `VITE_PSP_ORIGIN=https://<prestataire> VITE_TICKET_PUBLIC_KEY_JWK="$(npm run -s ticket-key -- <clé publique PEM>)" npm run build` (Node ≥ 24) ⇒ `dist/` statique.
 2. Servir `dist/` avec la configuration [`deploy/nginx.conf.example`](./deploy/nginx.conf.example) :
    même origine pour l'API (`/api/` → backend), TLS 1.2/1.3, en-têtes de
    [`deploy/nuits-security-headers.conf`](./deploy/nuits-security-headers.conf) (à copier dans

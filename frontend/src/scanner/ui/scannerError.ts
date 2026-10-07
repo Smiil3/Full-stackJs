@@ -3,10 +3,12 @@ import { AccessRevokedError, ClockRollbackError, EventClosedError, EventNotAvail
 import { OfflineDisabledError, OtherEventBlockedError } from '../snapshot';
 import { SyncForbiddenError } from '../sync';
 import { SessionChangedError } from '../db';
+import { UntrustedKeyError } from '../pinnedKey';
 
 export function scannerErrorMessage(e: unknown): string {
   if (e instanceof EventNotAvailableError) return 'Événement non disponible au contrôle (contrôle ouvert de 12 h avant le début à 24 h après la fin, événement publié).';
   if (e instanceof EventClosedError) return 'Le contrôle de cet événement est terminé (plus de 24 h après la fin) : contrôle local refusé.';
+  if (e instanceof UntrustedKeyError) return 'La clé de signature des billets ne correspond pas à celle de l’application : liste refusée, contrôle local impossible. Contrôlez en ligne et prévenez l’organisateur.';
   if (e instanceof ClockRollbackError) return 'L’heure de cet appareil a été reculée : contrôle local refusé. Remettez l’appareil à l’heure ou contrôlez en ligne.';
   if (e instanceof StaleSnapshotError) return 'Liste hors-ligne de plus de 24 h : mettez-la à jour avant de contrôler.';
   if (e instanceof NoSnapshotError) return 'La liste hors-ligne de cet événement n’est pas préparée sur cet appareil.';

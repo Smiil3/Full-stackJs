@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { assertPspConfig } from './lib/pspRedirect';
+import { assertTicketKeyConfig } from './scanner/pinnedKey';
 import './styles/fonts.css';
 import './styles/global.css';
 
@@ -17,6 +18,7 @@ async function bootstrap() {
   try {
     // Configuration de déploiement vérifiée au démarrage (échec explicite plutôt qu'un comportement dégradé).
     assertPspConfig({ pspOrigin: import.meta.env.VITE_PSP_ORIGIN, isProd: import.meta.env.PROD });
+    assertTicketKeyConfig({ raw: import.meta.env.VITE_TICKET_PUBLIC_KEY_JWK, isProd: import.meta.env.PROD });
   } catch (e) {
     root.textContent = 'Application mal configurée. Contactez l’administrateur du site.';
     throw e;

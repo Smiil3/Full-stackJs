@@ -14,6 +14,7 @@ import { isApiError } from '../api/errors';
 import { serverNow } from '../api/serverClock';
 import type { ScanResponse } from '../api/types';
 import { abortTx, assertGeneration, currentGeneration, deviceId, getDeviceValue, getSnapshotMeta, purgeEvent, SCAN_LOCK, scannerDb, setDeviceValue, withLock } from './db';
+import { trustedKeyFor } from './pinnedKey';
 import { parseQr, verifySignature } from './verify';
 
 /** Budget total d'une vérification en ligne (mode par défaut). */
@@ -252,7 +253,7 @@ export async function localScan(args: { orgId: string; eventId: string; qrPayloa
     if ((await checkedLocalNow(savedAt)) - savedAt > MAX_SNAPSHOT_AGE_MS) throw new StaleSnapshotError();
     const mode = { offline: true as const, reason: args.reason };
     const parsed = parseQr(args.qrPayload);
-    if (!parsed || !(await verifySignature(parsed, meta.publicKeyJwk))) return { kind: 'INVALID', ...mode };
+    if (!parsed || !(await verifySignature(parsed, trustedKeyFor(meta.publicKeyJwk)))) return { kind: 'INVALID', ...mode };
     if (parsed.eventId !== args.eventId) return { kind: 'WRONG_EVENT', ...mode };
 
     const db = await scannerDb();

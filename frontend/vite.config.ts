@@ -33,7 +33,8 @@ export default defineConfig(({ mode, command }) => {
   // Build de production : l'origine du prestataire de paiement doit être en https (sinon, l'application
   // refuserait de démarrer une fois déployée — autant échouer dès le build).
   if (mode === 'production' && command === 'build') {
-    const psp = loadEnv(mode, fileURLToPath(new URL('.', import.meta.url)), 'VITE_').VITE_PSP_ORIGIN ?? '';
+    const env = loadEnv(mode, fileURLToPath(new URL('.', import.meta.url)), 'VITE_');
+    const psp = env.VITE_PSP_ORIGIN ?? '';
     let ok = false;
     try {
       const u = new URL(psp);
@@ -42,6 +43,16 @@ export default defineConfig(({ mode, command }) => {
       ok = false;
     }
     if (!ok) throw new Error('Build refusé : VITE_PSP_ORIGIN doit être l’origine https du prestataire de paiement (ex. https://pay.psp.example).');
+    // Clé publique des billets épinglée (mode secours, audit B14) : obligatoire et valide en production.
+    const ticketKey = env.VITE_TICKET_PUBLIC_KEY_JWK ?? '';
+    let keyOk = false;
+    try {
+      const k = JSON.parse(ticketKey) as Record<string, unknown>;
+      keyOk = k.kty === 'OKP' && k.crv === 'Ed25519' && typeof k.x === 'string' && /^[A-Za-z0-9_-]{43}$/.test(k.x) && Object.keys(k).length === 3;
+    } catch {
+      keyOk = false;
+    }
+    if (!keyOk) throw new Error('Build refusé : VITE_TICKET_PUBLIC_KEY_JWK doit contenir la clé publique Ed25519 des billets (npm run ticket-key).');
   }
   return {
   define: {

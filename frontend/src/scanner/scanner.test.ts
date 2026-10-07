@@ -334,6 +334,34 @@ describe('mode secours hors-ligne', () => {
   });
 });
 
+describe('clé publique épinglée (audit B14)', () => {
+  afterEach(async () => {
+    const { __setPinnedTicketKey } = await import('./pinnedKey');
+    __setPinnedTicketKey(null);
+  });
+
+  it('liste signée par une autre clé que la clé épinglée ⇒ refusée, rien n’est enregistré', async () => {
+    const { __setPinnedTicketKey, UntrustedKeyError } = await import('./pinnedKey');
+    await ticketsFor(1);
+    __setPinnedTicketKey({ kty: 'OKP', crv: 'Ed25519', x: 'BBBBxYmL0SJe6AbpQgVy6DOurnhSVLQv0CXQFgslXDE' });
+    await expect(prepareEvent(ORG, EVENT)).rejects.toBeInstanceOf(UntrustedKeyError);
+    expect(await getSnapshotMeta(IDS.eventConcert)).toBeUndefined();
+  });
+
+  it('clé remplacée dans IndexedDB ⇒ jamais utilisée : contrôle local refusé', async () => {
+    const { __setPinnedTicketKey, UntrustedKeyError } = await import('./pinnedKey');
+    const { mockPublicKeyJwk } = await import('../mocks/crypto');
+    const [qr] = await ticketsFor(1);
+    __setPinnedTicketKey(await mockPublicKeyJwk()); // clé réelle des billets
+    await prepareEvent(ORG, EVENT);
+    expect((await localScan(scanArgs(qr ?? ''))).kind).toBe('OK');
+    const db = await scannerDb();
+    const meta = await db.get('snapshots', IDS.eventConcert);
+    if (meta) await db.put('snapshots', { ...meta, publicKeyJwk: { kty: 'OKP', crv: 'Ed25519', x: 'BBBBxYmL0SJe6AbpQgVy6DOurnhSVLQv0CXQFgslXDE' } });
+    await expect(localScan(scanArgs(qr ?? ''))).rejects.toBeInstanceOf(UntrustedKeyError);
+  });
+});
+
 describe('file de synchronisation (revue F4.1)', () => {
   it('H1 : fin de session ⇒ données personnelles purgées, FILE conservée ; même compte reconnecté ⇒ transmise', async () => {
     const [qr] = await ticketsFor(1);

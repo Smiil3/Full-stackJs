@@ -17,7 +17,7 @@ export default defineConfig({
   use: { baseURL: 'http://localhost:5173', locale: 'fr-FR', timezoneId: 'Europe/Paris', serviceWorkers: 'allow', trace: 'retain-on-failure' },
   projects: [{ name: 'mobile', use: { ...devices['Pixel 7'] } }],
   webServer: {
-    command: 'VITE_PSP_ORIGIN=https://psp.invalid npm run build && npx vite preview --port 5173 --strictPort',
+    command: 'VITE_TICKET_PUBLIC_KEY_JWK="$(node scripts/ticket-public-jwk.mjs)" VITE_PSP_ORIGIN=https://psp.invalid npm run build && npx vite preview --port 5173 --strictPort',
     url: 'http://localhost:5173',
     reuseExistingServer: false,
     timeout: 180_000,
