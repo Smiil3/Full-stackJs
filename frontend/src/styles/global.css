@@ -98,3 +98,7 @@ ol.stack { margin: 0; padding-left: 1.25rem; }
 /* Bouton désactivé : toujours l'aspect neutre lisible, même pour une variante colorée (danger, secondaire) */
 .btn.btn--danger:disabled,
 .btn.btn--secondary:disabled { background: var(--color-surface-2); color: var(--color-muted); border-color: transparent; filter: none; }
+
+/* Retour depuis le cache du navigateur : contenu masqué sans être démonté (audit B17-f) */
+.session-visible { display: contents; }
+.session-masked { display: none; }

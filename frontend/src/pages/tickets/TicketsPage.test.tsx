@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { delay, http } from 'msw';
 import { describe, expect, it, vi } from 'vitest';
@@ -9,6 +9,7 @@ import { markPaid, offerToWaitlist } from '../../mocks/domain';
 import { server } from '../../mocks/server';
 import { DEMO_PASSWORD, IDS } from '../../mocks/state';
 import { loadTickets } from '../../offline/tickets';
+import { BFCACHE_MASK_MAX_MS } from '../../auth/AuthProvider';
 import { BUYER, expectLoggedOut, openMenu, renderApp } from '../../test/renderApp';
 
 async function buy(qty = 2) {
@@ -93,11 +94,36 @@ describe('mes billets', () => {
     expect(screen.getByRole('img', { name: /QR code du billet Fosse/ })).toBeInTheDocument();
     mock.db.refreshCookie = { token: 'autre-onglet', userId: IDS.userOwner }; // un autre compte s'est connecté
     slowRefresh();
+    const heading = screen.getByRole('heading', { name: 'Mes billets' });
     window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
-    expect(await screen.findByText('Vérification de la session…')).toBeInTheDocument();
+    expect(await screen.findByText('Vérification de la session…', { selector: 'p.page' })).toBeInTheDocument();
     expect(screen.queryByRole('img', { name: /QR code/ })).toBeNull(); // masqué immédiatement
+    expect(heading).toBeInTheDocument(); // B17-f : masqué, pas démonté
+    expect(heading.closest('[aria-hidden="true"]')).not.toBeNull();
     expect(await screen.findByText(/Vous n’avez pas encore de billet/)).toBeInTheDocument(); // billets de l'autre compte : aucun
     expect(screen.queryByRole('img', { name: /QR code/ })).toBeNull();
+  });
+
+  it('B17-f : revérification lente ⇒ masquage levé après 3 s (contenu jamais démonté)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      await buy(1);
+      await renderApp('/me/tickets');
+      const heading = await screen.findByRole('heading', { name: 'Mes billets' });
+      server.use(
+        http.post('*/api/v1/auth/refresh', async () => {
+          await delay(10_000); // réseau très lent
+        }),
+      );
+      window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+      await screen.findByText('Vérification de la session…', { selector: 'p.page' });
+      await act(() => vi.advanceTimersByTimeAsync(BFCACHE_MASK_MAX_MS));
+      expect(screen.queryByText('Vérification de la session…', { selector: 'p.page' })).toBeNull();
+      expect(heading.closest('[aria-hidden="true"]')).toBeNull(); // de nouveau visible
+      expect(screen.getByRole('heading', { name: 'Mes billets' })).toBe(heading); // même nœud : jamais démonté
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('F6-M3 : retour du cache avant/arrière après fin de session ⇒ plus aucun billet affiché', async () => {
