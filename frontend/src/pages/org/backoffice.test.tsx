@@ -502,6 +502,49 @@ describe('back-office : ventes, commandes, export', () => {
   });
 });
 
+describe('admin plateforme : anomalies (v1.17 §8, audit B2 / B3)', () => {
+  it('remboursement sans commande : listé (payeur PSP), marqué effectué avec note', async () => {
+    const user = userEvent.setup();
+    const now = new Date().toISOString();
+    mock.db.refunds.push({ id: crypto.randomUUID(), orgId: null, orderId: null, eventId: null, pspEmail: 'payeur@example.test', amountCents: 2500, reason: 'UNEXPECTED_PAYMENT', method: 'TRANSFER', status: 'MANUAL_REQUIRED', note: null, createdAt: now, updatedAt: now });
+    await renderApp('/admin/anomalies', { as: 'admin@plateforme.test' });
+    const card = (await screen.findByText(/payeur@example\.test/)).closest('li') as HTMLElement;
+    expect(card).toHaveTextContent(/25,00\s€/);
+    expect(card).toHaveTextContent('Paiement inattendu');
+    await user.click(within(card).getByRole('button', { name: 'Marquer comme effectué' }));
+    const dialog = screen.getByRole('dialog', { name: 'Confirmer le remboursement effectué ?' });
+    await user.type(within(dialog).getByLabelText(/Note/), 'Virement retour le 07/10');
+    await user.click(within(dialog).getByRole('button', { name: 'Marquer comme effectué' }));
+    await waitFor(() => expect(mock.db.refunds.at(-1)?.status).toBe('SUCCEEDED'));
+  });
+
+  it('commande bloquée : listée, « Relancer » après confirmation remet le compteur à zéro', async () => {
+    const user = userEvent.setup();
+    await login('acheteur@example.test', DEMO_PASSWORD);
+    const order = await apiRequest<Order>('/orders', { method: 'POST', body: { eventId: IDS.eventConcert, paymentMethod: 'TRANSFER', items: [{ ticketTypeId: IDS.ttFosse, quantity: 1 }] }, headers: { 'Idempotency-Key': crypto.randomUUID() } });
+    await logout();
+    const stored = mock.db.orders.find((o) => o.id === order.id);
+    if (stored) stored.expireFailures = 5;
+    await renderApp('/admin/anomalies', { as: 'admin@plateforme.test' });
+    const card = (await screen.findByText(/5 échecs d’expiration/)).closest('li') as HTMLElement;
+    expect(card).toHaveTextContent('acheteur@example.test');
+    await user.click(within(card).getByRole('button', { name: 'Relancer' }));
+    const dialog = screen.getByRole('dialog', { name: 'Relancer l’expiration de cette commande ?' });
+    expect(dialog).toHaveTextContent('remis à zéro');
+    expect(stored?.expireFailures).toBe(5); // rien tant que non confirmé
+    await user.click(within(dialog).getByRole('button', { name: 'Relancer' }));
+    await waitFor(() => expect(stored?.expireFailures).toBe(0));
+    expect(await screen.findByText('Aucune commande bloquée.')).toBeInTheDocument();
+  });
+
+  it('non-admin ⇒ page introuvable', async () => {
+    await renderApp('/admin/anomalies', { as: OWNER });
+    expect(await screen.findByRole('heading', { level: 1 })).not.toHaveTextContent('Administration');
+    expect(screen.queryByRole('heading', { name: 'Remboursements sans commande' })).toBeNull();
+    expect(mock.db.calls.get('GET /admin/refunds') ?? 0).toBe(0); // aucune requête d'administration
+  });
+});
+
 describe('règles financières réservées au propriétaire (v1.17, audit M1)', () => {
   it('MANAGER : règles financières en lecture seule « réservé au propriétaire », règles opérationnelles modifiables ; OWNER : tout modifiable', async () => {
     const user = userEvent.setup();

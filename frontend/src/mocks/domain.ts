@@ -1,7 +1,7 @@
 /** Opérations métier du faux serveur (réservation, paiement, expiration, liste d'attente). */
-import { mock } from './core';
+import { fail, mock } from './core';
 import { signQr, randomPublicId } from './crypto';
-import { effectiveRules, type MockOrder, type MockTicketType } from './state';
+import { effectiveRules, type MockOrder, type MockRefund, type MockTicketType } from './state';
 
 const MIN = 60_000;
 const HOUR = 3_600_000;
@@ -130,4 +130,14 @@ export function transferReference(): string {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const bytes = crypto.getRandomValues(new Uint8Array(8));
   return `NG-${[...bytes].map((b) => alphabet[b % alphabet.length]).join('')}`;
+}
+
+/** Marquage manuel d'un remboursement (v1.17 §7.3 bis) : pour une carte, le prestataire est interrogé d'abord. */
+export function markRefundDone(r: MockRefund, note: string): void {
+  if (r.status !== 'MANUAL_REQUIRED' && r.status !== 'FAILED') fail(409, 'INVALID_STATE', 'Remboursement déjà traité');
+  if (r.method === 'CARD' && r.pspState === 'unreachable') fail(503, 'PAYMENT_PROVIDER_UNAVAILABLE', 'Prestataire injoignable', undefined, { 'Retry-After': '5' });
+  if (r.method === 'CARD' && r.pspState === 'pending') fail(409, 'INVALID_STATE', 'Remboursement en cours chez le prestataire');
+  r.status = 'SUCCEEDED';
+  r.note = note;
+  r.updatedAt = new Date().toISOString();
 }

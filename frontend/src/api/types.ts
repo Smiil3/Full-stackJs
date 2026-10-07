@@ -394,6 +394,20 @@ export type RefundAdmin = {
   updatedAt: IsoDateTime;
 };
 export type RefundsQuery = PageQuery & { status?: RefundStatus; eventId?: Uuid };
+/** v1.17 §8 : commande écartée de l'expiration automatique après 5 échecs (admin plateforme). */
+export type StuckOrder = {
+  id: Uuid;
+  orgId: Uuid;
+  eventId: Uuid;
+  eventTitle: string;
+  buyerEmail: string;
+  status: 'PENDING_PAYMENT' | 'AWAITING_TRANSFER';
+  paymentMethod: PaymentMethod;
+  totalCents: number;
+  expiresAt: IsoDateTime;
+  expireFailures: number;
+  createdAt: IsoDateTime;
+};
 
 // ---------- Contrôle d'accès ----------
 /** GET /orgs/:orgId/checkin/events (SCANNER+) : sans aucun chiffre de vente (v1.7). */

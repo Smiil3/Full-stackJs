@@ -4,7 +4,7 @@ import { ORDER_STATUSES } from '../../api/types';
 import { base64urlToBytes } from '../../lib/base64url';
 import { audit, control, fail, json, mock, noContent, notFound, param, paginate, readBody, readQuery, requireOrgRole, route, type Validator } from '../core';
 import { mockPublicKeyJwk } from '../crypto';
-import { cancelOrder, expireDueOrders, markPaid } from '../domain';
+import { cancelOrder, expireDueOrders, markPaid, markRefundDone } from '../domain';
 import { toEventAdmin, toMember, toOrderAdmin, toRefund, toSettings, toTicketTypeAdmin, typesOf } from '../serializers';
 import { maskIban, NO_OVERRIDES, remaining, type MockEvent, type MockSettings } from '../state';
 
@@ -590,13 +590,7 @@ export const orgHandlers = [
     const v = await readBody(request, ['note']);
     const note = v.str('note', { min: 1, max: 500 });
     v.done();
-    if (r.status !== 'MANUAL_REQUIRED' && r.status !== 'FAILED') fail(409, 'INVALID_STATE', 'Remboursement déjà traité');
-    // v1.17 §7.3 bis : pour une carte, le prestataire est interrogé d'abord.
-    if (r.method === 'CARD' && r.pspState === 'unreachable') fail(503, 'PAYMENT_PROVIDER_UNAVAILABLE', 'Prestataire injoignable', undefined, { 'Retry-After': '5' });
-    if (r.method === 'CARD' && r.pspState === 'pending') fail(409, 'INVALID_STATE', 'Remboursement en cours chez le prestataire');
-    r.status = 'SUCCEEDED';
-    r.note = note ?? null;
-    r.updatedAt = new Date().toISOString();
+    markRefundDone(r, note ?? '');
     audit(orgId, actor, 'refund.markDone', `refund:${r.id}`, { amountCents: r.amountCents });
     return json(toRefund(r));
   }),

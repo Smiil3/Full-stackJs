@@ -6,6 +6,7 @@ import { Field } from '../../components/Field';
 import { PageLoader } from '../../components/PageLoader';
 import { slugify } from '../../lib/slug';
 import { formatDate, userTimeZone } from '../../lib/time';
+import { AdminNav } from './AdminNav';
 
 export function AdminOrgsPage() {
   const [page, setPage] = useState(1);
@@ -51,6 +52,7 @@ export function AdminOrgsPage() {
   return (
     <section className="page">
       <h1>Administration — collectifs</h1>
+      <AdminNav />
       {isPending ? <PageLoader /> : null}
       <ErrorAlert error={error} />
       <ul className="list-reset stack">

@@ -17,6 +17,7 @@ import { EventPage } from './pages/public/EventPage';
 import { EventsPage } from './pages/public/EventsPage';
 import { TicketsPage } from './pages/tickets/TicketsPage';
 import { WaitlistOfferPage } from './pages/tickets/WaitlistOfferPage';
+import { AdminAnomaliesPage } from './pages/admin/AdminAnomaliesPage';
 import { AdminOrgsPage } from './pages/admin/AdminOrgsPage';
 import { AuditPage } from './pages/org/AuditPage';
 import { DashboardPage } from './pages/org/DashboardPage';
@@ -103,6 +104,7 @@ export const routes: RouteObject[] = [
         ],
       },
       { path: 'admin', element: <RequireAuth><RequirePlatformAdmin><AdminOrgsPage /></RequirePlatformAdmin></RequireAuth> },
+      { path: 'admin/anomalies', element: <RequireAuth><RequirePlatformAdmin><AdminAnomaliesPage /></RequirePlatformAdmin></RequireAuth> },
       ...mockRoutes,
       { path: '*', element: <NotFoundPage /> },
     ],

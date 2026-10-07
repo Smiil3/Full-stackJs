@@ -81,6 +81,8 @@ export type MockOrder = {
   transferReference: string | null;
   idempotencyKey: string;
   bodyFingerprint: string;
+  /** v1.17 : échecs consécutifs de l'expiration automatique (≥ 5 ⇒ écartée, visible par l'admin). */
+  expireFailures?: number;
   /** Session de paiement ouverte chez le PSP simulé (contrat v1.16). */
   paymentSessionOpen?: boolean;
 };
@@ -106,9 +108,12 @@ export type MockWaitlist = {
 };
 export type MockRefund = {
   id: string;
-  orgId: string;
-  orderId: string;
-  eventId: string;
+  /** null : remboursement sans commande rattachée (paiement inattendu, v1.17). */
+  orgId: string | null;
+  orderId: string | null;
+  eventId: string | null;
+  /** Email connu du prestataire pour un paiement sans commande. */
+  pspEmail?: string;
   amountCents: number;
   reason: 'SELF_CANCELLATION' | 'EVENT_CANCELLED' | 'LATE_PAYMENT' | 'DUPLICATE_PAYMENT' | 'UNEXPECTED_PAYMENT';
   method: PaymentMethod;
