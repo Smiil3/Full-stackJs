@@ -9,18 +9,22 @@ import { MY_TICKETS_MAX } from '../../config/events.js';
  * Ordre : événements à venir (du plus proche au plus lointain), puis passés (du plus récent au plus ancien).
  */
 export async function myTickets(userId: string) {
-  const tickets = await getDb().ticket.findMany({
-    where: { orderItem: { order: { userId } } },
-    include: {
-      orderItem: { select: { orderId: true, ticketType: { select: { name: true } } } },
-      event: { select: { id: true, title: true, venue: true, isOnline: true, startsAt: true, endsAt: true, timezone: true } },
-    },
-    orderBy: [{ event: { startsAt: 'asc' } }, { createdAt: 'asc' }, { seq: 'asc' }],
-    take: MY_TICKETS_MAX,
+  const db = getDb();
+  const include = {
+    orderItem: { select: { orderId: true, ticketType: { select: { name: true } } } },
+    event: { select: { id: true, title: true, venue: true, isOnline: true, startsAt: true, endsAt: true, timezone: true } },
+  } as const;
+  const now = clock.now();
+  // Deux requêtes : les billets à venir passent TOUJOURS en premier (un long historique ne masque plus les
+  // événements lointains) ; les passés complètent jusqu'au plafond, du plus récent au plus ancien.
+  const upcoming = await db.ticket.findMany({
+    where: { orderItem: { order: { userId } }, event: { endsAt: { gt: now } } },
+    include, orderBy: [{ event: { startsAt: 'asc' } }, { createdAt: 'asc' }, { seq: 'asc' }], take: MY_TICKETS_MAX,
   });
-  const now = clock.now().getTime();
-  const upcoming = tickets.filter((t) => t.event.endsAt.getTime() > now);
-  const past = tickets.filter((t) => t.event.endsAt.getTime() <= now).reverse();
+  const past = upcoming.length >= MY_TICKETS_MAX ? [] : await db.ticket.findMany({
+    where: { orderItem: { order: { userId } }, event: { endsAt: { lte: now } } },
+    include, orderBy: [{ event: { startsAt: 'desc' } }, { createdAt: 'desc' }, { seq: 'desc' }], take: MY_TICKETS_MAX - upcoming.length,
+  });
   return {
     items: [...upcoming, ...past].map((t) => ({
       id: t.id,

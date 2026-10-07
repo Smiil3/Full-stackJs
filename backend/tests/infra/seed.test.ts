@@ -1,10 +1,17 @@
 import { randomUUID } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { getDb } from '../../src/lib/db.js';
 import { runSeed, SEED_ACCOUNTS } from '../../prisma/seedData.js';
 import { api } from '../helpers.js';
 
 const SEED_PWD = 'mot-de-passe-de-seed-pour-les-tests';
+
+beforeEach(() => {
+  process.env['ALLOW_SEED'] = '1';
+});
+afterEach(() => {
+  delete process.env['ALLOW_SEED'];
+});
 
 describe('seed de démonstration', () => {
   it('seed puis commande par virement : coordonnées bancaires déchiffrables par le service (bug 500)', async () => {
@@ -45,5 +52,25 @@ describe('seed de démonstration', () => {
     await api().post('/api/v1/auth/login').send({ email: 'owner@nuits.test', password: 'un-autre-mot-de-passe-de-seed' }).expect(200);
     const settings = await getDb().organizationSettings.findMany();
     expect(settings.every((s) => s.bankIbanEncrypted?.split('.').length === 5)).toBe(true);
+  });
+
+  it('sans ALLOW_SEED=1 ⇒ refus ; base contenant un compte hors démonstration ⇒ refus, rien n’est modifié (B13)', async () => {
+    delete process.env['ALLOW_SEED'];
+    await expect(runSeed()).rejects.toThrow(/ALLOW_SEED=1/);
+    expect(await getDb().user.count()).toBe(0);
+    process.env['ALLOW_SEED'] = '1';
+    process.env['SEED_PASSWORD'] = SEED_PWD;
+    try {
+      await runSeed();
+      const real = await getDb().user.create({ data: { email: 'vrai-client@exemple.fr', displayName: 'Client', passwordHash: 'x' } });
+      const adminBefore = await getDb().user.findUniqueOrThrow({ where: { email: 'admin@nuits-garonne.test' } });
+      await expect(runSeed()).rejects.toThrow(/hors démonstration/);
+      const adminAfter = await getDb().user.findUniqueOrThrow({ where: { email: 'admin@nuits-garonne.test' } });
+      expect(adminAfter.passwordHash).toBe(adminBefore.passwordHash);
+      expect(adminAfter.tokenVersion).toBe(adminBefore.tokenVersion);
+      expect(real.id).toBeTruthy();
+    } finally {
+      delete process.env['SEED_PASSWORD'];
+    }
   });
 });

@@ -118,7 +118,8 @@ export function checkResponse<T>(schema: Joi.Schema<T>, data: unknown): T {
     convert: false,
     presence: 'required',
   });
-  if (result.error) throw new ResponseContractError(result.error.details.map((d) => `${d.path.join('.')}: ${d.message}`));
+  // Chemins et types d'erreur Joi seulement : un message Joi peut citer la valeur fautive (donnée personnelle).
+  if (result.error) throw new ResponseContractError(result.error.details.map((d) => `${d.path.join('.')}: ${d.type}`));
   return result.value;
 }
 

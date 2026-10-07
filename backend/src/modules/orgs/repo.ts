@@ -5,9 +5,15 @@ export function findOrg(orgId: string) {
   return getDb().organization.findUnique({ where: { id: orgId } });
 }
 
+/**
+ * Réglages d'un collectif : simple LECTURE (créés avec le collectif ; migration de rattrapage pour l'historique).
+ * Filet sans contention : ligne absente ⇒ créée une fois (INSERT … ON CONFLICT DO NOTHING), jamais d'upsert en lecture.
+ */
 export async function getSettings(tx: Tx, orgId: string) {
-  // Toute organisation possède ses réglages ; on les crée par défaut si besoin (organisations historiques).
-  return tx.organizationSettings.upsert({ where: { orgId }, create: { orgId }, update: {} });
+  const found = await tx.organizationSettings.findUnique({ where: { orgId } });
+  if (found) return found;
+  await tx.organizationSettings.createMany({ data: [{ orgId }], skipDuplicates: true });
+  return tx.organizationSettings.findUniqueOrThrow({ where: { orgId } });
 }
 
 /** Verrouille la ligne de réglages pour une lecture-modification-écriture sérialisée. */

@@ -21,7 +21,9 @@ type StoredPayload = { v: 1; enc: string };
 export async function enqueueEmail<T extends MailTemplate>(tx: Tx, to: string, template: T, payload: TemplatePayloads[T]): Promise<void> {
   const id = randomUUID();
   const stored: StoredPayload = { v: 1, enc: encryptString(JSON.stringify(payload), getEnv().dataKeyring, aad.outboxPayload(id)) };
-  await tx.emailOutbox.create({ data: { id, to, template, payload: stored } });
+  // Horodatages posés par l'horloge applicative, celle qui les compare ensuite (une seule horloge).
+  const now = clock.now();
+  await tx.emailOutbox.create({ data: { id, to, template, payload: stored, createdAt: now, nextAttemptAt: now } });
 }
 
 export function decryptOutboxPayload(row: { id: string; payload: unknown }): Record<string, unknown> {

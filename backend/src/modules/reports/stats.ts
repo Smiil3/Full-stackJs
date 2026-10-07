@@ -6,7 +6,13 @@ import { iso } from '../../lib/schemas.js';
 
 const STATUSES: OrderStatus[] = ['PENDING_PAYMENT', 'AWAITING_TRANSFER', 'PAID', 'EXPIRED', 'CANCELLED', 'REFUNDED'];
 
-interface TypeRow { ticketTypeId: string; name: string; capacity: number; sold: number; held: number; checkedIn: number; grossCents: number; refundedCents: number }
+interface TypeRow { ticketTypeId: string; name: string; capacity: number; sold: number; held: number; checkedIn: number; grossCents: bigint; refundedCents: bigint }
+
+/** Sommes calculées en bigint côté SQL (pas de débordement au-delà de 21 M€), converties avec contrôle d'entier sûr. */
+function toCents(value: bigint): number {
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('Montant agrégé hors des entiers sûrs');
+  return Number(value);
+}
 
 /**
  * Chiffres temps réel d'un événement (MANAGER+), agrégés en SQL :
@@ -24,15 +30,15 @@ export async function eventStats(orgId: string, eventId: string) {
       (SELECT COUNT(*) FROM "tickets" k JOIN "order_items" oi ON oi."id" = k."orderItemId"
         WHERE oi."ticketTypeId" = t."id" AND k."status" = 'USED')::int AS "checkedIn",
       COALESCE((SELECT SUM(oi."unitPriceCents" * oi."quantity") FROM "order_items" oi JOIN "orders" o ON o."id" = oi."orderId"
-        WHERE oi."ticketTypeId" = t."id" AND o."status" IN ('PAID', 'REFUNDED') AND o."paidAt" IS NOT NULL), 0)::int AS "grossCents",
+        WHERE oi."ticketTypeId" = t."id" AND o."status" IN ('PAID', 'REFUNDED') AND o."paidAt" IS NOT NULL), 0)::bigint AS "grossCents",
       COALESCE((SELECT SUM(oi."refundedCents") FROM "order_items" oi JOIN "orders" o ON o."id" = oi."orderId"
-        WHERE oi."ticketTypeId" = t."id" AND o."status" IN ('PAID', 'REFUNDED') AND o."paidAt" IS NOT NULL), 0)::int AS "refundedCents"
+        WHERE oi."ticketTypeId" = t."id" AND o."status" IN ('PAID', 'REFUNDED') AND o."paidAt" IS NOT NULL), 0)::bigint AS "refundedCents"
     FROM "ticket_types" t WHERE t."eventId" = ${eventId}::uuid
     ORDER BY t."sortOrder", t."createdAt", t."id"`;
-  const fees = await db.$queryRaw<{ collected: number; refunded: number }[]>`
-    SELECT COALESCE(SUM(o."serviceFeeCents"), 0)::int AS collected,
+  const fees = await db.$queryRaw<{ collected: bigint; refunded: bigint }[]>`
+    SELECT COALESCE(SUM(o."serviceFeeCents"), 0)::bigint AS collected,
            COALESCE(SUM(GREATEST(0, COALESCE(o."refundAmountCents", 0)
-             - (SELECT COALESCE(SUM(oi."refundedCents"), 0) FROM "order_items" oi WHERE oi."orderId" = o."id"))), 0)::int AS refunded
+             - (SELECT COALESCE(SUM(oi."refundedCents"), 0) FROM "order_items" oi WHERE oi."orderId" = o."id"))), 0)::bigint AS refunded
     FROM "orders" o WHERE o."eventId" = ${eventId}::uuid AND o."status" IN ('PAID', 'REFUNDED') AND o."paidAt" IS NOT NULL`;
   const byStatus = await db.order.groupBy({ by: ['status'], where: { eventId }, _count: { _all: true } });
   const [waitlistWaiting, refundsToProcess] = await Promise.all([
@@ -42,10 +48,10 @@ export async function eventStats(orgId: string, eventId: string) {
   const ticketTypes = types.map((t) => ({
     ticketTypeId: t.ticketTypeId, name: t.name, capacity: t.capacity, sold: t.sold, held: t.held,
     remaining: t.capacity - t.sold - t.held, checkedIn: t.checkedIn,
-    revenueCents: t.grossCents - t.refundedCents, refundedCents: t.refundedCents,
+    revenueCents: toCents(t.grossCents - t.refundedCents), refundedCents: toCents(t.refundedCents),
   }));
   const sum = (k: 'capacity' | 'sold' | 'held' | 'remaining' | 'checkedIn' | 'revenueCents' | 'refundedCents') => ticketTypes.reduce((n, t) => n + t[k], 0);
-  const fee = fees[0] ?? { collected: 0, refunded: 0 };
+  const fee = { collected: toCents(fees[0]?.collected ?? 0n), refunded: toCents(fees[0]?.refunded ?? 0n) };
   const ordersByStatus = Object.fromEntries(STATUSES.map((s) => [s, byStatus.find((b) => b.status === s)?._count._all ?? 0])) as Record<OrderStatus, number>;
   return {
     eventId,

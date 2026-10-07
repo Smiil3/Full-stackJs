@@ -17,11 +17,14 @@ describe('garde de la base de test (B1.1 B3)', () => {
 });
 
 describe('garde du seed (B1.1 B4)', () => {
-  const ok = { nodeEnv: 'development', databaseUrl: 'postgresql://u:p@127.0.0.1:5432/nuits', seedPassword: '' };
+  const ok = { nodeEnv: 'development', databaseUrl: 'postgresql://u:p@127.0.0.1:5432/nuits', seedPassword: '', allowSeed: '1' };
   it('refuse la production, une base distante et un mot de passe court', () => {
     expect(() => { assertSeedAllowed({ ...ok, nodeEnv: 'production' }); }).toThrow(/production/);
     expect(() => { assertSeedAllowed({ ...ok, databaseUrl: 'postgresql://u:p@db.prod.example:5432/nuits' }); }).toThrow(/locale/);
     expect(() => { assertSeedAllowed({ ...ok, seedPassword: 'quinze-caracter' }); }).toThrow(/16/);
+    // Accord explicite de l'opérateur exigé (audit B13).
+    expect(() => { assertSeedAllowed({ ...ok, allowSeed: '' }); }).toThrow(/ALLOW_SEED=1/);
+    expect(() => { assertSeedAllowed({ ...ok, allowSeed: 'true' }); }).toThrow(/ALLOW_SEED=1/);
   });
   it('accepte une base locale avec mot de passe vide (aléatoire) ou ≥ 16 caractères', () => {
     expect(() => {

@@ -91,6 +91,12 @@ export function buildLimiters(config: RateLimitConfig) {
         return `user:${auth?.userId ?? 'anonyme'}`;
       },
     }),
+    exportPerUser: limiter(config, 'export-user', RATE_LIMITS.exportPerUser, {
+      keyGenerator: (_req, res) => {
+        const auth = (res.locals as { auth?: { userId?: string } }).auth;
+        return `user:${auth?.userId ?? 'anonyme'}`;
+      },
+    }),
   };
 }
 

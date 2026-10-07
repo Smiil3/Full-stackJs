@@ -3,8 +3,8 @@ const FORMULA_TRIGGERS = new Set(['=', '+', '-', '@', '\t', '\r', '\n']);
 
 /**
  * Cellule CSV sûre :
- * - neutralisation des formules (préfixe `'` si la cellule commence par = + - @ tabulation ou retour chariot) ;
- * - échappement : guillemets doublés, cellule entourée de guillemets si elle contient ; " ou un saut de ligne.
+ * - neutralisation des formules (préfixe `'` si la cellule commence, blancs de tête ignorés, par = + - @ tabulation ou retour chariot) ;
+ * - échappement : guillemets doublés, cellule entourée de guillemets si elle contient , ; " ou un saut de ligne.
  */
 export function csvCell(value: string | number | null | CsvIdentifier): string {
   // Identifiant technique (alphabet base64url / UUID) : exporté TEL QUEL — même chaîne partout (contrat §5).
@@ -14,10 +14,12 @@ export function csvCell(value: string | number | null | CsvIdentifier): string {
     return csvCell(value.identifier);
   }
   let text = value === null ? '' : String(value);
-  // Premier caractère OU premier caractère après des espaces de tête (certains tableurs les ignorent).
-  const head = text.replace(/^ +/, '').charAt(0);
+  // Premier caractère OU premier caractère après les blancs de tête (les tableurs les ignorent).
+  const head = text.trimStart().charAt(0);
   if (text.length > 0 && (FORMULA_TRIGGERS.has(text.charAt(0)) || FORMULA_TRIGGERS.has(head))) text = `'${text}`;
-  if (/[;"\r\n]/.test(text)) text = `"${text.replace(/"/g, '""')}"`;
+  // Citée si elle contient un séparateur POSSIBLE (`;` ou `,` selon les réglages régionaux du tableur), un
+  // guillemet ou un saut de ligne : « x,=1+1 » reste UNE cellule commençant par « x » (audit B10).
+  if (/[,;"\r\n]/.test(text)) text = `"${text.replace(/"/g, '""')}"`;
   return text;
 }
 

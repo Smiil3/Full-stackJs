@@ -152,6 +152,8 @@ export async function recordRefund(
   await tx.refund.create({
     data: {
       orderId: input.orderId,
+      createdAt: clock.now(),
+      nextAttemptAt: clock.now(),
       paymentId: input.paymentId,
       amountCents: amount,
       reason: input.reason,
