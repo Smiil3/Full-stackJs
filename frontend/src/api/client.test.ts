@@ -287,6 +287,28 @@ describe('cycle de session (revue F1.1 — H2, M1, M2, M3, M5)', () => {
   });
 });
 
+describe('déconnexion annoncée aux autres onglets (audit B17-a)', () => {
+  it('l’annonce part AVANT la réponse du serveur (réseau lent ou coupé) ; un onglet qui la reçoit ne la renvoie pas', async () => {
+    await login(BUYER, DEMO_PASSWORD);
+    let serverAnswered = false;
+    server.use(
+      http.post('*/api/v1/auth/logout', async () => {
+        await delay(200);
+        serverAnswered = true;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    const otherTab = new BroadcastChannel('nuits-auth');
+    const received: { type: string; serverAnswered: boolean }[] = [];
+    otherTab.onmessage = (e: MessageEvent<{ type: string }>) => received.push({ type: e.data.type, serverAnswered });
+    const done = logout();
+    await vi.waitFor(() => expect(received).toEqual([{ type: 'logout', serverAnswered: false }]));
+    await done;
+    expect(received).toHaveLength(1); // une seule annonce
+    otherTab.close();
+  });
+});
+
 describe('multi-onglets (revue F1.1 — M4)', () => {
   afterEach(() => {
     vi.unstubAllGlobals();

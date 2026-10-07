@@ -244,12 +244,17 @@ function acceptSession(session: AuthSession): void {
   emit({ type: 'session', session });
 }
 
-/** Vide l'état d'authentification local (sans appel réseau). */
-export function dropSession(reason: 'expired' | 'logout'): void {
+/**
+ * Vide l'état d'authentification local (sans appel réseau). Une déconnexion décidée DANS cet onglet est
+ * aussitôt annoncée aux autres onglets (audit B17-a) : ils oublient leur jeton sans attendre la réponse
+ * du serveur. `fromOtherTab` : déconnexion reçue d'un autre onglet, pas de nouvelle annonce.
+ */
+export function dropSession(reason: 'expired' | 'logout', opts: { fromOtherTab?: boolean } = {}): void {
   generation++;
   clearTimeout(proactiveTimer);
   clearAccessToken();
   emit({ type: reason });
+  if (reason === 'logout' && !opts.fromOtherTab) broadcast({ type: 'logout' });
 }
 
 // ---------------------------------------------------------------------------
@@ -282,7 +287,7 @@ if (channel) {
     const data = e.data;
     if (typeof data !== 'object' || data === null || !('type' in data)) return;
     if (data.type === 'logout') {
-      if (getAccessToken() !== null) dropSession('logout');
+      if (getAccessToken() !== null) dropSession('logout', { fromOtherTab: true });
     } else if (data.type === 'login') {
       refreshSession().catch(() => undefined);
     }
@@ -426,7 +431,6 @@ export async function logout(): Promise<void> {
     // PAS été révoqué : drapeau « déconnexion en attente », la session ne sera jamais restaurée.
     if (!(isApiError(e) && e.status === 401)) await setLogoutPending().catch(() => undefined);
   }
-  broadcast({ type: 'logout' });
 }
 
 /**
