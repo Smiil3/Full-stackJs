@@ -12,16 +12,15 @@ export function CameraScanner({ onCode, paused }: { onCode: (text: string) => bo
   const videoRef = useRef<HTMLVideoElement>(null);
   const onCodeRef = useRef(onCode);
   const pausedRef = useRef(paused);
-  // Même billet laissé devant la caméra : ignoré tant qu'il est lu et 3 s après la fermeture du résultat.
-  const filter = useRef(new SameCodeFilter());
+  // Même billet laissé devant la caméra : ignoré tant qu'il reste dans le champ (une seule instance,
+  // créée au premier rendu : audit n° 2, B'2).
+  const [filter] = useState(() => new SameCodeFilter());
   // Absence d'API caméra (navigateur ancien, contexte non sécurisé) : connue dès le premier rendu.
   const [error, setError] = useState<string | null>(() =>
     typeof navigator.mediaDevices === 'object' && typeof navigator.mediaDevices.getUserMedia === 'function' ? null : 'Caméra indisponible sur cet appareil : utilisez la saisie manuelle.',
   );
   useEffect(() => {
     onCodeRef.current = onCode;
-    // Fermeture du résultat (pause levée) : le délai de calme du même code repart de maintenant.
-    if (pausedRef.current && !paused) filter.current.closed(Date.now());
     pausedRef.current = paused;
   });
 
@@ -36,8 +35,8 @@ export function CameraScanner({ onCode, paused }: { onCode: (text: string) => bo
         if (!result) return;
         const text = result.getText();
         const now = Date.now();
-        if (!filter.current.seen(text, now, pausedRef.current)) return;
-        if (onCodeRef.current(text)) filter.current.accepted(text, now);
+        if (!filter.seen(text, now, pausedRef.current)) return;
+        if (onCodeRef.current(text)) filter.accepted(text, now);
       })
       .then((c) => {
         if (stopped) c.stop();
