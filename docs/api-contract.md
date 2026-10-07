@@ -281,6 +281,16 @@ type StuckOrder = { id; orgId; eventId; eventTitle; buyerEmail; status: 'PENDING
 ```
 Le compteur est remis à 0 à chaque passage réussi ; les erreurs transitoires (interblocage) sont rejouées avant de compter un échec.
 
+| Méthode & chemin | Auth | Query / Body | Réponse |
+|---|---|---|---|
+| `GET /admin/stuck-reschedules` | `isPlatformAdmin` | `page, pageSize` | 200 page `StuckReschedule`, triée par `createdAt` |
+| `POST /admin/stuck-reschedules/:rescheduleId/retry` | `isPlatformAdmin` | — | 200 `StuckReschedule` : compteurs d'échecs des commandes du report remis à 0 ⇒ reprise au prochain passage du worker (AuditLog `event.reschedule_retry`) · 404 si le report n'est pas bloqué |
+
+```ts
+type StuckReschedule = { id; orgId; eventId; eventTitle; oldStartsAt; newStartsAt; reason; createdAt; pendingOrders: number; failedOrders: number }
+```
+Un report est **bloqué** s'il n'est pas terminé ET (au moins une de ses commandes a échoué 5 fois, ou il a été lancé il y a plus de 15 min). Une commande dont l'application du report échoue 5 fois est écartée du traitement automatique jusqu'à relance.
+
 ## 9. Prestataire de paiement simulé (dev / test uniquement)
 
 - Le back crée une session chez le mock : `POST http://localhost:4001/v1/checkout-sessions` (en-tête `Authorization: Bearer <PSP_API_KEY>`) `{ orderId, amountCents, currency, successUrl, cancelUrl }` → `{ id, url }`.
@@ -305,7 +315,7 @@ Le compteur est remis à 0 à chaque passage réussi ; les erreurs transitoires 
 - En-têtes de sécurité via helmet ; CORS : origine `FRONT_URL` uniquement, `credentials: true`.
 
 ## 11. Historique
-- **1.18** (2026-10-07) : anti-gel élargi (offre quittée tardivement, commande d'offre non payée, pas d'offre < 15 min) ; `EventAdmin.reschedulePendingOrders` ; tableau §8 réparé (suite au rapport d'audit n° 2).
+- **1.18** (2026-10-07) : anti-gel élargi (offre quittée tardivement, commande d'offre non payée, pas d'offre < 15 min) ; `EventAdmin.reschedulePendingOrders`, `GET /admin/stuck-reschedules` + `retry` ; tableau §8 réparé (suite au rapport d'audit n° 2).
 - **1.17** (2026-10-07) : report concurrent ⇒ 409 ; `GET /admin/stuck-orders` + `retry` ; `503 PAYMENT_PROVIDER_UNAVAILABLE` ; surcharges financières réservées à l'OWNER ; anti-gel de la liste d'attente (offres ≤ 360 min, sortie après 2 offres expirées) ; `mark-done` carte vérifié auprès du PSP ; remboursements orphelins visibles par l'admin plateforme (suite au rapport d'audit du 2026-10-06).
 - **1.16** (2026-10-06) : `Order.paymentInProgress`.
 - **1.15** (2026-10-06) : PSP — échéance des sessions, consultation de session (rapprochement), réessais de webhook, débit limité sur signatures invalides seulement ; paiement tardif soumis à toutes les règles ; droits du report étendus aux commandes non payées ; fenêtre de contrôle `startsAt − 12 h` → `endsAt + 24 h`.
