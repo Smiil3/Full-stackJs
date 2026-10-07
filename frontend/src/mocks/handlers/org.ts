@@ -581,6 +581,9 @@ export const orgHandlers = [
     const note = v.str('note', { min: 1, max: 500 });
     v.done();
     if (r.status !== 'MANUAL_REQUIRED' && r.status !== 'FAILED') fail(409, 'INVALID_STATE', 'Remboursement déjà traité');
+    // v1.17 §7.3 bis : pour une carte, le prestataire est interrogé d'abord.
+    if (r.method === 'CARD' && r.pspState === 'unreachable') fail(503, 'PAYMENT_PROVIDER_UNAVAILABLE', 'Prestataire injoignable', undefined, { 'Retry-After': '5' });
+    if (r.method === 'CARD' && r.pspState === 'pending') fail(409, 'INVALID_STATE', 'Remboursement en cours chez le prestataire');
     r.status = 'SUCCEEDED';
     r.note = note ?? null;
     r.updatedAt = new Date().toISOString();

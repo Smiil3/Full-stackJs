@@ -215,7 +215,11 @@ export function useMarkRefundDone(orgId: string) {
     mutationFn: (v: { refundId: string; note: string }) => apiRequest<RefundAdmin>(`${org(orgId)}${apiPath`/refunds/${v.refundId}/mark-done`}`, { method: 'POST', body: { note: v.note } }),
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: ['org', orgId, 'refunds'] });
-      void qc.invalidateQueries({ queryKey: qk.orgEventStats(orgId, r.eventId) });
+      if (r.eventId) void qc.invalidateQueries({ queryKey: qk.orgEventStats(orgId, r.eventId) });
+    },
+    // Déjà traité / en cours chez le prestataire : la liste est relue (statut à jour).
+    onError: (e) => {
+      if (isApiError(e) && e.code === 'INVALID_STATE') void qc.invalidateQueries({ queryKey: ['org', orgId, 'refunds'] });
     },
   });
 }

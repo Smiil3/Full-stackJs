@@ -502,6 +502,46 @@ describe('back-office : ventes, commandes, export', () => {
   });
 });
 
+describe('remboursements carte vérifiés auprès du prestataire (v1.17, A2)', () => {
+  function cardRefund(pspState: 'pending' | 'unreachable') {
+    const now = new Date().toISOString();
+    const r = { id: crypto.randomUUID(), orgId: IDS.orgNuits, orderId: crypto.randomUUID(), eventId: IDS.eventConcert, amountCents: 1800, reason: 'SELF_CANCELLATION' as const, method: 'CARD' as const, status: 'FAILED' as const, note: null, createdAt: now, updatedAt: now, pspState };
+    mock.db.refunds.push(r);
+    return r;
+  }
+
+  it('503 au marquage ⇒ « rien n’a été modifié » + Réessayer après Retry-After, puis succès', async () => {
+    const user = userEvent.setup();
+    const r = cardRefund('unreachable');
+    await renderApp(`${ORG}/refunds`, { as: MANAGER });
+    const t0 = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(t0);
+    await user.click(await screen.findByRole('button', { name: 'Marquer comme effectué' }));
+    const dialog = screen.getByRole('dialog', { name: 'Confirmer le remboursement effectué ?' });
+    await user.type(within(dialog).getByLabelText(/Note/), 'Remboursé au guichet');
+    await user.click(within(dialog).getByRole('button', { name: 'Marquer comme effectué' }));
+    expect(await screen.findByText(/prestataire de paiement est momentanément injoignable/)).toHaveTextContent('Rien n’a été modifié');
+    expect(screen.getByRole('button', { name: /^Réessayer/ })).toBeDisabled();
+    delete (r as { pspState?: string }).pspState; // prestataire revenu
+    clock.mockReturnValue(t0 + 5_000);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Réessayer' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: 'Réessayer' }));
+    await waitFor(() => expect(mock.db.refunds.find((x) => x.id === r.id)?.status).toBe('SUCCEEDED'));
+    expect(mock.db.refunds.find((x) => x.id === r.id)?.note).toBe('Remboursé au guichet');
+  });
+
+  it('B5 : 409 sur une carte ⇒ « en cours chez le prestataire : ne remboursez pas à la main »', async () => {
+    const user = userEvent.setup();
+    cardRefund('pending');
+    await renderApp(`${ORG}/refunds`, { as: MANAGER });
+    await user.click(await screen.findByRole('button', { name: 'Marquer comme effectué' }));
+    const dialog = screen.getByRole('dialog', { name: 'Confirmer le remboursement effectué ?' });
+    await user.type(within(dialog).getByLabelText(/Note/), 'x');
+    await user.click(within(dialog).getByRole('button', { name: 'Marquer comme effectué' }));
+    expect(await screen.findByText(/en cours chez le prestataire de paiement, ou déjà effectué : ne remboursez pas à la main/)).toBeInTheDocument();
+  });
+});
+
 describe('membres, journal, admin plateforme', () => {
   it('membres : ajout d’un compte inconnu ⇒ message ; dernier propriétaire protégé (après confirmation)', async () => {
     const user = userEvent.setup();
@@ -693,7 +733,7 @@ describe('remboursements (contrat v1.10)', () => {
     await user.click(await screen.findByRole('button', { name: 'Marquer comme effectué' }));
     await user.type(screen.getByLabelText(/Note/), 'fait');
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Marquer comme effectué' }));
-    expect(await screen.findByText('Ce remboursement a déjà été traité.')).toBeInTheDocument();
+    expect(await screen.findByText('Ce remboursement a déjà été traité. La liste a été actualisée.')).toBeInTheDocument();
   });
 
   it('carte remboursée ⇒ SUCCEEDED, rien à faire ; aucune alerte au tableau de bord', async () => {

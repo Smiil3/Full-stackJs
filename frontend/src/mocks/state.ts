@@ -116,6 +116,8 @@ export type MockRefund = {
   note: string | null;
   createdAt: string;
   updatedAt: string;
+  /** Carte (v1.17) : état côté prestataire simulé, interrogé par mark-done. */
+  pspState?: 'succeeded' | 'pending' | 'unreachable';
 };
 export type MockCheckIn = { scanId: string; publicId: string | null; result: string; usedAt: string | null };
 

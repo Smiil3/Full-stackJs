@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { apiPath } from '../../api/client';
-import { errorMessage, isApiError } from '../../api/errors';
+import { isApiError } from '../../api/errors';
 import { useMarkRefundDone, useRefunds } from '../../api/hooks/org';
 import { REFUND_STATUSES, type RefundAdmin, type RefundStatus } from '../../api/types';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { ErrorAlert } from '../../components/ErrorAlert';
 import { PageLoader } from '../../components/PageLoader';
+import { retryAtFrom } from '../../lib/retryAfter';
+import { RefundMarkFeedback } from './RefundMarkFeedback';
 import { REFUND_REASON_LABELS, REFUND_STATUS_LABELS } from '../../lib/labels';
 import { lookup } from '../../lib/lookup';
 import { formatCents } from '../../lib/money';
@@ -28,6 +30,22 @@ export function RefundsPage() {
   const mark = useMarkRefundDone(orgId);
   const [target, setTarget] = useState<RefundAdmin | null>(null);
   const [note, setNote] = useState('');
+  // Dernière tentative (pour « Réessayer » après un 503 du prestataire).
+  const [attempt, setAttempt] = useState<{ refundId: string; note: string; method: RefundAdmin['method'] } | null>(null);
+  const [retryAt, setRetryAt] = useState<number | null>(null);
+  const send = (a: { refundId: string; note: string; method: RefundAdmin['method'] }) => {
+    setAttempt(a);
+    setRetryAt(null);
+    mark.mutate(
+      { refundId: a.refundId, note: a.note },
+      {
+        onError: (e) => {
+          if (isApiError(e) && e.code === 'PAYMENT_PROVIDER_UNAVAILABLE') setRetryAt(retryAtFrom(e.retryAfter));
+        },
+        onSettled: close,
+      },
+    );
+  };
   const tz = userTimeZone();
 
   const setFilter = (key: 'status' | 'eventId', value: string | undefined) => {
@@ -79,7 +97,7 @@ export function RefundsPage() {
               </span>
             </div>
             <p className="m-0">
-              {r.buyerEmail} — <Link to={apiPath`/org/${orgId}/events/${r.eventId}`}>{r.eventTitle}</Link>
+              {r.buyerEmail ?? 'Acheteur inconnu'} — {r.eventId ? <Link to={apiPath`/org/${orgId}/events/${r.eventId}`}>{r.eventTitle ?? 'Événement'}</Link> : 'sans événement'}
             </p>
             <p className="muted m-0">
               {lookup(REFUND_REASON_LABELS, r.reason) ?? 'Motif inconnu'} · {r.method === 'TRANSFER' ? 'payé par virement' : 'payé par carte'} · {formatDateTime(r.createdAt, tz)}
@@ -106,11 +124,7 @@ export function RefundsPage() {
           </button>
         </nav>
       ) : null}
-      {mark.error ? (
-        <p className="alert alert--error" role="alert">
-          {isApiError(mark.error) && mark.error.code === 'INVALID_STATE' ? 'Ce remboursement a déjà été traité.' : errorMessage(mark.error)}
-        </p>
-      ) : null}
+      <RefundMarkFeedback error={mark.error} method={attempt?.method ?? null} retryAt={retryAt} busy={mark.isPending} onRetry={() => attempt && send(attempt)} />
       <ConfirmDialog
         open={target !== null}
         title="Confirmer le remboursement effectué ?"
@@ -119,11 +133,11 @@ export function RefundsPage() {
         confirmDisabled={note.trim().length < 1 || note.length > 500}
         onCancel={close}
         onConfirm={() => {
-          if (target) mark.mutate({ refundId: target.id, note: note.trim() }, { onSettled: close });
+          if (target) send({ refundId: target.id, note: note.trim(), method: target.method });
         }}
       >
         <p>
-          Confirmez que vous avez bien remboursé <strong>{target ? formatCents(target.amountCents) : ''}</strong> à <strong>{target?.buyerEmail}</strong>. Cette déclaration est
+          Confirmez que vous avez bien remboursé <strong>{target ? formatCents(target.amountCents) : ''}</strong> à <strong>{target?.buyerEmail ?? 'l’acheteur'}</strong>. Cette déclaration est
           tracée dans le journal.
         </p>
         <div className="field">

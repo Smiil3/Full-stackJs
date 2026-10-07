@@ -63,6 +63,7 @@ const MESSAGES: Record<AnyErrorCode, string> = {
   CONFLICT: 'Cette action entre en conflit avec l’état actuel. Rechargez la page.',
   LIMIT_EXCEEDED: 'Vous dépassez le nombre maximum de places autorisé.',
   PAYMENT_METHOD_UNAVAILABLE: 'Ce mode de paiement n’est pas disponible pour cet événement.',
+  PAYMENT_PROVIDER_UNAVAILABLE: 'Le prestataire de paiement est momentanément indisponible. Réessayez dans un instant.',
   AMOUNT_MISMATCH: 'Le montant reçu ne correspond pas au montant dû.',
   PAYLOAD_TOO_LARGE: 'Les informations envoyées sont trop volumineuses. Raccourcissez votre saisie.',
   UNSUPPORTED_MEDIA_TYPE: 'Format d’envoi non pris en charge. Rechargez la page puis réessayez.',

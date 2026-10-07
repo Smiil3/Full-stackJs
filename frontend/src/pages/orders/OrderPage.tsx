@@ -10,10 +10,12 @@ import { EventTime } from '../../components/EventTime';
 import { OrderStatusBadge } from '../../components/OrderStatusBadge';
 import { PageLoader } from '../../components/PageLoader';
 import { Icon } from '../../components/Icon';
+import { RetryLater } from '../../components/RetryLater';
+import { retryAtFrom } from '../../lib/retryAfter';
 import { useNow } from '../../lib/hooks/useNow';
 import { formatCents } from '../../lib/money';
 import { currentPspEnv, resolvePspRedirect } from '../../lib/pspRedirect';
-import { formatTime } from '../../lib/time';
+import { formatTime, userTimeZone } from '../../lib/time';
 import { OrderSummary } from './OrderSummary';
 import { canCancel } from './orderRules';
 import { TransferInstructions } from './TransferInstructions';
@@ -49,6 +51,7 @@ export function OrderPage() {
   const cancel = useCancelOrder();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [redirectError, setRedirectError] = useState(false);
+  const [providerRetryAt, setProviderRetryAt] = useState<number | null>(null);
 
   if (isPending) return <PageLoader />;
   if (!order) return <ErrorAlert error={error} />;
@@ -56,6 +59,7 @@ export function OrderPage() {
   const pay = () => {
     if (checkout.isPending) return;
     setRedirectError(false);
+    setProviderRetryAt(null);
     checkout.mutate(order.id, {
       onSuccess: ({ redirectUrl }) => {
         const target = resolvePspRedirect(redirectUrl, currentPspEnv());
@@ -68,6 +72,8 @@ export function OrderPage() {
       },
       onError: (e) => {
         if (isApiError(e) && (e.code === 'ORDER_EXPIRED' || e.code === 'INVALID_STATE')) void refetch();
+        // Prestataire injoignable : rien n'est perdu, nouvel essai possible après Retry-After.
+        if (isApiError(e) && e.code === 'PAYMENT_PROVIDER_UNAVAILABLE') setProviderRetryAt(retryAtFrom(e.retryAfter));
       },
     });
   };
@@ -168,7 +174,13 @@ export function OrderPage() {
               {checkout.isPending ? 'Redirection vers le paiement…' : `Payer ${formatCents(order.totalCents)} par carte`}
             </button>
           ) : null}
-          <ErrorAlert error={checkout.error} />
+          {providerRetryAt !== null && isApiError(checkout.error) && checkout.error.code === 'PAYMENT_PROVIDER_UNAVAILABLE' ? (
+            <RetryLater retryAt={providerRetryAt} onRetry={pay} busy={checkout.isPending}>
+              Le paiement est momentanément indisponible. Vos places restent réservées jusqu’à <strong>{formatTime(order.expiresAt, userTimeZone())}</strong>. Réessayez dans un instant.
+            </RetryLater>
+          ) : (
+            <ErrorAlert error={checkout.error} />
+          )}
           {redirectError ? (
             <p className="alert alert--error" role="alert">
               Adresse de paiement inattendue : par sécurité, la redirection a été bloquée. Réessayez ou contactez l’organisateur.

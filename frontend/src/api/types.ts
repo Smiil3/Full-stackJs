@@ -35,6 +35,7 @@ export const ERROR_CODES = [
   'CONFLICT',
   'LIMIT_EXCEEDED',
   'PAYMENT_METHOD_UNAVAILABLE',
+  'PAYMENT_PROVIDER_UNAVAILABLE',
   'AMOUNT_MISMATCH',
   'PAYLOAD_TOO_LARGE',
   'UNSUPPORTED_MEDIA_TYPE',
@@ -377,12 +378,13 @@ export type EventStats = {
 export type RefundStatus = 'PENDING' | 'SUCCEEDED' | 'MANUAL_REQUIRED' | 'FAILED';
 export const REFUND_STATUSES: readonly RefundStatus[] = ['PENDING', 'SUCCEEDED', 'MANUAL_REQUIRED', 'FAILED'];
 export type RefundReason = 'SELF_CANCELLATION' | 'EVENT_CANCELLED' | 'LATE_PAYMENT' | 'DUPLICATE_PAYMENT' | 'UNEXPECTED_PAYMENT';
+/** v1.17 : `orderId` / `eventId` / `eventTitle` à null pour un remboursement sans commande (admin plateforme). */
 export type RefundAdmin = {
   id: Uuid;
-  orderId: Uuid;
-  eventId: Uuid;
-  eventTitle: string;
-  buyerEmail: string;
+  orderId: Uuid | null;
+  eventId: Uuid | null;
+  eventTitle: string | null;
+  buyerEmail: string | null;
   amountCents: number;
   reason: RefundReason;
   method: PaymentMethod;
