@@ -491,6 +491,8 @@ model WaitlistEntry {
   accumulatingUntil   DateTime? @db.Timestamptz(3)
   /// Accumulation échue sans assez de places : l'entrée garde son rang mais ne bloque plus les suivantes.
   accumulationSkipped Boolean   @default(false)
+  /// Offre laissée expirer par l'acheteur (anti-gel, contrat 1.17 §6 : sortie de la liste après 2 sur un événement).
+  offerExpired        Boolean   @default(false)
   createdAt      DateTime       @default(now()) @db.Timestamptz(3)
   updatedAt      DateTime       @updatedAt @db.Timestamptz(3)
 

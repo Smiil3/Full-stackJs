@@ -15,8 +15,8 @@ export const SETTINGS_BOUNDS = {
   maxPerOrder: { min: 1, max: 20 },
   /** Places par personne et par événement. */
   maxPerUser: { min: 1, max: 50 },
-  /** Délai de réponse à une offre de liste d'attente (minutes, 48 h max). */
-  waitlistOfferMinutes: { min: 15, max: 2880 },
+  /** Délai de réponse à une offre de liste d'attente (minutes, 6 h max : anti-gel, contrat 1.17 §6). */
+  waitlistOfferMinutes: { min: 15, max: 360 },
   /** Frais de service fixes (centimes, 10 € max). */
   serviceFeeFixedCents: { min: 0, max: 1000 },
   /** Frais de service proportionnels (points de base, 15 % max). */
