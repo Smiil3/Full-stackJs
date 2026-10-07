@@ -523,6 +523,32 @@ describe('back-office : ventes, commandes, export', () => {
   });
 });
 
+describe('promotion en propriétaire confirmée (audit B17-e)', () => {
+  it('passer un membre OWNER ⇒ dialogue listant ses nouveaux pouvoirs ; rien avant confirmation', async () => {
+    const user = userEvent.setup();
+    await renderApp(`${ORG}/members`, { as: OWNER });
+    const managerCard = (await screen.findByText('manager@nuits.test')).closest('li') as HTMLElement;
+    await user.selectOptions(within(managerCard).getByLabelText('Rôle'), 'OWNER');
+    const dialog = screen.getByRole('dialog', { name: 'Nommer propriétaire ?' });
+    expect(dialog).toHaveTextContent('pourra modifier les coordonnées bancaires');
+    expect(mock.db.memberships.find((m) => m.userId === IDS.userManager && m.orgId === IDS.orgNuits)?.role).toBe('MANAGER');
+    await user.click(within(dialog).getByRole('button', { name: 'Confirmer' }));
+    await waitFor(() => expect(mock.db.memberships.find((m) => m.userId === IDS.userManager && m.orgId === IDS.orgNuits)?.role).toBe('OWNER'));
+  });
+
+  it('ajouter directement un propriétaire ⇒ confirmation ; « Annuler » n’ajoute personne', async () => {
+    const user = userEvent.setup();
+    await renderApp(`${ORG}/members`, { as: OWNER });
+    await user.type(await screen.findByLabelText('Adresse email du compte'), 'acheteur@example.test');
+    await user.selectOptions(screen.getByLabelText('Rôle', { selector: '#new-role' }), 'OWNER');
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+    const dialog = screen.getByRole('dialog', { name: 'Ajouter un propriétaire ?' });
+    expect(dialog).toHaveTextContent('acheteur@example.test pourra ajouter, promouvoir ou retirer des membres');
+    await user.click(within(dialog).getByRole('button', { name: 'Annuler' }));
+    expect(mock.db.memberships.some((m) => m.userId === IDS.userBuyer && m.orgId === IDS.orgNuits)).toBe(false);
+  });
+});
+
 describe('admin plateforme : anomalies (v1.17 §8, audit B2 / B3)', () => {
   it('remboursement sans commande : listé (payeur PSP), marqué effectué avec note', async () => {
     const user = userEvent.setup();
