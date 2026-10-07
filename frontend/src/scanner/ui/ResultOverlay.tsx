@@ -25,7 +25,10 @@ export function ResultOverlay(props: {
   const v = describeOutcome(props.outcome, props.timezone);
   const decision = props.outcome.kind === 'UNKNOWN_AUTHENTIC';
   const titleRef = useRef<HTMLParagraphElement>(null);
-  const armedRef = useRef(false);
+  // Instant d'affichage (horloge monotone) : la garde compare l'instant de CHAQUE frappe à celui-ci,
+  // indépendamment de la ponctualité des minuteurs (machine chargée).
+  const shownAt = useRef(Number.POSITIVE_INFINITY);
+  const guardOver = () => performance.now() - shownAt.current >= KEY_GUARD_MS;
   // Résultat pour lequel le délai de garde est écoulé (un nouveau résultat repart désarmé).
   const [armedFor, setArmedFor] = useState<ScanOutcome | null>(null);
   const armed = armedFor === props.outcome;
@@ -35,12 +38,17 @@ export function ResultOverlay(props: {
   // Effets « layout » : actifs dès l'affichage, avant qu'une touche de la douchette puisse être traitée.
   useLayoutEffect(() => {
     const outcome = props.outcome;
-    armedRef.current = false;
+    shownAt.current = performance.now();
     titleRef.current?.focus();
-    const t = setTimeout(() => {
-      armedRef.current = true;
-      setArmedFor(outcome);
-    }, KEY_GUARD_MS);
+    // Minuteur seulement pour réafficher « Scanner le suivant » actif, et seulement quand l'HORLOGE
+    // confirme la fin du délai (un minuteur en avance ou une horloge figée en test ne l'active pas).
+    let t: ReturnType<typeof setTimeout>;
+    const arm = () => {
+      const left = KEY_GUARD_MS - (performance.now() - shownAt.current);
+      if (left > 0) t = setTimeout(arm, left);
+      else setArmedFor(outcome);
+    };
+    t = setTimeout(arm, KEY_GUARD_MS);
     return () => {
       clearTimeout(t);
     };
@@ -49,7 +57,7 @@ export function ResultOverlay(props: {
   // Pendant le délai de garde, Entrée / Espace n'atteignent aucun élément de la page.
   useLayoutEffect(() => {
     const swallow = (e: globalThis.KeyboardEvent) => {
-      if (!armedRef.current && (e.key === 'Enter' || e.key === ' ')) {
+      if (!guardOver() && (e.key === 'Enter' || e.key === ' ')) {
         e.preventDefault();
         e.stopPropagation();
       }
@@ -61,7 +69,7 @@ export function ResultOverlay(props: {
   }, []);
 
   const close = () => {
-    if (armedRef.current) props.onClose();
+    if (guardOver()) props.onClose();
   };
 
   // Après le délai, Entrée ferme un résultat sans décision ; une décision exige un appui à l'écran.

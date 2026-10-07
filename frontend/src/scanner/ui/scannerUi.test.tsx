@@ -8,6 +8,7 @@ import { markPaid } from '../../mocks/domain';
 import { DEMO_PASSWORD, IDS } from '../../mocks/state';
 import { expectLoggedOut, openCheckinWindow, openMenu, renderApp } from '../../test/renderApp';
 import { __wipeScannerForTests, pendingCount } from '../db';
+import { KEY_GUARD_MS } from './ResultOverlay';
 
 /** Concert : mode secours AUTORISÉ (seed mock). Nuit Électro : contrôle en ligne uniquement. */
 const RESCUE = `/scan/${IDS.orgNuits}/${IDS.eventConcert}`;
@@ -33,6 +34,11 @@ const mustResult = () => {
   if (!el) throw new Error('aucun résultat de scan affiché');
   return el;
 };
+/** Attend que le résultat affiché contienne `text` (ex. après une admission asynchrone en IndexedDB). */
+async function expectResult(text: string): Promise<HTMLElement> {
+  await waitFor(() => expect(mustResult()).toHaveTextContent(text));
+  return mustResult();
+}
 async function findResult(timeout = 3000): Promise<HTMLElement> {
   await waitFor(() => expect(result()).not.toBeNull(), { timeout });
   return mustResult();
@@ -126,7 +132,7 @@ describe('scanner — mode par défaut EN LIGNE', () => {
     const { clearFaults } = await import('../../mocks/core');
     clearFaults();
     await user.click(within(fail).getByRole('button', { name: 'Réessayer' }));
-    expect(await findResult()).toHaveTextContent('OK — entrée');
+    await expectResult('OK — entrée');
   });
 
   it('hors-ligne sans mode secours ⇒ message « pas de réseau, ne laissez entrer personne »', async () => {
@@ -174,7 +180,7 @@ describe('scanner — mode SECOURS hors-ligne', () => {
     expect(r).toHaveTextContent('Billet authentique, absent de la liste');
     const admit = within(r).getByRole('button', { name: 'Laisser entrer' });
     await user.dblClick(admit);
-    expect(await findResult()).toHaveTextContent('OK — entrée');
+    await expectResult('OK — entrée');
     expect(await pendingCount()).toBe(1);
   });
 
@@ -186,6 +192,9 @@ describe('scanner — mode SECOURS hors-ligne', () => {
     const late = await signQr(IDS.eventConcert, randomPublicId());
     setOnline(false);
     await user.click(screen.getByLabelText('Saisie manuelle du code'));
+    // Horloge FIGÉE à l'affichage puis avancée d'exactement 1,5 s : déterministe, même sur une machine chargée.
+    const t0 = performance.now();
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(t0);
     await user.keyboard(`${late}{Enter}`);
     const r = await findResult();
     expect(r).toHaveClass('scan-result--warn');
@@ -193,7 +202,7 @@ describe('scanner — mode SECOURS hors-ligne', () => {
     // La douchette continue d'envoyer des codes suivis d'Entrée, pendant puis après le délai de garde.
     await user.keyboard(`${late}{Enter}`);
     await user.keyboard(' ');
-    await new Promise((res) => setTimeout(res, 1700));
+    clock.mockReturnValue(t0 + KEY_GUARD_MS); // délai de garde écoulé
     await user.keyboard(`${late}{Enter}`);
     within(r).getByRole('button', { name: 'Laisser entrer' }).focus();
     await user.keyboard('{Enter}');
@@ -201,7 +210,7 @@ describe('scanner — mode SECOURS hors-ligne', () => {
     expect(mustResult()).toHaveClass('scan-result--warn'); // toujours en attente de décision
     expect(await pendingCount()).toBe(0); // personne n'est entré
     await user.click(within(r).getByRole('button', { name: 'Laisser entrer' })); // un vrai tap
-    expect(await findResult()).toHaveTextContent('OK — entrée');
+    await expectResult('OK — entrée');
     expect(await pendingCount()).toBe(1);
   });
 
@@ -209,6 +218,8 @@ describe('scanner — mode SECOURS hors-ligne', () => {
     const user = userEvent.setup();
     await renderApp(ONLINE_ONLY, { as: 'scanner@nuits.test' });
     await user.click(await screen.findByLabelText('Saisie manuelle du code'));
+    const t0 = performance.now();
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(t0); // horloge figée à l'affichage
     await user.keyboard('NG1.faux{Enter}');
     const r = await findResult();
     expect(r).toHaveTextContent('Billet invalide');
@@ -216,9 +227,12 @@ describe('scanner — mode SECOURS hors-ligne', () => {
     await user.keyboard('{Enter}');
     expect(mustResult()).toHaveTextContent('Billet invalide'); // pas fermé
     expect(within(r).getByRole('button', { name: 'Scanner le suivant' })).toBeDisabled();
-    await new Promise((res) => setTimeout(res, 1700));
+    clock.mockReturnValue(t0 + KEY_GUARD_MS - 1);
     await user.keyboard('{Enter}');
-    expect(result()).toBeNull();
+    expect(mustResult()).toHaveTextContent('Billet invalide'); // 1 ms avant la fin du délai : toujours affiché
+    clock.mockReturnValue(t0 + KEY_GUARD_MS);
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(result()).toBeNull()); // fermeture rendue (rendu React asynchrone sous charge)
   });
 
   it('D1 : rôles du handoff (entrée = status, refus = alert, décision = alertdialog) ; bandeau hors-ligne permanent', async () => {
