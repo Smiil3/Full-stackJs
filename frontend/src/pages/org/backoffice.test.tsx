@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup as cleanupRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { delay, http } from 'msw';
 import { describe, expect, it, vi } from 'vitest';
@@ -499,6 +499,37 @@ describe('back-office : ventes, commandes, export', () => {
     await renderApp(`${EVENT}/dashboard`, { as: MANAGER });
     expect(await screen.findByText(/Réponse inattendue du serveur/)).toBeInTheDocument();
     expect(screen.queryByText('Vendues')).toBeNull();
+  });
+});
+
+describe('règles financières réservées au propriétaire (v1.17, audit M1)', () => {
+  it('MANAGER : règles financières en lecture seule « réservé au propriétaire », règles opérationnelles modifiables ; OWNER : tout modifiable', async () => {
+    const user = userEvent.setup();
+    await renderApp(EVENT, { as: MANAGER });
+    await user.click(await screen.findByRole('button', { name: 'Modifier l’événement' }));
+    const refund = screen.getByRole('group', { name: 'Remboursement du prix des billets' });
+    expect(refund).toHaveTextContent('Réservé au propriétaire du collectif');
+    expect(within(refund).queryByRole('radio')).toBeNull();
+    for (const label of ['Frais de service fixes par commande', 'Paiement par virement', 'Annulation par l’acheteur']) {
+      expect(within(screen.getByRole('group', { name: label })).queryByRole('radio')).toBeNull();
+    }
+    expect(within(screen.getByRole('group', { name: 'Places maximum par commande' })).getAllByRole('radio')).toHaveLength(2);
+    expect(screen.getByText(/règles financières .* sont réservées au propriétaire du collectif/)).toBeInTheDocument();
+    cleanupRender();
+    await renderApp(EVENT, { as: OWNER });
+    await user.click(await screen.findByRole('button', { name: 'Modifier l’événement' }));
+    expect(within(screen.getByRole('group', { name: 'Remboursement du prix des billets' })).getAllByRole('radio')).toHaveLength(2);
+  });
+
+  it('403 au moment d’enregistrer ⇒ explication (propriétaire seulement), pas un message générique', async () => {
+    const user = userEvent.setup();
+    await renderApp(EVENT, { as: MANAGER });
+    await user.click(await screen.findByRole('button', { name: 'Modifier l’événement' }));
+    injectFault({ route: 'PATCH /orgs/:orgId/events/:eventId', status: 403, code: 'FORBIDDEN' });
+    await user.clear(screen.getByLabelText('Titre'));
+    await user.type(screen.getByLabelText('Titre'), 'Nouveau titre');
+    await user.click(screen.getByRole('button', { name: 'Enregistrer les modifications' }));
+    expect(await screen.findByText(/Seul le propriétaire du collectif peut modifier les règles financières/)).toBeInTheDocument();
   });
 });
 

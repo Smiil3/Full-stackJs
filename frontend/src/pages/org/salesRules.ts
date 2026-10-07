@@ -24,6 +24,16 @@ export const RULE_DEFS: readonly RuleDef[] = [
   { key: 'serviceFeeBasisPoints', label: 'Frais de service proportionnels', kind: 'basisPoints', min: 0, max: 1500, unit: '%' },
 ];
 
+/** Surcharges financières : modifiables par l'OWNER seulement (contrat v1.17 §7.2, audit M1). */
+export const FINANCIAL_RULES: ReadonlySet<RuleKey> = new Set<RuleKey>([
+  'refundPercent',
+  'serviceFeeFixedCents',
+  'serviceFeeBasisPoints',
+  'transferEnabled',
+  'selfCancellationEnabled',
+  'cancellationDeadlineHours',
+]);
+
 export type RuleValue = number | boolean;
 
 export function formatRule(def: RuleDef, value: RuleValue): string {

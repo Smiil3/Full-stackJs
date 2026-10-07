@@ -6,6 +6,7 @@ import { Field } from '../../components/Field';
 import { listTimeZones, timeZoneLabel } from '../../lib/time';
 import { buildEventBody, convertDatesToTimezone, DATE_FIELDS, diffPatch, hasSales, initialEventForm, isReschedule, type DateField, type EventFormState, type FormErrors } from './eventForm';
 import { SalesRulesEditor } from './SalesRulesEditor';
+import { FINANCIAL_RULES } from './salesRules';
 
 const DATE_LABELS: Record<DateField, string> = {
   startsAt: 'Début de l’événement',
@@ -192,16 +193,24 @@ export function EventEditor(props: Props) {
         ))}
       </div>
 
+      {props.role !== 'OWNER' ? (
+        <p className="alert alert--info">
+          Les règles financières (remboursement, frais, virement, annulation par l’acheteur) sont réservées au propriétaire du collectif.
+        </p>
+      ) : null}
       <SalesRulesEditor
         state={form.rules}
         settings={props.settings}
+        locked={props.role === 'OWNER' ? undefined : FINANCIAL_RULES}
         errors={{ ...ruleServerErrors, ...errors.rules }}
         onChange={(key, field) => setForm((f) => ({ ...f, rules: { ...f.rules, [key]: field } }))}
       />
 
       {props.error && Object.keys(server).length === 0 ? (
         <p className="alert alert--error" role="alert">
-          {errorMessage(props.error)}
+          {isApiError(props.error) && props.error.code === 'FORBIDDEN'
+            ? 'Seul le propriétaire du collectif peut modifier les règles financières ou reporter l’événement. Vos autres modifications n’ont pas été enregistrées.'
+            : errorMessage(props.error)}
         </p>
       ) : null}
       {Object.keys(errors).length ? (
