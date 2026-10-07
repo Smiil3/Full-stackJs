@@ -2,7 +2,7 @@ import { useMemo, useState, type SubmitEvent } from 'react';
 import { useParams } from 'react-router';
 import { errorMessage, fieldErrors, isApiError } from '../../api/errors';
 import { useOrgSettings, useUpdateOrgSettings } from '../../api/hooks/org';
-import type { OrgSettings, OrgSettingsPatch } from '../../api/types';
+import type { OrgSettings } from '../../api/types';
 import { useAuth } from '../../auth/AuthContext';
 import { membershipFor } from '../../auth/roles';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
@@ -12,6 +12,13 @@ import { PageLoader } from '../../components/PageLoader';
 import { bicProblem, ibanProblem, normalizeIban } from '../../lib/iban';
 import { listTimeZones } from '../../lib/time';
 import { formatRule, parseRule, RULE_DEFS, toInput, type RuleKey } from './salesRules';
+import { settingsPatch } from './settingsPatch';
+
+const CONFLICT_LABELS: Partial<Record<string, string>> = {
+  serviceFeeRefundable: 'Remboursement des frais de service',
+  defaultTimezone: 'Fuseau horaire par défaut',
+  contactEmail: 'Email de contact',
+};
 
 const formatIban = (iban: string) => iban.replace(/(.{4})/g, '$1 ').trim();
 
@@ -49,11 +56,23 @@ function BankInfo({ s }: { s: OrgSettings }) {
 
 function SettingsForm({ orgId, s }: { orgId: string; s: OrgSettings }) {
   const update = useUpdateOrgSettings(orgId);
-  const initial = useMemo(() => Object.fromEntries(RULE_DEFS.map((d) => [d.key, toInput(d, s[d.key])])) as Record<RuleKey, string>, [s]);
-  const [values, setValues] = useState(initial);
-  const [refundable, setRefundable] = useState(s.serviceFeeRefundable);
-  const [tz, setTz] = useState(s.defaultTimezone);
-  const [contact, setContact] = useState(s.contactEmail ?? '');
+  // État INITIAL du formulaire (audit M6) : le patch se calcule contre lui, jamais contre les réglages
+  // relus périodiquement (sinon un champ changé par un autre propriétaire serait écrasé).
+  const [baseline, setBaseline] = useState(s);
+  const [values, setValues] = useState(() => Object.fromEntries(RULE_DEFS.map((d) => [d.key, toInput(d, baseline[d.key])])) as Record<RuleKey, string>);
+  const [refundable, setRefundable] = useState(baseline.serviceFeeRefundable);
+  const [tz, setTz] = useState(baseline.defaultTimezone);
+  const [contact, setContact] = useState(baseline.contactEmail ?? '');
+  const [conflicts, setConflicts] = useState<string[]>([]);
+  /** Repart des valeurs à jour du serveur (après un conflit). */
+  const reload = (fresh: OrgSettings) => {
+    setBaseline(fresh);
+    setValues(Object.fromEntries(RULE_DEFS.map((d) => [d.key, toInput(d, fresh[d.key])])) as Record<RuleKey, string>);
+    setRefundable(fresh.serviceFeeRefundable);
+    setTz(fresh.defaultTimezone);
+    setContact(fresh.contactEmail ?? '');
+    setConflicts([]);
+  };
   const [errors, setErrors] = useState<Partial<Record<string, string>>>({});
   const zones = useMemo(() => listTimeZones(), []);
   const server = fieldErrors(update.error);
@@ -61,21 +80,25 @@ function SettingsForm({ orgId, s }: { orgId: string; s: OrgSettings }) {
   const submit = (e: SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
     const errs: Record<string, string> = {};
-    const patch: OrgSettingsPatch = {};
+    const desired: Partial<Omit<OrgSettings, 'bank'>> = {};
     for (const d of RULE_DEFS) {
       const r = parseRule(d, values[d.key]);
       if (!r.ok) errs[d.key] = r.error;
-      else if (r.value !== s[d.key]) Object.assign(patch, { [d.key]: r.value });
+      else Object.assign(desired, { [d.key]: r.value });
     }
-    const perOrder = patch.maxPerOrder ?? s.maxPerOrder;
-    const perUser = patch.maxPerUser ?? s.maxPerUser;
+    const perOrder = desired.maxPerOrder ?? s.maxPerOrder;
+    const perUser = desired.maxPerUser ?? s.maxPerUser;
     if (!errs.maxPerUser && !errs.maxPerOrder && perUser < perOrder) errs.maxPerUser = `Doit être au moins égal au maximum par commande (${perOrder}).`;
     if (contact.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact.trim())) errs.contactEmail = 'Adresse email invalide.';
-    if (refundable !== s.serviceFeeRefundable) patch.serviceFeeRefundable = refundable;
-    if (tz !== s.defaultTimezone) patch.defaultTimezone = tz;
-    if ((contact.trim() || null) !== s.contactEmail) patch.contactEmail = contact.trim() || null;
+    desired.serviceFeeRefundable = refundable;
+    desired.defaultTimezone = tz;
+    desired.contactEmail = contact.trim() || null;
     setErrors(errs);
-    if (Object.keys(errs).length === 0 && Object.keys(patch).length > 0 && !update.isPending) update.mutate(patch);
+    if (Object.keys(errs).length > 0 || update.isPending) return;
+    const { patch, conflicts: clash } = settingsPatch(baseline, s, desired);
+    setConflicts(clash);
+    if (clash.length > 0) return; // un autre propriétaire a changé ces réglages : on n'écrase pas
+    if (Object.keys(patch).length > 0) update.mutate(patch, { onSuccess: (fresh) => setBaseline(fresh) });
   };
 
   return (
@@ -121,6 +144,21 @@ function SettingsForm({ orgId, s }: { orgId: string; s: OrgSettings }) {
         <p className="alert alert--error" role="alert">
           {errorMessage(update.error)}
         </p>
+      ) : null}
+      {conflicts.length > 0 ? (
+        <div className="alert alert--warning" role="alert">
+          <div className="stack stack--sm">
+            <p>
+              <strong>Modifié par quelqu’un d’autre entre-temps :</strong> {conflicts.map((k) => RULE_DEFS.find((d) => d.key === k)?.label ?? CONFLICT_LABELS[k] ?? k).join(', ')}. Rien n’a été
+              enregistré, pour ne pas écraser son changement.
+            </p>
+            <p>
+              <button type="button" className="btn btn--secondary btn--small" onClick={() => reload(s)}>
+                Repartir des valeurs à jour
+              </button>
+            </p>
+          </div>
+        </div>
       ) : null}
       {update.isSuccess ? (
         <p className="alert alert--success" role="status">

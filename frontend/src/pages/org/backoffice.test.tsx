@@ -502,6 +502,36 @@ describe('back-office : ventes, commandes, export', () => {
   });
 });
 
+describe('réglages modifiés par un autre propriétaire pendant l’édition (audit M6)', () => {
+  it('champ modifié ailleurs mais pas ici ⇒ conservé ; même champ modifié ici et ailleurs ⇒ avertissement, rien d’écrasé', async () => {
+    const user = userEvent.setup();
+    const { queryClient } = await renderApp(`${ORG}/settings`, { as: OWNER });
+    const refund = await screen.findByLabelText(/Remboursement du prix des billets/);
+    const settings = mock.db.settings.get(IDS.orgNuits);
+    if (!settings) throw new Error('réglages absents');
+    // Un autre propriétaire change le délai de paiement carte ET le pourcentage remboursé ; les réglages sont relus.
+    settings.cardHoldMinutes = 30;
+    settings.refundPercent = 80;
+    await act(() => queryClient.invalidateQueries({ queryKey: ['org', IDS.orgNuits, 'settings'] }));
+    await user.clear(refund);
+    await user.type(refund, '50');
+    await user.click(screen.getByRole('button', { name: 'Enregistrer les réglages' }));
+    expect((await screen.findByText(/Modifié par quelqu’un d’autre entre-temps/)).closest('p')).toHaveTextContent(/Remboursement du prix des billets\. Rien n’a été enregistré/);
+    expect(settings.refundPercent).toBe(80); // pas écrasé
+    expect(settings.cardHoldMinutes).toBe(30);
+    // Repartir des valeurs à jour, puis enregistrer : seul le champ voulu change.
+    await user.click(screen.getByRole('button', { name: 'Repartir des valeurs à jour' }));
+    expect(screen.getByLabelText(/Remboursement du prix des billets/)).toHaveValue('80');
+    await user.clear(screen.getByLabelText(/Remboursement du prix des billets/));
+    await user.type(screen.getByLabelText(/Remboursement du prix des billets/), '50');
+    await user.click(screen.getByRole('button', { name: 'Enregistrer les réglages' }));
+    expect(await screen.findByText('Réglages enregistrés.')).toBeInTheDocument();
+    const saved = mock.db.settings.get(IDS.orgNuits); // le serveur simulé remplace l'objet
+    expect(saved?.refundPercent).toBe(50);
+    expect(saved?.cardHoldMinutes).toBe(30); // jamais renvoyé à l'ancienne valeur
+  });
+});
+
 describe('remboursements carte vérifiés auprès du prestataire (v1.17, A2)', () => {
   function cardRefund(pspState: 'pending' | 'unreachable') {
     const now = new Date().toISOString();
