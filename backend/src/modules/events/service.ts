@@ -1,4 +1,4 @@
-import type { Event, OrganizationSettings, Prisma, Role, TicketType } from '../../generated/prisma/client.js';
+import type { Event, OrganizationSettings, Prisma, TicketType } from '../../generated/prisma/client.js';
 import { diff, writeAudit } from '../../lib/audit.js';
 import { clock } from '../../lib/clock.js';
 import { withTxRetry } from '../../lib/txRetry.js';
@@ -7,13 +7,12 @@ import { getDb, transaction, type Tx } from '../../lib/db.js';
 import { errors, type FieldError } from '../../lib/errors.js';
 import { iso } from '../../lib/schemas.js';
 import { enqueueEmail } from '../../lib/outbox.js';
-import { formatWithZone } from '../../lib/time.js';
 import { getSettings } from '../orgs/repo.js';
 import { OVERRIDE_KEYS, overridesOf, resolveEventSettings, toPublicRules, type EventOverrideFields } from '../settings/resolveEventSettings.js';
 import * as repo from './repo.js';
+import { requireRoleInTx } from '../../lib/orgRole.js';
+import { FINANCIAL_OVERRIDE_KEYS } from '../../config/settingsBounds.js';
 import type { EventCreateBody, EventPatchBody, OverridesInput, TicketTypeBody, TicketTypePatchBody } from './schemas.js';
-import { hours } from '../../config/units.js';
-import { PERCENT_MAX } from '../../config/money.js';
 
 type EventWithTypes = Event & { ticketTypes: TicketType[] };
 
@@ -128,9 +127,12 @@ export async function createEvent(orgId: string, actorId: string, body: EventCre
   };
   checkDates(dates);
   if (dates.endsAt.getTime() <= clock.now().getTime()) throw errors.validation([{ path: 'endsAt', message: 'L’événement doit se terminer dans le futur.' }]);
-  return transaction(async (tx) => {
+  return withTxRetry(() => transaction(async (tx) => {
+    const role = await requireRoleInTx(tx, orgId, actorId, 'MANAGER');
     const settings = await getSettings(tx, orgId);
     const overrides = overridesData(body.overrides);
+    const financial = financialChanges(emptyOverrides(), overrides);
+    if (Object.keys(financial).length > 0 && role !== 'OWNER') throw errors.forbidden();
     checkOverrides({ ...emptyOverrides(), ...overrides }, settings);
     const event = await tx.event.create({
       data: {
@@ -146,8 +148,53 @@ export async function createEvent(orgId: string, actorId: string, body: EventCre
       },
     });
     await writeAudit(tx, { orgId, actorId, action: 'event.create', target: `event:${event.id}`, meta: { title: event.title } });
+    await recordFinancialChanges(tx, orgId, actorId, event, financial);
     return load(tx, orgId, event.id);
-  });
+  }));
+}
+
+/** Surcharges financières réellement modifiées (valeur différente de l'actuelle), champ par champ. */
+function financialChanges(before: EventOverrideFields, overrides: Partial<EventOverrideFields>): Record<string, { from: unknown; to: unknown }> {
+  const changes: Record<string, { from: unknown; to: unknown }> = {};
+  for (const key of FINANCIAL_OVERRIDE_KEYS) {
+    const to = overrides[key];
+    if (to !== undefined && to !== before[key]) changes[key] = { from: before[key], to };
+  }
+  return changes;
+}
+
+const FINANCIAL_LABELS: Record<(typeof FINANCIAL_OVERRIDE_KEYS)[number], string> = {
+  refundPercent: 'remboursement en cas d’annulation (%)',
+  serviceFeeFixedCents: 'frais fixes (centimes)',
+  serviceFeeBasisPoints: 'frais proportionnels (points de base)',
+  transferEnabled: 'paiement par virement',
+  selfCancellationEnabled: 'annulation par l’acheteur',
+  cancellationDeadlineHours: 'délai d’annulation (heures)',
+};
+
+/**
+ * Modification d'une surcharge financière (contrat 1.17 §7.2) : AuditLog avant / après champ par champ
+ * et mail à TOUS les OWNER (outbox, même transaction) — détection d'un changement de règles non légitime.
+ */
+async function recordFinancialChanges(
+  tx: Tx, orgId: string, actorId: string, event: { id: string; title: string }, changes: Record<string, { from: unknown; to: unknown }>,
+): Promise<void> {
+  const keys = Object.keys(changes) as (typeof FINANCIAL_OVERRIDE_KEYS)[number][];
+  if (keys.length === 0) return;
+  await writeAudit(tx, { orgId, actorId, action: 'event.financial_rules', target: `event:${event.id}`, meta: { changes } });
+  const shown = (v: unknown) => (v === null || v === undefined ? 'réglage du collectif' : JSON.stringify(v));
+  const summary = keys.map((k) => `${FINANCIAL_LABELS[k]} : ${shown(changes[k]?.from)} → ${shown(changes[k]?.to)}`).join(' ; ');
+  const [org, actor, owners] = await Promise.all([
+    tx.organization.findUniqueOrThrow({ where: { id: orgId }, select: { name: true } }),
+    tx.user.findUniqueOrThrow({ where: { id: actorId }, select: { displayName: true, email: true } }),
+    tx.membership.findMany({ where: { orgId, role: 'OWNER' }, select: { user: { select: { email: true, displayName: true } } }, orderBy: { userId: 'asc' } }),
+  ]);
+  for (const { user } of owners) {
+    await enqueueEmail(tx, user.email, 'financialRulesChanged', {
+      displayName: user.displayName, orgName: org.name, eventTitle: event.title,
+      changedBy: `${actor.displayName} (${actor.email})`, changes: summary,
+    });
+  }
 }
 
 function emptyOverrides(): EventOverrideFields {
@@ -160,8 +207,11 @@ function emptyOverrides(): EventOverrideFields {
  * motif obligatoire ; chaque commande payée obtient le droit au remboursement intégral (100 %, frais compris)
  * jusqu'à max(ancienne limite, nouveau début − délai figé) ; acheteurs prévenus par mail ; audit.
  */
-export async function updateEvent(orgId: string, actor: { userId: string; role: Role }, eventId: string, body: EventPatchBody) {
-  return transaction(async (tx) => {
+export async function updateEvent(orgId: string, actorId: string, eventId: string, body: EventPatchBody) {
+  return withTxRetry(() => transaction(async (tx) => {
+    // Rôle relu dans la transaction (audit B12) : c'est lui, pas celui du middleware, qui décide des droits.
+    const role = await requireRoleInTx(tx, orgId, actorId, 'MANAGER');
+    const actor = { userId: actorId, role };
     if (!(await repo.lockEvent(tx, orgId, eventId))) throw errors.notFound();
     const current = await repo.findEvent(tx, orgId, eventId);
     if (!current) throw errors.notFound();
@@ -194,7 +244,13 @@ export async function updateEvent(orgId: string, actor: { userId: string; role: 
     }
     const settings = await getSettings(tx, orgId);
     const overrides = overridesData(body.overrides);
+    // Surcharges financières : OWNER seulement (contrat 1.17 §7.2) ; une valeur renvoyée inchangée n'est pas une modification.
+    const financial = financialChanges(overridesOf(current), overrides);
+    if (Object.keys(financial).length > 0 && actor.role !== 'OWNER') throw errors.forbidden();
     checkOverrides({ ...overridesOf(current), ...overrides }, settings);
+    if (isReport && (await tx.eventReschedule.count({ where: { eventId, completedAt: null } })) > 0) {
+      throw errors.conflict('Le report précédent est encore en cours de traitement : réessayez dans quelques instants.');
+    }
     const data: Prisma.EventUpdateInput = { ...dates, ...overrides };
     if (body.title !== undefined) data.title = body.title;
     if (body.description !== undefined) data.description = body.description;
@@ -210,8 +266,9 @@ export async function updateEvent(orgId: string, actor: { userId: string; role: 
         meta: { from: current.offlineCheckinEnabled, to: body.offlineCheckinEnabled },
       });
     }
+    await recordFinancialChanges(tx, orgId, actor.userId, current, financial);
     if (isReport && body.rescheduleReason) {
-      await applyReschedule(tx, current, dates, body.rescheduleReason, settings, actor.userId);
+      await startReschedule(tx, current, dates, body.timezone ?? current.timezone, body.rescheduleReason, settings, actor.userId);
     } else {
       await writeAudit(tx, {
         orgId, actorId: actor.userId, action: 'event.update', target: `event:${eventId}`,
@@ -219,57 +276,35 @@ export async function updateEvent(orgId: string, actor: { userId: string; role: 
       });
     }
     return load(tx, orgId, eventId);
-  });
+  }));
 }
 
-async function applyReschedule(
-  tx: Tx, before: EventWithTypes, dates: EventDates, reason: string, settings: OrganizationSettings, actorId: string,
+/**
+ * Report (audit B7) : ici, seulement les dates (déjà écrites), le report à traiter et le marquage des commandes
+ * actives en UN UPDATE ; droits et mails sont appliqués par le worker, par lots (`processEventReschedules`).
+ * Une auto-annulation pendant le traitement applique d'abord le report à la commande.
+ */
+async function startReschedule(
+  tx: Tx, before: EventWithTypes, dates: EventDates, newTimezone: string, reason: string, settings: OrganizationSettings, actorId: string,
 ): Promise<void> {
   const rules = resolveEventSettings(settings, before);
-  // Commandes payées ET commandes encore en attente de paiement (contrat §7.2) : mêmes droits du report.
-  const active = await tx.order.findMany({
-    where: { eventId: before.id, status: { in: ['PAID', 'PENDING_PAYMENT', 'AWAITING_TRANSFER'] } },
-    select: { id: true, status: true, cancellableUntil: true, expiresAt: true },
+  const job = await tx.eventReschedule.create({
+    data: {
+      eventId: before.id, oldStartsAt: before.startsAt, oldEndsAt: before.endsAt, newStartsAt: dates.startsAt, newEndsAt: dates.endsAt,
+      oldTimezone: before.timezone, newTimezone, fallbackDeadlineHours: rules.cancellationDeadlineHours, reason, createdAt: clock.now(),
+    },
   });
-  const paid = active.filter((o) => o.status === 'PAID');
-  for (const order of active) {
-    // Délai figé = ancien début − ancienne limite ; à défaut (annulation désactivée), délai effectif actuel.
-    const deadlineMs = order.cancellableUntil
-      ? before.startsAt.getTime() - order.cancellableUntil.getTime()
-      : hours(rules.cancellationDeadlineHours);
-    const candidate = dates.startsAt.getTime() - deadlineMs;
-    const cancellableUntil = new Date(Math.max(order.cancellableUntil?.getTime() ?? candidate, candidate));
-    // Une réservation ne peut pas survivre au nouveau début : échéance ramenée au nouveau startsAt.
-    const expiresAt = order.expiresAt && order.expiresAt > dates.startsAt ? dates.startsAt : order.expiresAt;
-    // Transition gardée : seule une commande toujours dans le même statut est modifiée.
-    await tx.order.updateMany({
-      where: { id: order.id, status: order.status },
-      data: { cancellableUntil, refundPercent: PERCENT_MAX, serviceFeeRefundable: true, ...(order.status === 'PAID' ? {} : { expiresAt }) },
-    });
-  }
-  const buyers = await tx.order.findMany({
+  const marked = await tx.order.updateMany({
     where: { eventId: before.id, status: { in: ['PENDING_PAYMENT', 'AWAITING_TRANSFER', 'PAID'] } },
-    select: { user: { select: { email: true, displayName: true } } },
-    distinct: ['userId'],
+    data: { pendingRescheduleId: job.id },
   });
-  for (const { user } of buyers) {
-    await enqueueEmail(tx, user.email, 'eventRescheduled', {
-      displayName: user.displayName,
-      eventTitle: before.title,
-      oldDate: formatWithZone(before.startsAt, before.timezone),
-      newDate: formatWithZone(dates.startsAt, before.timezone),
-      reason,
-    });
-  }
   await writeAudit(tx, {
     orgId: before.orgId, actorId, action: 'event.reschedule', target: `event:${before.id}`,
     meta: {
-      from: { startsAt: before.startsAt, endsAt: before.endsAt },
-      to: { startsAt: dates.startsAt, endsAt: dates.endsAt },
+      from: { startsAt: before.startsAt, endsAt: before.endsAt, timezone: before.timezone },
+      to: { startsAt: dates.startsAt, endsAt: dates.endsAt, timezone: newTimezone },
       reason,
-      paidOrders: paid.length,
-      unpaidOrders: active.length - paid.length,
-      notifiedBuyers: buyers.length,
+      ordersToProcess: marked.count,
     },
   });
 }
@@ -299,6 +334,7 @@ export async function publishEvent(orgId: string, actorId: string, eventId: stri
  */
 export async function cancelEvent(orgId: string, actorId: string, eventId: string, reason: string) {
   return withTxRetry(() => transaction(async (tx) => {
+    await requireRoleInTx(tx, orgId, actorId, 'OWNER');
     if (!(await repo.lockEvent(tx, orgId, eventId))) throw errors.notFound();
     const current = await tx.event.findUniqueOrThrow({ where: { id: eventId }, select: { status: true, startsAt: true } });
     if (current.status === 'CANCELLED') return load(tx, orgId, eventId);
@@ -353,7 +389,7 @@ export async function createTicketType(orgId: string, actorId: string, eventId: 
     earlyPriceCents: body.earlyPriceCents ?? null,
     earlyUntil: body.earlyUntil ? new Date(body.earlyUntil) : null,
   };
-  return transaction(async (tx) => {
+  return withTxRetry(() => transaction(async (tx) => {
     const event = await lockActiveEvent(tx, orgId, eventId);
     checkEarly(early, event.salesEndAt);
     const tt = await tx.ticketType.create({
@@ -368,11 +404,11 @@ export async function createTicketType(orgId: string, actorId: string, eventId: 
     });
     await writeAudit(tx, { orgId, actorId, action: 'ticketType.create', target: `ticketType:${tt.id}`, meta: { eventId, capacity: tt.capacity, priceCents: tt.priceCents } });
     return toTicketTypeAdmin(tt);
-  });
+  }));
 }
 
 export async function updateTicketType(orgId: string, actorId: string, eventId: string, ticketTypeId: string, body: TicketTypePatchBody) {
-  return transaction(async (tx) => {
+  return withTxRetry(() => transaction(async (tx) => {
     const event = await lockActiveEvent(tx, orgId, eventId);
     const current = await repo.findTicketType(tx, orgId, eventId, ticketTypeId);
     if (!current) throw errors.notFound();
@@ -407,11 +443,11 @@ export async function updateTicketType(orgId: string, actorId: string, eventId: 
       meta: { eventId, changes: diff(snapshot(current), snapshot(tt)), soldAtChange: current.sold },
     });
     return toTicketTypeAdmin(tt);
-  });
+  }));
 }
 
 export async function deleteTicketType(orgId: string, actorId: string, eventId: string, ticketTypeId: string): Promise<void> {
-  await transaction(async (tx) => {
+  await withTxRetry(() => transaction(async (tx) => {
     const event = await lockActiveEvent(tx, orgId, eventId);
     // Ligne du type verrouillée AVANT les comptages : une réservation concurrente attend ou a déjà abouti.
     if (!(await repo.lockTicketType(tx, eventId, ticketTypeId))) throw errors.notFound();
@@ -429,5 +465,5 @@ export async function deleteTicketType(orgId: string, actorId: string, eventId: 
     }
     await tx.ticketType.delete({ where: { id: ticketTypeId } });
     await writeAudit(tx, { orgId, actorId, action: 'ticketType.delete', target: `ticketType:${ticketTypeId}`, meta: { eventId, name: current.name } });
-  });
+  }));
 }

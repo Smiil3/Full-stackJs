@@ -193,6 +193,8 @@ export const buyerHandlers = [
     if (mock.db.waitlist.some((w) => w.userId === user.id && w.ticketTypeId === tt.id && (w.status === 'WAITING' || w.status === 'OFFERED'))) {
       fail(409, 'ALREADY_IN_WAITLIST', 'Déjà inscrit');
     }
+    // v1.17 : deux offres expirées sur l'événement ⇒ sortie de la liste, réinscription refusée.
+    if (mock.db.waitlist.filter((w) => w.userId === user.id && w.eventId === event.id && w.status === 'EXPIRED').length >= 2) fail(409, 'CONFLICT', 'Réinscription refusée');
     const entry = { id: crypto.randomUUID(), userId: user.id, eventId: event.id, ticketTypeId: tt.id, quantity: quantity ?? 1, status: 'WAITING' as const, offerExpiresAt: null, createdAt: new Date().toISOString() };
     mock.db.waitlist.push(entry);
     return json(toWaitlist(entry), 201);

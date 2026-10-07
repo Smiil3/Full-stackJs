@@ -31,7 +31,7 @@ npm run keys:generate
 
 # 5. Schéma et données de démonstration
 npm run db:migrate
-npm run db:seed
+ALLOW_SEED=1 npm run db:seed   # accord explicite exigé (base de démonstration uniquement)
 ```
 
 ## Lancer
@@ -66,7 +66,7 @@ Vérification complète : `npm run lint && npm run typecheck && npm test && npm 
 
 ## Comptes de démonstration (seed)
 
-Mot de passe commun : variable `SEED_PASSWORD` (≥ 16 caractères), lue dans l'environnement ou dans `../.env.e2e` (partagé avec les tests e2e du front, gitignoré). Si elle est vide, un mot de passe aléatoire est généré et affiché **une seule fois**. Le seed refuse de s'exécuter en production et sur une base non locale ; rejoué sur une base déjà peuplée, il **resynchronise** les comptes de démonstration (mot de passe, sessions révoquées) sans rien supprimer.
+Le seed exige `ALLOW_SEED=1`, refuse la production et toute base non locale, et — sur une base déjà peuplée — refuse de s'exécuter s'il existe un compte hors domaine de démonstration (`.test`). Mot de passe commun : variable `SEED_PASSWORD` (≥ 16 caractères), lue dans l'environnement ou dans `../.env.e2e` (partagé avec les tests e2e du front, gitignoré). Si elle est vide, un mot de passe aléatoire est généré et affiché **une seule fois**. Le seed refuse de s'exécuter en production et sur une base non locale ; rejoué sur une base déjà peuplée, il **resynchronise** les comptes de démonstration (mot de passe, sessions révoquées) sans rien supprimer.
 
 | Compte | Rôle |
 |---|---|

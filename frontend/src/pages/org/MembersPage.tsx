@@ -12,6 +12,12 @@ import { PageLoader } from '../../components/PageLoader';
 import { lookup } from '../../lib/lookup';
 
 const ROLES: OrgRole[] = ['OWNER', 'MANAGER', 'SCANNER'];
+/** Ce qu'un propriétaire peut faire (affiché avant toute promotion en OWNER). */
+const OWNER_POWERS = [
+  'pourra modifier les coordonnées bancaires qui reçoivent les virements.',
+  'pourra changer les règles financières (remboursement, frais, annulation) et reporter ou annuler les événements.',
+  'pourra ajouter, promouvoir ou retirer des membres, y compris des propriétaires.',
+];
 
 function memberError(error: unknown, context: 'add' | 'change'): string {
   if (isApiError(error) && error.code === 'NOT_FOUND' && context === 'add') return 'Aucun compte confirmé n’utilise cette adresse : la personne doit d’abord créer son compte.';
@@ -35,8 +41,8 @@ export function MembersPage() {
 
   const requestRole = (mb: Member, role: OrgRole) => {
     if (role === mb.role) return;
-    // Rétrogradation ou modification de son propre rôle : confirmation explicite.
-    if (!roleAtLeast(role, mb.role) || isSelf(mb)) setPendingRole({ member: mb, role });
+    // Rétrogradation, promotion en propriétaire (audit B17-e) ou modification de son propre rôle : confirmation explicite.
+    if (!roleAtLeast(role, mb.role) || role === 'OWNER' || isSelf(mb)) setPendingRole({ member: mb, role });
     else m.setRole.mutate({ userId: mb.userId, role });
   };
 
@@ -59,10 +65,16 @@ export function MembersPage() {
   const [role, setRole] = useState<OrgRole>('SCANNER');
   const [removing, setRemoving] = useState<Member | null>(null);
 
+  const [confirmOwnerAdd, setConfirmOwnerAdd] = useState(false);
+  const sendAdd = () => {
+    setConfirmOwnerAdd(false);
+    m.add.mutate({ email: email.trim(), role }, { onSuccess: () => setEmail('') });
+  };
   const add = (e: SubmitEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!email.trim() || m.add.isPending) return;
-    m.add.mutate({ email: email.trim(), role }, { onSuccess: () => setEmail('') });
+    if (role === 'OWNER') setConfirmOwnerAdd(true); // nouveau propriétaire : confirmation explicite
+    else sendAdd();
   };
 
   if (isPending) return <PageLoader />;
@@ -174,10 +186,23 @@ export function MembersPage() {
         )}
       </ConfirmDialog>
       <ConfirmDialog
+        open={confirmOwnerAdd}
+        title="Ajouter un propriétaire ?"
+        icon="users"
+        confirmLabel="Oui, ajouter comme propriétaire"
+        cancelLabel="Annuler"
+        danger
+        busy={m.add.isPending}
+        consequences={OWNER_POWERS.map((p) => `${email.trim()} ${p}`)}
+        onCancel={() => setConfirmOwnerAdd(false)}
+        onConfirm={sendAdd}
+      />
+      <ConfirmDialog
         open={pendingRole !== null}
-        title="Modifier ce rôle ?"
+        title={pendingRole?.role === 'OWNER' ? 'Nommer propriétaire ?' : 'Modifier ce rôle ?'}
         confirmLabel="Confirmer"
         danger
+        consequences={pendingRole?.role === 'OWNER' && !isSelf(pendingRole.member) ? OWNER_POWERS.map((p) => `${pendingRole.member.displayName} ${p}`) : undefined}
         busy={m.setRole.isPending}
         onCancel={() => setPendingRole(null)}
         onConfirm={applyRole}

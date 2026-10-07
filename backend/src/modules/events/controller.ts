@@ -18,7 +18,7 @@ export const get = ({ params }: In<EventP, Empty, Empty>, _q: Request, res: Resp
 export const create = ({ body }: In<OrgP, Empty, EventCreateBody>, _q: Request, res: Response) =>
   service.createEvent(getOrg(res).orgId, getAuth(res).userId, body);
 export const update = ({ params, body }: In<EventP, Empty, EventPatchBody>, _q: Request, res: Response) =>
-  service.updateEvent(getOrg(res).orgId, { userId: getAuth(res).userId, role: getOrg(res).role }, params.eventId, body);
+  service.updateEvent(getOrg(res).orgId, getAuth(res).userId, params.eventId, body);
 export const publish = ({ params }: In<EventP, Empty, Empty>, _q: Request, res: Response) =>
   service.publishEvent(getOrg(res).orgId, getAuth(res).userId, params.eventId);
 export const cancel = ({ params, body }: In<EventP, Empty, { reason: string }>, _q: Request, res: Response) =>

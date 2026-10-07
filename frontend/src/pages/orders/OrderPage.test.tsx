@@ -220,4 +220,50 @@ describe('page commande', () => {
     }
     expect(screen.getByText('Elle nous permet de reconnaître votre virement.')).toBeInTheDocument();
   });
+
+  it('A2 : prestataire injoignable (503) ⇒ message rassurant avec l’heure de réservation, « Réessayer » après Retry-After', async () => {
+    const user = userEvent.setup();
+    const order = await createOrder();
+    const { router } = await renderApp(`/orders/${order.id}`);
+    injectFault({ route: 'POST /orders/:orderId/checkout', status: 503, code: 'PAYMENT_PROVIDER_UNAVAILABLE', headers: { 'Retry-After': '30' } });
+    const t0 = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(t0);
+    await user.click(await screen.findByRole('button', { name: /^Payer/ }));
+    const alert = await screen.findByText(/Le paiement est momentanément indisponible/);
+    const hhmm = new Intl.DateTimeFormat('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone }).format(new Date(order.expiresAt ?? ''));
+    expect(alert).toHaveTextContent(`Vos places restent réservées jusqu’à ${hhmm}. Réessayez dans un instant.`);
+    expect(screen.queryByText(/problème technique/)).toBeNull();
+    const retry = screen.getByRole('button', { name: /^Réessayer/ });
+    expect(retry).toBeDisabled();
+    expect(retry).toHaveTextContent('Réessayer (dans 30 s)');
+    clock.mockReturnValue(t0 + 30_000); // Retry-After écoulé
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Réessayer' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: 'Réessayer' }));
+    await waitFor(() => expect(router.state.location.pathname).toBe(`/mock-psp/${order.id}`));
+  });
+
+  it('B16 : après 60 s de polling sans confirmation, une action reste TOUJOURS proposée (Reprendre ou Actualiser)', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
+    try {
+      // Paiement en cours chez le prestataire (session ouverte) + retour « success » : « Reprendre » ET « Actualiser ».
+      const order = await createOrder();
+      await apiRequest(`/orders/${order.id}/checkout`, { method: 'POST' });
+      const first = await renderApp(`/orders/${order.id}?payment=success`);
+      await screen.findByText(/Paiement en cours de confirmation/);
+      await vi.advanceTimersByTimeAsync(61_000);
+      expect(await screen.findByText(/prend plus de temps que prévu/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Reprendre le paiement' })).toBeEnabled();
+      expect(screen.getByRole('button', { name: 'Actualiser' })).toBeEnabled();
+      first.unmount();
+      // Sans session ouverte : « Actualiser » reste proposé (jamais une page sans action).
+      const other = await createOrder();
+      await renderApp(`/orders/${other.id}?payment=success`);
+      await screen.findByText(/Paiement en cours de confirmation/);
+      await vi.advanceTimersByTimeAsync(61_000);
+      expect(await screen.findByRole('button', { name: 'Actualiser' })).toBeEnabled();
+      expect(screen.queryByRole('button', { name: /^Payer/ })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

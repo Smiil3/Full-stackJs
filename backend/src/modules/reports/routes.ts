@@ -6,6 +6,7 @@ import { endpoint, validate, type ValidatedInput } from '../../middlewares/valid
 import { isoDateOutput, uuid, uuidStrict } from '../../lib/schemas.js';
 import { eventStats } from './stats.js';
 import { streamAttendees } from './attendees.js';
+import type { Limiters } from '../../middlewares/rateLimit.js';
 
 type Empty = Record<string, never>;
 const params = Joi.object<{ orgId: string; eventId: string }>({ orgId: uuid.required(), eventId: uuid.required() });
@@ -25,12 +26,12 @@ const statsResponse = Joi.object({
 });
 
 /** Statistiques et export, montés sous `/orgs/:orgId/events/:eventId`. */
-export function reportsRouter(): Router {
+export function reportsRouter(limiters: Limiters): Router {
   const r = Router({ mergeParams: true });
   r.get('/stats', requireOrgRole('MANAGER'), ...endpoint({ params, response: statsResponse },
     ({ params: p }: ValidatedInput<{ orgId: string; eventId: string }, Empty, Empty, Empty>, _q: Request, res: Response) => eventStats(getOrg(res).orgId, p.eventId)));
   // Réponse CSV en flux : validation d'entrée standard, sortie construite cellule par cellule (pas de JSON).
-  r.get('/attendees.csv', requireOrgRole('MANAGER'), validate({ params }), async (_req, res) => {
+  r.get('/attendees.csv', requireOrgRole('MANAGER'), limiters.exportPerUser, validate({ params }), async (_req, res) => {
     const input = res.locals['input'] as ValidatedInput<{ orgId: string; eventId: string }, Empty, Empty, Empty>;
     await streamAttendees(getOrg(res).orgId, getAuth(res).userId, input.params.eventId, res);
   });

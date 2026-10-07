@@ -1,10 +1,13 @@
+import { TimeBudget } from '../lib/budget.js';
 import { clock } from '../lib/clock.js';
+import { mapLimit } from '../lib/concurrency.js';
 import { getDb, transaction } from '../lib/db.js';
 import { withTxRetry } from '../lib/txRetry.js';
 import { getLogger } from '../lib/logger.js';
 import { getPspClient } from '../lib/psp.js';
 import { applySucceededPayment } from '../modules/payments/webhook.js';
 import { RECONCILE_BATCH, RECONCILE_RECHECK_MS } from '../config/payments.js';
+import { RECONCILE_CONCURRENCY } from '../config/worker.js';
 
 export type ReconcileOutcome = 'paid' | 'unpaid' | 'unreachable';
 
@@ -38,7 +41,7 @@ export async function reconcileOrder(orderId: string): Promise<ReconcileOutcome>
 }
 
 /** Job : sessions récentes des commandes carte encore en attente, consultées au plus une fois par minute. */
-export async function reconcileRecentSessions(): Promise<{ checked: number; paid: number }> {
+export async function reconcileRecentSessions(budget: TimeBudget = TimeBudget.unlimited()): Promise<{ checked: number; paid: number }> {
   const now = clock.now();
   const before = new Date(now.getTime() - RECONCILE_RECHECK_MS);
   const rows = await getDb().$queryRaw<{ orderId: string }[]>`
@@ -50,12 +53,13 @@ export async function reconcileRecentSessions(): Promise<{ checked: number; paid
     ORDER BY MIN(COALESCE(s."checkedAt", s."createdAt")), s."orderId"
     LIMIT ${RECONCILE_BATCH}`;
   let paid = 0;
-  for (const { orderId } of rows) {
+  // Parallèle borné (audit M3) : un PSP lent (délai de 8 s par appel) ne monopolise pas le passage.
+  const { notStarted } = await mapLimit(rows, RECONCILE_CONCURRENCY, async ({ orderId }) => {
     try {
       if ((await reconcileOrder(orderId)) === 'paid') paid += 1;
     } catch (err) {
       getLogger().error({ err, orderId }, 'échec du rapprochement d’une commande');
     }
-  }
-  return { checked: rows.length, paid };
+  }, () => budget.exhausted());
+  return { checked: rows.length - notStarted.length, paid };
 }

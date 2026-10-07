@@ -15,10 +15,18 @@ export const SETTINGS_BOUNDS = {
   maxPerOrder: { min: 1, max: 20 },
   /** Places par personne et par événement. */
   maxPerUser: { min: 1, max: 50 },
-  /** Délai de réponse à une offre de liste d'attente (minutes, 48 h max). */
-  waitlistOfferMinutes: { min: 15, max: 2880 },
+  /** Délai de réponse à une offre de liste d'attente (minutes, 6 h max : anti-gel, contrat 1.17 §6). */
+  waitlistOfferMinutes: { min: 15, max: 360 },
   /** Frais de service fixes (centimes, 10 € max). */
   serviceFeeFixedCents: { min: 0, max: 1000 },
   /** Frais de service proportionnels (points de base, 15 % max). */
   serviceFeeBasisPoints: { min: 0, max: 1500 },
 } as const;
+
+/**
+ * Surcharges d'événement à portée FINANCIÈRE (contrat 1.17 §7.2) : réservées à l'OWNER, auditées champ par champ,
+ * notifiées à tous les OWNER. Les autres surcharges (durées de réservation, plafonds, liste d'attente) restent MANAGER+.
+ */
+export const FINANCIAL_OVERRIDE_KEYS = [
+  'refundPercent', 'serviceFeeFixedCents', 'serviceFeeBasisPoints', 'transferEnabled', 'selfCancellationEnabled', 'cancellationDeadlineHours',
+] as const;

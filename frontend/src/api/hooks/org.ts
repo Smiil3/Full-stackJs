@@ -128,7 +128,18 @@ export function useCreateEvent(orgId: string) {
 export function useEventMutations(orgId: string, eventId: string) {
   const store = useEventCache(orgId);
   const qc = useQueryClient();
-  const refresh = () => qc.invalidateQueries({ queryKey: qk.orgEvent(orgId, eventId) });
+  /**
+   * Après une opération sur les types de places (audit B17-d) : l'événement, la liste des événements
+   * du collectif, ses statistiques et commandes, et le catalogue public (prix « à partir de »,
+   * disponibilités, fiche) sont périmés.
+   */
+  const refresh = () =>
+    Promise.all([
+      qc.invalidateQueries({ queryKey: ['org', orgId, 'event', eventId] }),
+      qc.invalidateQueries({ queryKey: ['org', orgId, 'events'] }),
+      qc.invalidateQueries({ queryKey: ['events'] }),
+      qc.invalidateQueries({ queryKey: qk.event(eventId) }),
+    ]);
   const base = ev(orgId, eventId);
   return {
     update: useMutation({ mutationFn: (b: EventPatchBody) => apiRequest<EventAdmin>(base, { method: 'PATCH', body: b }), onSuccess: store }),
@@ -215,7 +226,11 @@ export function useMarkRefundDone(orgId: string) {
     mutationFn: (v: { refundId: string; note: string }) => apiRequest<RefundAdmin>(`${org(orgId)}${apiPath`/refunds/${v.refundId}/mark-done`}`, { method: 'POST', body: { note: v.note } }),
     onSuccess: (r) => {
       void qc.invalidateQueries({ queryKey: ['org', orgId, 'refunds'] });
-      void qc.invalidateQueries({ queryKey: qk.orgEventStats(orgId, r.eventId) });
+      if (r.eventId) void qc.invalidateQueries({ queryKey: qk.orgEventStats(orgId, r.eventId) });
+    },
+    // Déjà traité / en cours chez le prestataire : la liste est relue (statut à jour).
+    onError: (e) => {
+      if (isApiError(e) && e.code === 'INVALID_STATE') void qc.invalidateQueries({ queryKey: ['org', orgId, 'refunds'] });
     },
   });
 }

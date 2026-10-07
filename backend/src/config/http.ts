@@ -20,6 +20,7 @@ export const HTTP_STATUS = {
   TOO_MANY_REQUESTS: 429,
   INTERNAL_SERVER_ERROR: 500,
   BAD_GATEWAY: 502,
+  SERVICE_UNAVAILABLE: 503,
 } as const;
 
 /** Premier code d'erreur client (4xx) : journalisé en warn. */

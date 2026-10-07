@@ -61,8 +61,8 @@ export class MockHttpError extends Error {
   }
 }
 
-export function fail(status: number, code: ErrorCode, message: string, details?: ErrorDetails): never {
-  throw new MockHttpError(status, code, message, details);
+export function fail(status: number, code: ErrorCode, message: string, details?: ErrorDetails, headers?: Record<string, string>): never {
+  throw new MockHttpError(status, code, message, details, headers);
 }
 export const notFound = (): never => fail(404, 'NOT_FOUND', 'Ressource introuvable');
 

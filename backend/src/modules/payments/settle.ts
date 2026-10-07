@@ -22,8 +22,16 @@ export const orderForSettlement = {
 
 type SettlementOrder = NonNullable<Awaited<ReturnType<typeof loadOrderForUpdate>>>;
 
-/** Verrouille la commande (transitions sérialisées avec l'expiration, l'annulation, un autre webhook). */
+/**
+ * Verrouille la commande (transitions sérialisées avec l'expiration, l'annulation, un autre webhook).
+ * Ordre unique (audit B1) : l'événement est d'abord verrouillé FOR KEY SHARE (compatible avec les réservations et
+ * les autres règlements, n'attend qu'une modification de l'événement en cours) — l'émission des billets prendrait
+ * sinon ce verrou APRÈS les types de places, à l'inverse de `lockEvent` → types.
+ */
 export async function loadOrderForUpdate(tx: Tx, orderId: string) {
+  const target = await tx.order.findUnique({ where: { id: orderId }, select: { eventId: true } });
+  if (!target) return null;
+  await tx.$queryRaw`SELECT "id" FROM "events" WHERE "id" = ${target.eventId}::uuid FOR KEY SHARE`;
   const rows = await tx.$queryRaw<{ id: string }[]>`SELECT "id" FROM "orders" WHERE "id" = ${orderId}::uuid FOR UPDATE`;
   if (rows.length === 0) return null;
   return tx.order.findUnique({ where: { id: orderId }, include: orderForSettlement });
@@ -144,6 +152,8 @@ export async function recordRefund(
   await tx.refund.create({
     data: {
       orderId: input.orderId,
+      createdAt: clock.now(),
+      nextAttemptAt: clock.now(),
       paymentId: input.paymentId,
       amountCents: amount,
       reason: input.reason,

@@ -10,8 +10,10 @@ export function SalesRulesEditor(props: {
   settings: OrgSettings | undefined;
   errors: Partial<Record<RuleKey, string>>;
   onChange: (key: RuleKey, field: RulesState[RuleKey]) => void;
+  /** Règles en lecture seule (règles financières pour un MANAGER). */
+  locked?: ReadonlySet<RuleKey>;
 }) {
-  const { state, settings, errors, onChange } = props;
+  const { state, settings, errors, onChange, locked } = props;
   return (
     <fieldset className="stack card">
       <legend>Règles de vente</legend>
@@ -24,6 +26,19 @@ export function SalesRulesEditor(props: {
         const name = `regle-${def.key}`;
         const inputId = `${name}-valeur`;
         const errorId = `${name}-erreur`;
+        if (locked?.has(def.key)) {
+          return (
+            <div key={def.key} className="rule" role="group" aria-labelledby={`${name}-titre`}>
+              <p id={`${name}-titre`} className="rule__title">
+                {def.label}
+              </p>
+              <p className="rule__effective">
+                {f.mode === 'inherit' ? 'Réglage du collectif' : 'Personnalisé'} : <strong>{effective !== undefined ? formatRule(def, effective) : '—'}</strong>
+              </p>
+              <p className="muted rule__effective">Réservé au propriétaire du collectif (règle financière).</p>
+            </div>
+          );
+        }
         return (
           <div key={def.key} className="rule" role="group" aria-labelledby={`${name}-titre`}>
             <p id={`${name}-titre`} className="rule__title">

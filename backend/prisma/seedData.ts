@@ -42,6 +42,9 @@ export const SEED_ACCOUNTS = [
   ...ORG_DEFS.flatMap((d) => ['owner', 'manager', 'scanner'].map((r) => `${r}@${d.prefix}.test`)),
 ];
 
+/** Domaine réservé des comptes de démonstration (RFC 2606). */
+const DEMO_EMAIL_SUFFIX = '.test';
+
 /** SEED_PASSWORD : variable d'environnement, sinon ../.env.e2e (seule cette clé est lue). */
 function seedPassword(): string {
   const fromEnv = process.env['SEED_PASSWORD'] ?? '';
@@ -102,9 +105,13 @@ async function syncExisting(password: string): Promise<void> {
 export async function runSeed(): Promise<void> {
   const env = getEnv();
   const provided = seedPassword();
-  assertSeedAllowed({ nodeEnv: env.nodeEnv, databaseUrl: env.databaseUrl, seedPassword: provided });
+  assertSeedAllowed({ nodeEnv: env.nodeEnv, databaseUrl: env.databaseUrl, seedPassword: provided, allowSeed: process.env['ALLOW_SEED'] ?? '' });
   const db = getDb();
   if ((await db.user.count()) > 0) {
+    // Resynchronisation seulement sur une base de DÉMONSTRATION (audit B13) : tous les comptes créés par le seed sont
+    // en « .test » (domaine réservé, RFC 2606, jamais une vraie adresse) ; un seul autre compte ⇒ refus.
+    const foreign = await db.user.count({ where: { NOT: { email: { endsWith: DEMO_EMAIL_SUFFIX } } } });
+    if (foreign > 0) throw new Error(`Base contenant ${foreign} compte(s) hors démonstration : seed refusé (aucune modification).`);
     await syncExisting(provided);
     return;
   }

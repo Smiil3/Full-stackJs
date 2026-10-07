@@ -1,4 +1,5 @@
 import type { Prisma } from '../generated/prisma/client.js';
+import { clock } from './clock.js';
 import type { Tx } from './db.js';
 
 /** Journal d'audit (append-only) : jamais d'IBAN en clair ni de secret dans `meta`. */
@@ -8,7 +9,7 @@ export async function writeAudit(
 ): Promise<void> {
   // Sérialisation JSON explicite : dates en ISO, `undefined` retirés, aucun objet non sérialisable.
   const meta = JSON.parse(JSON.stringify(entry.meta ?? {})) as Prisma.InputJsonObject;
-  await tx.auditLog.create({ data: { orgId: entry.orgId, actorId: entry.actorId, action: entry.action, target: entry.target, meta } });
+  await tx.auditLog.create({ data: { orgId: entry.orgId, actorId: entry.actorId, action: entry.action, target: entry.target, meta, createdAt: clock.now() } });
 }
 
 /** Différence avant / après limitée aux champs modifiés. */

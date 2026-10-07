@@ -17,7 +17,8 @@
     "typecheck": "tsc -b --noEmit",
     "e2e": "playwright test",
     "e2e:mock": "playwright test -c playwright.mock.config.ts",
-    "e2e:pwa": "playwright test -c playwright.pwa.config.ts"
+    "e2e:pwa": "playwright test -c playwright.pwa.config.ts",
+    "ticket-key": "node scripts/ticket-public-jwk.mjs"
   },
   "dependencies": {
     "@noble/ed25519": "3.2.0",

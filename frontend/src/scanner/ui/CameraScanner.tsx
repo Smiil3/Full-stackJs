@@ -1,8 +1,7 @@
 import { BrowserQRCodeReader, type IScannerControls } from '@zxing/browser';
 import { useEffect, useRef, useState } from 'react';
+import { SameCodeFilter } from './sameCodeFilter';
 
-/** Même QR relu par la caméra pendant ce délai ⇒ ignoré (évite une avalanche de résultats). */
-const SAME_CODE_DEBOUNCE_MS = 3000;
 
 /**
  * Lecture continue des QR par la caméra arrière. `paused` : les lectures sont ignorées (résultat affiché).
@@ -13,13 +12,16 @@ export function CameraScanner({ onCode, paused }: { onCode: (text: string) => bo
   const videoRef = useRef<HTMLVideoElement>(null);
   const onCodeRef = useRef(onCode);
   const pausedRef = useRef(paused);
-  const last = useRef<{ text: string; at: number } | null>(null);
+  // Même billet laissé devant la caméra : ignoré tant qu'il est lu et 3 s après la fermeture du résultat.
+  const filter = useRef(new SameCodeFilter());
   // Absence d'API caméra (navigateur ancien, contexte non sécurisé) : connue dès le premier rendu.
   const [error, setError] = useState<string | null>(() =>
     typeof navigator.mediaDevices === 'object' && typeof navigator.mediaDevices.getUserMedia === 'function' ? null : 'Caméra indisponible sur cet appareil : utilisez la saisie manuelle.',
   );
   useEffect(() => {
     onCodeRef.current = onCode;
+    // Fermeture du résultat (pause levée) : le délai de calme du même code repart de maintenant.
+    if (pausedRef.current && !paused) filter.current.closed(Date.now());
     pausedRef.current = paused;
   });
 
@@ -31,11 +33,11 @@ export function CameraScanner({ onCode, paused }: { onCode: (text: string) => bo
     const reader = new BrowserQRCodeReader(undefined, { delayBetweenScanAttempts: 150 });
     reader
       .decodeFromConstraints({ video: { facingMode: { ideal: 'environment' } }, audio: false }, video, (result) => {
-        if (!result || pausedRef.current) return;
+        if (!result) return;
         const text = result.getText();
         const now = Date.now();
-        if (last.current && last.current.text === text && now - last.current.at < SAME_CODE_DEBOUNCE_MS) return;
-        if (onCodeRef.current(text)) last.current = { text, at: now };
+        if (!filter.current.seen(text, now, pausedRef.current)) return;
+        if (onCodeRef.current(text)) filter.current.accepted(text, now);
       })
       .then((c) => {
         if (stopped) c.stop();

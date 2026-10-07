@@ -7,6 +7,8 @@ import { formatInTimezone } from '../../lib/time.js';
 import { getLogger } from '../../lib/logger.js';
 import { HTTP_STATUS } from '../../config/http.js';
 import { CSV_EXPORT_PAGE } from '../../config/worker.js';
+import { EXPORT_AUDIT_DEDUP_MS } from '../../config/events.js';
+import { clock } from '../../lib/clock.js';
 
 const STATUS_LABELS = { VALID: 'valide', USED: 'scanné', CANCELLED: 'annulé' } as const;
 
@@ -19,7 +21,11 @@ export async function streamAttendees(orgId: string, actorId: string, eventId: s
   const db = getDb();
   const event = await db.event.findFirst({ where: { id: eventId, orgId }, select: { id: true, timezone: true, title: true } });
   if (!event) throw errors.notFound();
-  await db.$transaction((tx) => writeAudit(tx, { orgId, actorId, action: 'attendees.export', target: `event:${eventId}`, meta: {} }));
+  // Une ligne d'audit par (compte, événement) sur EXPORT_AUDIT_DEDUP_MS : des exports répétés ne noient pas l'audit.
+  const recent = await db.auditLog.count({
+    where: { orgId, actorId, action: 'attendees.export', target: `event:${eventId}`, createdAt: { gte: new Date(clock.now().getTime() - EXPORT_AUDIT_DEDUP_MS) } },
+  });
+  if (recent === 0) await db.$transaction((tx) => writeAudit(tx, { orgId, actorId, action: 'attendees.export', target: `event:${eventId}`, meta: {} }));
 
   res.status(HTTP_STATUS.OK);
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
@@ -33,9 +39,15 @@ export async function streamAttendees(orgId: string, actorId: string, eventId: s
   const write = async (chunk: string): Promise<void> => {
     if (stream.closed) return;
     if (!res.write(chunk)) {
+      // Contre-pression : on attend « drain » OU « close », puis on retire les DEUX écouteurs (aucune accumulation).
       await new Promise<void>((resolve) => {
-        res.once('drain', resolve);
-        res.once('close', resolve);
+        const done = () => {
+          res.off('drain', done);
+          res.off('close', done);
+          resolve();
+        };
+        res.on('drain', done);
+        res.on('close', done);
       });
     }
   };

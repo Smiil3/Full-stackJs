@@ -12,6 +12,7 @@ import { getDummyHash, hashPassword, verifyPasswordHash } from '../../lib/passwo
 import { normalizePassword } from '../../lib/passwordPolicy.js';
 import { normalizeEmail } from '../../lib/email.js';
 import * as repo from './repo.js';
+import { ipFingerprint, SESSION_FINGERPRINT } from '../../lib/ipFingerprint.js';
 import { clock } from '../../lib/clock.js';
 import { ACCESS_TOKEN_TTL_SECONDS, AUTH_EMAIL_QUOTAS, EMAIL_TOKEN_TTL_MINUTES, MAIL_DAILY_WINDOW_MS, MAIL_MAX_PER_DAY, MAIL_MIN_INTERVAL_MINUTES, REFRESH_FAMILY_MAX_MS, REFRESH_GRACE_MS, REFRESH_TTL_MS } from '../../config/auth.js';
 import { minutes } from '../../config/units.js';
@@ -55,15 +56,15 @@ export const authMetrics = { passwordVerifications: 0 };
 const verifyPassword = verifyPasswordHash;
 
 /** Évalue le mot de passe d'un compte réel, après réservation atomique d'une tentative. */
-async function checkAccountPassword(user: { id: string; passwordHash: string }, password: string): Promise<boolean> {
-  if (!(await repo.reserveLoginAttempt(user.id))) {
+async function checkAccountPassword(user: { id: string; passwordHash: string }, password: string, fingerprint: string): Promise<boolean> {
+  if (!(await repo.reserveLoginAttempt(user.id, fingerprint))) {
     // Compte verrouillé : aucune évaluation, mais même coût apparent qu'une vérification réelle.
     await verifyPassword(await getDummyHash(), password);
     return false;
   }
   authMetrics.passwordVerifications += 1;
   const valid = await verifyPassword(user.passwordHash, password);
-  if (valid) await repo.recordLoginSuccess(user.id);
+  if (valid) await repo.recordLoginSuccess(user.id, fingerprint);
   return valid;
 }
 
@@ -73,7 +74,7 @@ async function checkAccountPassword(user: { id: string; passwordHash: string }, 
  */
 export async function reauthenticate(userId: string, password: string): Promise<void> {
   const user = await transaction((tx) => tx.user.findUnique({ where: { id: userId }, select: { id: true, passwordHash: true } }));
-  if (!user || !(await checkAccountPassword(user, password))) throw errors.invalidCredentials();
+  if (!user || !(await checkAccountPassword(user, password, SESSION_FINGERPRINT))) throw errors.invalidCredentials();
 }
 
 /** Quotas par adresse email (en plus des quotas par IP), appliqués que le compte existe ou non. */
@@ -233,15 +234,17 @@ async function resendVerificationInner(rawEmail: string): Promise<void> {
  * vérification argon2 systématique (hash factice si l'email est inconnu). Email non vérifié ⇒ 403
  * EMAIL_NOT_VERIFIED, seulement après un mot de passe correct.
  */
-export async function login(rawEmail: string, password: string): Promise<SessionResult> {
+export async function login(rawEmail: string, password: string, ip: string | undefined): Promise<SessionResult> {
   const email = normalizeEmail(rawEmail);
-  await consumeQuota('acct:login', email, QUOTA.login.windowMs, QUOTA.login.max);
+  const fingerprint = ipFingerprint(ip);
+  // Quota par (adresse, empreinte d'IP) : un tiers n'épuise pas celui du titulaire (audit M7).
+  await consumeQuota('acct:login', `${email}|${fingerprint}`, QUOTA.login.windowMs, QUOTA.login.max);
   const user = await repo.findUserByEmail(email);
   if (!user) {
     await verifyPassword(await getDummyHash(), password);
     throw errors.invalidCredentials();
   }
-  if (!(await checkAccountPassword(user, password))) throw errors.invalidCredentials();
+  if (!(await checkAccountPassword(user, password, fingerprint))) throw errors.invalidCredentials();
   // Email non vérifié : révélé UNIQUEMENT à qui connaît le mot de passe, et aucune session n'est créée.
   if (!user.emailVerifiedAt) throw errors.emailNotVerified();
   const refresh = await transaction(async (tx) => {
@@ -356,7 +359,7 @@ export async function changePassword(userId: string, currentPassword: string, ne
   }
   const user = await transaction((tx) => tx.user.findUnique({ where: { id: userId } }));
   // Même compteur et même verrou que la connexion : pas de force brute via une session volée.
-  if (!user || !(await checkAccountPassword(user, currentPassword))) throw errors.invalidCredentials();
+  if (!user || !(await checkAccountPassword(user, currentPassword, SESSION_FINGERPRINT))) throw errors.invalidCredentials();
   const passwordHash = await hashPassword(newPassword);
   await transaction(async (tx) => {
     await tx.user.update({ where: { id: userId }, data: { passwordHash, tokenVersion: { increment: 1 } } });

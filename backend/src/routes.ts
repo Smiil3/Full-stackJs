@@ -29,7 +29,7 @@ export function buildApiRouter(limiters: Limiters): Router {
   router.use('/orgs/:orgId/refunds', orgRefundsRouter());
   router.use('/orgs/:orgId', orgOrdersRouter());
   router.use('/orgs/:orgId/events/:eventId/checkin', eventCheckinRouter(limiters));
-  router.use('/orgs/:orgId/events/:eventId', reportsRouter());
+  router.use('/orgs/:orgId/events/:eventId', reportsRouter(limiters));
   router.use('/orgs/:orgId/events', orgEventsRouter());
   router.use('/orgs/:orgId/checkin', orgCheckinRouter());
   router.use('/orgs/:orgId', orgsRouter());

@@ -9,6 +9,7 @@ type ConfigFn = (env: { mode: string; command: 'build' | 'serve'; isSsrBuild: bo
   preview?: { headers?: Record<string, string> };
 };
 const config = viteConfig as unknown as ConfigFn;
+const VALID_KEY = '{"kty":"OKP","crv":"Ed25519","x":"AhigxYmL0SJe6AbpQgVy6DOurnhSVLQv0CXQFgslXDE"}';
 
 describe('en-têtes de sécurité (revue F1.1 — M7)', () => {
   it('CSP de production stricte : aucun unsafe-*, pas de framing, pas de base/objet', () => {
@@ -36,10 +37,28 @@ describe('en-têtes de sécurité (revue F1.1 — M7)', () => {
         expect(build, bad).toThrow(/VITE_PSP_ORIGIN/);
       }
       process.env.VITE_PSP_ORIGIN = 'https://pay.psp.example';
+      process.env.VITE_TICKET_PUBLIC_KEY_JWK = VALID_KEY;
       expect(build).not.toThrow();
     } finally {
       if (previous === undefined) delete process.env.VITE_PSP_ORIGIN;
       else process.env.VITE_PSP_ORIGIN = previous;
+      delete process.env.VITE_TICKET_PUBLIC_KEY_JWK;
+    }
+  });
+
+  it('B14 : build de production refusé sans clé publique Ed25519 des billets valide', () => {
+    const build = () => config({ mode: 'production', command: 'build', isSsrBuild: false, isPreview: false });
+    process.env.VITE_PSP_ORIGIN = 'https://pay.psp.example';
+    try {
+      for (const bad of ['', 'pas du json', '{"kty":"RSA","n":"x","e":"AQAB"}', '{"kty":"OKP","crv":"X25519","x":"AhigxYmL0SJe6AbpQgVy6DOurnhSVLQv0CXQFgslXDE"}', '{"kty":"OKP","crv":"Ed25519","x":"court"}', '{"kty":"OKP","crv":"Ed25519","x":"AhigxYmL0SJe6AbpQgVy6DOurnhSVLQv0CXQFgslXDE","d":"secret"}']) {
+        process.env.VITE_TICKET_PUBLIC_KEY_JWK = bad;
+        expect(build, bad).toThrow(/VITE_TICKET_PUBLIC_KEY_JWK/);
+      }
+      process.env.VITE_TICKET_PUBLIC_KEY_JWK = VALID_KEY;
+      expect(build).not.toThrow();
+    } finally {
+      delete process.env.VITE_PSP_ORIGIN;
+      delete process.env.VITE_TICKET_PUBLIC_KEY_JWK;
     }
   });
 
@@ -49,9 +68,17 @@ describe('en-têtes de sécurité (revue F1.1 — M7)', () => {
     expect(metas).toEqual(['<meta name="referrer" content="no-referrer"']);
   });
 
+  it('Info audit : img-src limité à la même origine ; upgrade-insecure-requests seulement pour le site déployé', () => {
+    expect(contentSecurityPolicy(false)).toContain("img-src 'self';");
+    expect(contentSecurityPolicy(false)).not.toMatch(/data:|blob:/);
+    expect(contentSecurityPolicy(false)).not.toContain('upgrade-insecure-requests'); // aperçu en http://localhost
+    expect(contentSecurityPolicy(false, true)).toMatch(/; upgrade-insecure-requests$/);
+    expect(contentSecurityPolicy(true, true)).not.toContain('upgrade-insecure-requests');
+  });
+
   it('la conf nginx d’exemple reprend exactement la CSP et les en-têtes, plus HSTS, partout', () => {
     const snippet = readFileSync(new URL('./deploy/nuits-security-headers.conf', import.meta.url), 'utf8');
-    for (const [name, value] of Object.entries(securityHeaders(false))) {
+    for (const [name, value] of Object.entries(securityHeaders(false, true))) {
       expect(snippet).toContain(`add_header ${name} "${value}" always;`);
     }
     expect(snippet).toContain('Strict-Transport-Security');

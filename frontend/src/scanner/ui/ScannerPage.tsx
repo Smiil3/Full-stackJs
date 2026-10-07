@@ -35,7 +35,10 @@ const REASON_LABELS: Record<LocalReason, string> = {
 type Failure = { qrPayload: string; scanId: string };
 
 export function ScannerPage() {
-  const { orgId = '', eventId = '' } = useParams();
+  // Identifiants de l'URL normalisés en minuscules (le QR et le serveur les écrivent en minuscules).
+  const params = useParams();
+  const orgId = (params.orgId ?? '').toLowerCase();
+  const eventId = (params.eventId ?? '').toLowerCase();
   const { status } = useAuth();
   const online = useOnline() && status === 'authenticated';
   const owner = useOwner();

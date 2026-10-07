@@ -20,3 +20,5 @@ export const RECONCILE_BATCH = 20;
 export const RECONCILE_RECHECK_MS = minutes(1);
 /** PSP injoignable : expiration d'une commande carte différée au plus de ce délai (D B9). */
 export const RECONCILE_GRACE_MS = minutes(15);
+/** PSP injoignable / délai dépassé / 5xx : nouvel essai conseillé à l'acheteur (en-tête Retry-After, contrat 1.17 §1). */
+export const PSP_UNAVAILABLE_RETRY_AFTER_SECONDS = 30;

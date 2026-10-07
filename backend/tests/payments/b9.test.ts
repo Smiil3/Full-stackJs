@@ -13,6 +13,7 @@ import { createEvent, orgWithStaff, setStock, type OrgFixture } from '../fixture
 import { openSession, paymentEvent, postWebhook, startPsp, type PspHarness } from '../psp.js';
 import { MAX_REFUND_ATTEMPTS } from '../../src/config/refunds.js';
 import { RECONCILE_GRACE_MS } from '../../src/config/payments.js';
+import { processEventReschedules } from '../../src/modules/events/reschedule.js';
 
 let org: OrgFixture;
 let buyer: LoggedIn;
@@ -259,6 +260,7 @@ describe('report et commandes non payées ; virement tardif (B9 M3)', () => {
     await api().patch(`/api/v1/orgs/${org.id}/events/${o.eventId}`).set(org.owner.auth)
       .send({ startsAt: newStart.toISOString(), endsAt: new Date(newStart.getTime() + 3600_000).toISOString(), salesEndAt: newStart.toISOString(), rescheduleReason: 'Salle indisponible' })
       .expect(200);
+    await processEventReschedules();
     const order = await orderOf(o.orderId);
     expect(order.refundPercent).toBe(100);
     expect(order.serviceFeeRefundable).toBe(true);

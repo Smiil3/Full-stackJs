@@ -22,6 +22,7 @@ export interface TemplatePayloads {
   eventCancelled: { displayName: string; eventTitle: string; reason: string; amount: string | null; transferRefundPending: boolean };
   eventRescheduled: { displayName: string; eventTitle: string; oldDate: string; newDate: string; reason: string };
   bankDetailsChanged: { displayName: string; orgName: string; changedBy: string; ibanMasked: string };
+  financialRulesChanged: { displayName: string; orgName: string; eventTitle: string; changedBy: string; changes: string };
   memberAdded: { displayName: string; orgName: string; role: string; addedBy: string };
 }
 
@@ -163,6 +164,17 @@ export function renderTemplate<T extends MailTemplate>(template: T, data: Templa
           'Si ce changement n’est pas légitime, contactez immédiatement les autres propriétaires du collectif.',
         ]),
         text: `Bonjour ${s('displayName')},\nLes coordonnées bancaires de ${s('orgName')} ont été modifiées par ${s('changedBy')} (IBAN ${s('ibanMasked')}).`,
+      };
+    case 'financialRulesChanged':
+      return {
+        subject: `Règles financières modifiées — ${s('eventTitle')}`,
+        html: layout('Règles financières modifiées', [
+          `Bonjour ${e(s('displayName'))},`,
+          `Les règles financières de l’événement <strong>${e(s('eventTitle'))}</strong> (${e(s('orgName'))}) viennent d’être modifiées par ${e(s('changedBy'))} :`,
+          e(s('changes')),
+          'Si ce changement n’est pas légitime, rétablissez les valeurs depuis le back-office et contactez les autres propriétaires.',
+        ]),
+        text: `Bonjour ${s('displayName')},\nLes règles financières de ${s('eventTitle')} (${s('orgName')}) ont été modifiées par ${s('changedBy')} : ${s('changes')}`,
       };
     case 'memberAdded':
       return {

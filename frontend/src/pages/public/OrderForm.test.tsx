@@ -162,7 +162,7 @@ describe('page événement et commande', () => {
     expect(keys[1]).toBe(keys[0]);
   });
 
-  it('v1.9 : une clé = une commande pour toujours — commande rejouée EXPIRED ⇒ la tentative suivante a une NOUVELLE clé', async () => {
+  it('M5 : réponse perdue puis commande EXPIRED ⇒ le même panier crée une NOUVELLE commande, en un seul clic', async () => {
     const user = userEvent.setup();
     const keys = orderKeys();
     const { idempotencyKeyFor, orderFingerprint } = await import('../../api/hooks/orders');
@@ -177,19 +177,15 @@ describe('page événement et commande', () => {
     const stored = mock.db.orders[0];
     if (stored) stored.expiresAt = new Date(Date.now() - 1000).toISOString();
 
-    const { router } = await renderApp(EVENT_URL);
+    await renderApp(EVENT_URL);
     await chooseFosse(user, '1');
     await user.click(screen.getByRole('button', { name: /^Réserver 1 place ·/ }));
-    expect(await screen.findByText(/Le délai de réservation est dépassé/)).toBeInTheDocument(); // même clé ⇒ commande EXPIRED renvoyée
-    await router.navigate(EVENT_URL);
-    await chooseFosse(user, '1');
-    await user.click(await screen.findByRole('button', { name: /^Réserver 1 place ·/ }));
-    await screen.findByRole('button', { name: /Payer/ });
+    await screen.findByRole('button', { name: /Payer/ }); // nouvelle commande, payable
+    expect(screen.queryByText(/Le délai de réservation est dépassé/)).toBeNull();
     server.events.removeAllListeners();
-    expect(keys[0]).toBe(key);
-    expect(keys.at(-1)).not.toBe(key);
+    expect(keys[0]).toBe(key); // 1er envoi : même clé ⇒ ancienne commande EXPIRED rendue
+    expect(keys.at(-1)).not.toBe(key); // 2e envoi automatique : clé neuve
     expect(mock.db.orders).toHaveLength(2);
-    expect(new Set(mock.db.orders.map((o) => o.idempotencyKey)).size).toBe(2);
   });
 
   it('LIMIT_EXCEEDED : plafond et places déjà détenues expliqués', async () => {
@@ -237,6 +233,17 @@ describe('page événement et commande', () => {
     expect(screen.getByText(/^NG-[A-Z0-9]{8}$/)).toBeInTheDocument();
     expect(screen.getByText('FR76 3000 6000 0112 3456 7890 189')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Copier la référence' })).toBeInTheDocument();
+  });
+
+  it('M2 : deux offres expirées sur l’événement ⇒ réinscription refusée avec une explication claire', async () => {
+    const user = userEvent.setup();
+    const tt = mock.db.ticketTypes.find((t) => t.id === IDS.ttSoldOut);
+    for (let i = 0; i < 2; i++) {
+      mock.db.waitlist.push({ id: crypto.randomUUID(), userId: IDS.userBuyer, eventId: IDS.eventSoldOut, ticketTypeId: tt?.id ?? '', quantity: 1, status: 'EXPIRED', offerExpiresAt: null, createdAt: new Date().toISOString() });
+    }
+    await renderApp(`/events/${IDS.eventSoldOut}`, { as: BUYER });
+    await user.click(await screen.findByRole('button', { name: 'Rejoindre la liste d’attente' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Vous avez laissé passer deux offres de places pour cet événement');
   });
 
   it('événement complet ⇒ inscription à la liste d’attente avec position', async () => {

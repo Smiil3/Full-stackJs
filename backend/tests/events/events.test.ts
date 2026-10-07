@@ -48,7 +48,7 @@ describe('événements (back-office)', () => {
     expect(c.body.overrides).toMatchObject({ refundPercent: 50, maxPerOrder: 2, cardHoldMinutes: null });
     expect(c.body.effectiveRules).toMatchObject({ refundPercent: 50, maxPerOrder: 2, cardHoldMinutes: 30 });
     // Retour à l'héritage : surcharge remise à null.
-    await api().patch(ev(`/${custom.eventId}`)).set(a.manager.auth).send({ overrides: { refundPercent: null } }).expect(200);
+    await api().patch(ev(`/${custom.eventId}`)).set(a.owner.auth).send({ overrides: { refundPercent: null } }).expect(200);
     const back = await api().get(ev(`/${custom.eventId}`)).set(a.manager.auth).expect(200);
     expect(back.body.effectiveRules.refundPercent).toBe(80);
     expect(back.body.overrides.maxPerOrder).toBe(2);

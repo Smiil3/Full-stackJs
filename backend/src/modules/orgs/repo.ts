@@ -5,9 +5,15 @@ export function findOrg(orgId: string) {
   return getDb().organization.findUnique({ where: { id: orgId } });
 }
 
+/**
+ * Réglages d'un collectif : simple LECTURE (créés avec le collectif ; migration de rattrapage pour l'historique).
+ * Filet sans contention : ligne absente ⇒ créée une fois (INSERT … ON CONFLICT DO NOTHING), jamais d'upsert en lecture.
+ */
 export async function getSettings(tx: Tx, orgId: string) {
-  // Toute organisation possède ses réglages ; on les crée par défaut si besoin (organisations historiques).
-  return tx.organizationSettings.upsert({ where: { orgId }, create: { orgId }, update: {} });
+  const found = await tx.organizationSettings.findUnique({ where: { orgId } });
+  if (found) return found;
+  await tx.organizationSettings.createMany({ data: [{ orgId }], skipDuplicates: true });
+  return tx.organizationSettings.findUniqueOrThrow({ where: { orgId } });
 }
 
 /** Verrouille la ligne de réglages pour une lecture-modification-écriture sérialisée. */
@@ -28,16 +34,6 @@ export function findMember(tx: Tx, orgId: string, userId: string) {
     where: { userId_orgId: { userId, orgId } },
     include: { user: { select: { email: true, displayName: true } } },
   });
-}
-
-/**
- * Rôle de l'acteur relu dans la transaction, adhésion verrouillée en partage (FOR SHARE) : une rétrogradation
- * ou un retrait concurrent (FOR UPDATE) attend la fin de la transaction, ou a déjà eu lieu et est vu.
- */
-export async function lockActorRole(tx: Tx, orgId: string, userId: string): Promise<string | null> {
-  const rows = await tx.$queryRaw<{ role: string }[]>`
-    SELECT "role"::text AS "role" FROM "memberships" WHERE "orgId" = ${orgId}::uuid AND "userId" = ${userId}::uuid FOR SHARE`;
-  return rows[0]?.role ?? null;
 }
 
 /** Verrouille les OWNER du collectif : empêche deux rétrogradations simultanées de supprimer le dernier OWNER. */

@@ -20,6 +20,7 @@ import { SYNC_SCANS_PER_MINUTE } from './checkin.js';
  * | ordersPerUser | compte         | 1 min   | 10      |
  * | scan          | IP             | 1 min   | 2400    |
  * | scanPerUser   | contrôleur     | 1 min   | 240     |
+ * | exportPerUser | compte         | 1 min   | 5       |
  */
 export const RATE_LIMITS = {
   /** Filet anti-inondation par IP, large (NAT de salle, CGNAT mobile). */
@@ -39,6 +40,8 @@ export const RATE_LIMITS = {
   /** Contrôle : wifi de salle partagé ⇒ plafond IP large ; le vrai plafond est par contrôleur. */
   scan: { windowMs: minutes(1), max: 2400 },
   scanPerUser: { windowMs: minutes(1), max: 240 },
+  /** Export CSV des participants, par compte (audit B11 : coûteux, tracé). */
+  exportPerUser: { windowMs: minutes(1), max: 5 },
 } as const;
 
 /** Quotas applicatifs (consumeQuota), même store. */

@@ -1,4 +1,5 @@
 import { HTTP_STATUS } from '../config/http.js';
+import { PSP_UNAVAILABLE_RETRY_AFTER_SECONDS } from '../config/payments.js';
 
 /** Codes d'erreur du contrat d'API (§1). */
 export type ErrorCode =
@@ -28,6 +29,7 @@ export type ErrorCode =
   | 'PAYLOAD_TOO_LARGE'
   | 'UNSUPPORTED_MEDIA_TYPE'
   | 'RATE_LIMITED'
+  | 'PAYMENT_PROVIDER_UNAVAILABLE'
   | 'INTERNAL_ERROR';
 
 export type ErrorDetails = Record<string, unknown>;
@@ -63,6 +65,10 @@ export const errors = {
   conflict: (message: string, details?: ErrorDetails) => new AppError(HTTP_STATUS.CONFLICT, 'CONFLICT', message, details),
   state: (code: Extract<ErrorCode, 'SOLD_OUT' | 'SALES_CLOSED' | 'ORDER_EXPIRED' | 'INVALID_STATE' | 'IDEMPOTENCY_CONFLICT' | 'ALREADY_IN_WAITLIST' | 'NOT_SOLD_OUT' | 'OFFER_EXPIRED' | 'CANCELLATION_CLOSED' | 'WAITLIST_DISABLED' | 'OFFLINE_CHECKIN_DISABLED'>, message: string, details?: ErrorDetails) =>
     new AppError(HTTP_STATUS.CONFLICT, code, message, details),
+  /** Prestataire de paiement injoignable : rien n'a changé côté commande, l'acheteur peut réessayer (contrat 1.17). */
+  paymentProviderUnavailable: () => new AppError(HTTP_STATUS.SERVICE_UNAVAILABLE, 'PAYMENT_PROVIDER_UNAVAILABLE',
+    'Le prestataire de paiement ne répond pas. Vos places restent réservées : réessayez dans quelques instants.',
+    { retryAfterSeconds: PSP_UNAVAILABLE_RETRY_AFTER_SECONDS }),
   unprocessable: (code: Extract<ErrorCode, 'LIMIT_EXCEEDED' | 'PAYMENT_METHOD_UNAVAILABLE' | 'AMOUNT_MISMATCH'>, message: string, details?: ErrorDetails) =>
     new AppError(HTTP_STATUS.UNPROCESSABLE_ENTITY, code, message, details),
 };

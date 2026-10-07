@@ -5,6 +5,7 @@ import { formatEuros } from '../../lib/mail/templates.js';
 import { allocate, floorPercentOf } from '../../lib/money.js';
 import { enqueueEmail } from '../../lib/outbox.js';
 import { getLogger } from '../../lib/logger.js';
+import { applyPendingReschedule } from '../events/reschedule.js';
 import { loadOrderForUpdate, recordRefund, type RefundReason } from '../payments/settle.js';
 import { distributeMany, lockWaitlistEntries } from '../waitlist/distribute.js';
 import { canSelfCancelPaid, eventCancellationRefund, selfCancellationRefund } from './refund.js';
@@ -83,7 +84,10 @@ export async function cancelOwnOrder(userId: string, orderId: string) {
   await transaction(async (tx) => {
     const owned = await tx.order.findFirst({ where: { id: orderId, userId }, select: { id: true } });
     if (!owned) throw errors.notFound();
-    const order = await loadOrderForUpdate(tx, orderId);
+    const locked = await loadOrderForUpdate(tx, orderId);
+    if (!locked) throw errors.notFound();
+    // Report en cours de traitement : ses droits (remboursement intégral…) s'appliquent AVANT l'annulation.
+    const order = (await applyPendingReschedule(tx, locked)) ? await loadOrderForUpdate(tx, orderId) : locked;
     if (!order) throw errors.notFound();
     if (order.status === 'PENDING_PAYMENT' || order.status === 'AWAITING_TRANSFER') {
       await cancelUnpaid(tx, order, true);

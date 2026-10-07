@@ -47,7 +47,9 @@ export async function createEvent(
   org: OrgFixture,
   opts: { body?: Record<string, unknown>; ticketTypes?: Record<string, unknown>[]; publish?: boolean } = {},
 ) {
-  const res = await api().post(`/api/v1/orgs/${org.id}/events`).set(org.manager.auth).send(eventBody(opts.body));
+  // Surcharges (dont financières, réservées à l'OWNER — contrat 1.17 §7.2) : création par l'OWNER ; sinon par un MANAGER.
+  const author = opts.body?.['overrides'] === undefined ? org.manager : org.owner;
+  const res = await api().post(`/api/v1/orgs/${org.id}/events`).set(author.auth).send(eventBody(opts.body));
   if (res.status !== 201) throw new Error(`création d'événement KO ${res.status} ${JSON.stringify(res.body)}`);
   const eventId = res.body.id as string;
   const ticketTypeIds: string[] = [];

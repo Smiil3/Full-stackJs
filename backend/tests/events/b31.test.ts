@@ -13,6 +13,7 @@ import { endpoint } from '../../src/middlewares/validate.js';
 import { errorHandler } from '../../src/middlewares/errorHandler.js';
 import { PASSWORD, api, createUser, lastMail, loggedInUser, type LoggedIn } from '../helpers.js';
 import { createEvent, eventBody, orgWithStaff, type OrgFixture } from '../fixtures.js';
+import { processEventReschedules } from '../../src/modules/events/reschedule.js';
 
 let a: OrgFixture;
 let b: OrgFixture;
@@ -53,6 +54,8 @@ describe('report d’un événement (B3.1 H1)', () => {
     expect(noReason.status).toBe(400);
     expect(noReason.body.error.details.fields[0].path).toBe('rescheduleReason');
     await api().patch(ev(a, `/${eventId}`)).set(a.owner.auth).send({ ...patch, rescheduleReason: 'Salle indisponible' }).expect(200);
+    // Droits et mails appliqués en arrière-plan (audit B7).
+    expect(await processEventReschedules()).toMatchObject({ processed: 1, completed: 1 });
 
     const after = await getDb().order.findUniqueOrThrow({ where: { id: before.id } });
     expect(after.refundPercent).toBe(100);
@@ -62,7 +65,7 @@ describe('report d’un événement (B3.1 H1)', () => {
     const mail = await lastMail(buyer.email, 'eventRescheduled');
     expect(decryptOutboxPayload(mail!)['reason']).toBe('Salle indisponible');
     const audit = await getDb().auditLog.findFirstOrThrow({ where: { orgId: a.id, action: 'event.reschedule' } });
-    expect(audit.meta).toMatchObject({ reason: 'Salle indisponible', paidOrders: 1, notifiedBuyers: 1 });
+    expect(audit.meta).toMatchObject({ reason: 'Salle indisponible', ordersToProcess: 1 });
     // L'aperçu de remboursement de l'acheteur reflète le nouveau droit (100 %).
     const view = await api().get(`/api/v1/orders/${before.id}`).set(buyer.auth).expect(200);
     expect(view.body.refundPreviewCents).toBe(4000);

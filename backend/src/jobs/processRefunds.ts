@@ -1,3 +1,4 @@
+import { TimeBudget } from '../lib/budget.js';
 import { clock } from '../lib/clock.js';
 import { getDb } from '../lib/db.js';
 import { getLogger } from '../lib/logger.js';
@@ -13,8 +14,8 @@ function isPermanent(err: unknown): boolean {
 
 /**
  * Réponse du PSP interprétée selon son statut, jamais supposée réussie :
- * succeeded ⇒ SUCCEEDED ; pending ⇒ reste PENDING (identifiant noté, webhook ou nouvel essai idempotent) ;
- * failed ou inconnu ⇒ MANUAL_REQUIRED.
+ * succeeded ⇒ SUCCEEDED ; pending ⇒ reste PENDING (identifiant noté, reconsulté périodiquement SANS limite d'essais :
+ * le passer en traitement manuel exposerait à un double remboursement, audit B5) ; failed ou inconnu ⇒ MANUAL_REQUIRED.
  */
 async function recordOutcome(
   row: { id: string; attempts: number }, result: { id: string; status: string },
@@ -24,7 +25,8 @@ async function recordOutcome(
     await db.refund.updateMany({ where: { id: row.id, status: 'PENDING' }, data: { status: 'SUCCEEDED', providerRefundId: result.id, lastError: null } });
     return 'succeeded';
   }
-  if (result.status === 'pending' && row.attempts < MAX_REFUND_ATTEMPTS) {
+  if (result.status === 'pending') {
+    if (row.attempts >= MAX_REFUND_ATTEMPTS) getLogger().warn({ refundId: row.id, attempts: row.attempts }, 'remboursement toujours en cours chez le PSP : rapprochement périodique');
     await db.refund.updateMany({
       where: { id: row.id, status: 'PENDING' },
       data: { providerRefundId: result.id, nextAttemptAt: new Date(clock.now().getTime() + REFUND_PENDING_RECHECK_MS), lastError: 'PSP pending' },
@@ -44,13 +46,13 @@ async function recordOutcome(
  * 3. Échec définitif ou essais épuisés ⇒ MANUAL_REQUIRED (visible par l'organisateur), jamais un échec silencieux.
  * Chaque remboursement est isolé : une erreur (même de base de données) n'interrompt pas le lot.
  */
-export async function processRefunds(): Promise<{ succeeded: number; manual: number }> {
+export async function processRefunds(budget: TimeBudget = TimeBudget.unlimited()): Promise<{ succeeded: number; manual: number }> {
   const db = getDb();
   // Une seule horloge : celle de l'application, qui pose aussi les échéances.
   const now = clock.now();
   const leased = await db.$transaction(async (tx) => {
-    const rows = await tx.$queryRaw<{ id: string; amountCents: number; attempts: number; providerPaymentId: string }[]>`
-      SELECT r."id", r."amountCents", r."attempts", p."providerPaymentId"
+    const rows = await tx.$queryRaw<{ id: string; amountCents: number; attempts: number; providerPaymentId: string; providerRefundId: string | null }[]>`
+      SELECT r."id", r."amountCents", r."attempts", p."providerPaymentId", r."providerRefundId"
       FROM "refunds" r JOIN "payments" p ON p."id" = r."paymentId"
       WHERE r."status" = 'PENDING' AND r."nextAttemptAt" <= ${now}
       ORDER BY r."nextAttemptAt", r."id"
@@ -67,6 +69,8 @@ export async function processRefunds(): Promise<{ succeeded: number; manual: num
   let succeeded = 0;
   let manual = 0;
   for (const row of leased) {
+    // Budget épuisé : les remboursements non tentés seront repris à l'expiration de leur bail (5 min).
+    if (budget.exhausted()) break;
     try {
       try {
         const result = await getPspClient().createRefund({ paymentId: row.providerPaymentId, amountCents: row.amountCents, idempotencyKey: row.id });
@@ -84,6 +88,11 @@ export async function processRefunds(): Promise<{ succeeded: number; manual: num
             if (outcome === 'manual') manual += 1;
             continue;
           }
+        }
+        if (!isPermanent(err) && row.providerRefundId !== null) {
+          // Le PSP a déjà accepté ce remboursement (« pending ») : jamais de traitement manuel, on le reconsultera.
+          await db.refund.updateMany({ where: { id: row.id, status: 'PENDING' }, data: { nextAttemptAt: new Date(clock.now().getTime() + REFUND_PENDING_RECHECK_MS), lastError: reason } });
+          continue;
         }
         if (isPermanent(err) || row.attempts >= MAX_REFUND_ATTEMPTS) {
           await db.refund.updateMany({ where: { id: row.id, status: 'PENDING' }, data: { status: 'MANUAL_REQUIRED', lastError: reason } });

@@ -8,6 +8,9 @@ import type { User } from '../api/types';
 import { AuthContext, type AuthContextValue, type AuthNotice, type AuthStatus } from './AuthContext';
 import { runSessionCleanups } from './sessionCleanup';
 
+/** Durée maximale du masquage au retour depuis le cache du navigateur (la revérification continue). */
+export const BFCACHE_MASK_MAX_MS = 3000;
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const [status, setStatus] = useState<AuthStatus>('loading');
@@ -126,15 +129,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // Page restaurée depuis le cache avant/arrière (bfcache) : l'état mémoire peut être celui d'une
     // session terminée ou d'un autre compte ⇒ contenu masqué jusqu'à la revérification.
+    // Audit B17-f : contenu MASQUÉ (pas démonté : formulaires et défilement conservés), au plus
+    // BFCACHE_MASK_MAX_MS ; une session changée est purgée dès que la revérification aboutit.
+    let unmask: ReturnType<typeof setTimeout> | undefined;
     const onPageShow = (e: PageTransitionEvent) => {
       if (!e.persisted) return;
       setRestoredFromCache(true);
+      clearTimeout(unmask);
+      unmask = setTimeout(() => {
+        setRestoredFromCache(false);
+      }, BFCACHE_MASK_MAX_MS);
       void revalidate().finally(() => {
+        clearTimeout(unmask);
         setRestoredFromCache(false);
       });
     };
     window.addEventListener('pageshow', onPageShow);
     return () => {
+      clearTimeout(unmask);
       window.removeEventListener('pageshow', onPageShow);
     };
   }, [revalidate]);
@@ -169,9 +181,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         <p className="page" role="status">
           Vérification de la session…
         </p>
-      ) : (
-        children
-      )}
+      ) : null}
+      <div className={restoredFromCache ? 'session-masked' : 'session-visible'} inert={restoredFromCache ? true : undefined} aria-hidden={restoredFromCache ? true : undefined}>
+        {children}
+      </div>
     </AuthContext>
   );
 }

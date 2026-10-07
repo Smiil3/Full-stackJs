@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router';
 import { useJoinWaitlist } from '../../api/hooks/waitlist';
 import { apiPath } from '../../api/client';
+import { isApiError } from '../../api/errors';
 import { ErrorAlert } from '../../components/ErrorAlert';
 import type { TicketTypePublic } from '../../api/types';
 import { useAuth } from '../../auth/AuthContext';
@@ -59,7 +60,13 @@ export function WaitlistJoin({ eventId, ticketType, maxPerOrder }: { eventId: st
         </button>
       </div>
       {!user.emailVerified ? <p className="muted">Confirmez votre email pour vous inscrire.</p> : null}
-      <ErrorAlert error={join.error} />
+      {isApiError(join.error) && join.error.code === 'CONFLICT' ? (
+        <p className="alert alert--warning" role="alert">
+          Vous avez laissé passer deux offres de places pour cet événement : la liste d’attente ne vous est plus ouverte, pour que d’autres puissent en profiter.
+        </p>
+      ) : (
+        <ErrorAlert error={join.error} />
+      )}
     </div>
   );
 }

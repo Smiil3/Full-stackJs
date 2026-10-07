@@ -3,17 +3,18 @@ import { getLogger } from '../lib/logger.js';
 import { withTxRetry } from '../lib/txRetry.js';
 import { cancelOrderForEvent } from '../modules/orders/cancel.js';
 import { EVENT_CANCELLATIONS_PER_TICK } from '../config/worker.js';
+import { TimeBudget } from '../lib/budget.js';
 
 /**
  * Traite les commandes des événements annulés, UNE TRANSACTION PAR COMMANDE (`FOR UPDATE SKIP LOCKED`) :
  * payées ⇒ remboursées intégralement, en attente ⇒ annulées, billets annulés, mails. Idempotent et repris
  * au passage suivant ; une commande en erreur est journalisée et sautée pour ce passage.
  */
-export async function processEventCancellations(): Promise<{ processed: number; failed: number }> {
+export async function processEventCancellations(budget: TimeBudget = TimeBudget.unlimited()): Promise<{ processed: number; failed: number }> {
   let processed = 0;
   let failed = 0;
   const skipped: string[] = [];
-  for (let i = 0; i < EVENT_CANCELLATIONS_PER_TICK; i += 1) {
+  for (let i = 0; i < EVENT_CANCELLATIONS_PER_TICK && !budget.exhausted(); i += 1) {
     const current: { id: string | null } = { id: null };
     try {
       const done = await withTxRetry(() => transaction(async (tx) => {

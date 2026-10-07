@@ -112,6 +112,7 @@ model User {
   auditLogs       AuditLog[]
   ticketsScanned  Ticket[]        @relation("TicketUsedBy")
 
+  loginLockouts LoginLockout[]
   @@map("users")
 }
 
@@ -265,6 +266,7 @@ model Event {
   tickets      Ticket[]
   checkIns     CheckIn[]
   waitlist     WaitlistEntry[]
+  reschedules  EventReschedule[]
 
   @@index([orgId, startsAt])
   @@index([status, startsAt])
@@ -314,6 +316,8 @@ model Order {
   refundPercent        Int
   serviceFeeRefundable Boolean
   cancellableUntil     DateTime? @db.Timestamptz(3)
+  /// Report en cours de traitement par le worker pour cette commande (droits et mail pas encore appliqués).
+  pendingRescheduleId  String?   @db.Uuid
   refundAmountCents    Int?
 
   expiresAt   DateTime? @db.Timestamptz(3)
@@ -488,6 +492,8 @@ model WaitlistEntry {
   accumulatingUntil   DateTime? @db.Timestamptz(3)
   /// Accumulation échue sans assez de places : l'entrée garde son rang mais ne bloque plus les suivantes.
   accumulationSkipped Boolean   @default(false)
+  /// Offre laissée expirer par l'acheteur (anti-gel, contrat 1.17 §6 : sortie de la liste après 2 sur un événement).
+  offerExpired        Boolean   @default(false)
   createdAt      DateTime       @default(now()) @db.Timestamptz(3)
   updatedAt      DateTime       @updatedAt @db.Timestamptz(3)
 
@@ -562,4 +568,55 @@ model PspSession {
 
   @@index([orderId])
   @@map("psp_sessions")
+}
+
+/// Report d'un événement : appliqué aux commandes par le worker, par lots (audit B7).
+model EventReschedule {
+  id                    String    @id @default(uuid()) @db.Uuid
+  eventId               String    @db.Uuid
+  oldStartsAt           DateTime  @db.Timestamptz(3)
+  oldEndsAt             DateTime  @db.Timestamptz(3)
+  newStartsAt           DateTime  @db.Timestamptz(3)
+  newEndsAt             DateTime  @db.Timestamptz(3)
+  oldTimezone           String    @db.VarChar(64)
+  newTimezone           String    @db.VarChar(64)
+  /// Délai d'annulation effectif au moment du report (commande sans limite d'annulation figée).
+  fallbackDeadlineHours Int
+  reason                String    @db.VarChar(500)
+  createdAt             DateTime  @db.Timestamptz(3)
+  completedAt           DateTime? @db.Timestamptz(3)
+
+  event         Event                    @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  notifications RescheduleNotification[]
+
+  @@index([eventId, completedAt])
+  @@map("event_reschedules")
+}
+
+/// Un seul mail de report par acheteur, même s'il a plusieurs commandes traitées par des workers différents.
+model RescheduleNotification {
+  rescheduleId String @db.Uuid
+  userId       String @db.Uuid
+
+  reschedule EventReschedule @relation(fields: [rescheduleId], references: [id], onDelete: Cascade)
+
+  @@id([rescheduleId, userId])
+  @@map("reschedule_notifications")
+}
+
+/// Verrou de connexion par couple (compte, empreinte d'IP) — audit M7 : un tiers ne verrouille que SON couple.
+/// Le plafond global du compte (tous IP) reste sur users (failedLoginCount / lockedUntil).
+model LoginLockout {
+  userId       String    @db.Uuid
+  /// SHA-256 de l'IP normalisée (sous-réseau IPv6), ou d'une clé fixe pour les ré-authentifications de session.
+  fingerprint  String    @db.Char(64)
+  failedCount  Int       @default(0)
+  lastFailedAt DateTime? @db.Timestamptz(3)
+  lockedUntil  DateTime? @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, fingerprint])
+  @@index([lastFailedAt])
+  @@map("login_lockouts")
 }

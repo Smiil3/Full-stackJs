@@ -2,19 +2,20 @@ import { pino, type DestinationStream, type Logger } from 'pino';
 import { getEnv } from '../config/env.js';
 import { Prisma } from '../generated/prisma/client.js';
 
-/** Clés sensibles masquées à toute profondeur raisonnable (0 à 3 niveaux). */
+/** Clés sensibles masquées de 0 à 4 niveaux de profondeur (clés exactes ; les textes libres passent par `scrub`). */
 const SENSITIVE_KEYS = [
   'password', 'currentPassword', 'newPassword', 'passwordHash',
   'token', 'tokenHash', 'accessToken', 'refreshToken',
-  'iban', 'bankIbanEncrypted', 'transferIbanEncrypted',
-  'email', 'payload', 'qrPayload', 'secret',
+  'iban', 'bankIbanEncrypted', 'transferIbanEncrypted', 'bankBeneficiary', 'transferReference',
+  'email', 'buyerEmail', 'contactEmail', 'ownerEmail', 'to', 'displayName',
+  'payload', 'qrPayload', 'secret', 'idempotencyKey', 'link',
 ];
 const SENSITIVE_HEADERS = ['authorization', 'cookie', 'set-cookie', 'x-api-key', 'psp-signature'];
 
 function buildRedactPaths(): string[] {
   const paths: string[] = [];
   for (const key of SENSITIVE_KEYS) {
-    paths.push(key, `*.${key}`, `*.*.${key}`, `*.*.*.${key}`);
+    paths.push(key, `*.${key}`, `*.*.${key}`, `*.*.*.${key}`, `*.*.*.*.${key}`);
   }
   for (const header of SENSITIVE_HEADERS) {
     paths.push(`req.headers["${header}"]`, `res.headers["${header}"]`, `*.headers["${header}"]`);

@@ -6,6 +6,7 @@ import { Field } from '../../components/Field';
 import { listTimeZones, timeZoneLabel } from '../../lib/time';
 import { buildEventBody, convertDatesToTimezone, DATE_FIELDS, diffPatch, hasSales, initialEventForm, isReschedule, type DateField, type EventFormState, type FormErrors } from './eventForm';
 import { SalesRulesEditor } from './SalesRulesEditor';
+import { FINANCIAL_RULES } from './salesRules';
 
 const DATE_LABELS: Record<DateField, string> = {
   startsAt: 'Début de l’événement',
@@ -35,12 +36,28 @@ type TzChoice = { from: string; localDates: Pick<EventFormState, DateField>; mod
 const LOCKED_DATES: readonly DateField[] = ['startsAt', 'endsAt'];
 
 export function EventEditor(props: Props) {
-  const [initial] = useState<EventFormState>(() => initialEventForm(props.event, props.settings));
+  const [initial, setInitial] = useState<EventFormState>(() => initialEventForm(props.event, props.settings));
   const [form, setForm] = useState<EventFormState>(initial);
+  // Version de l'événement à l'ouverture (audit B17-b) : une version plus récente (autre onglet, autre
+  // membre, types de places) ne remonte plus l'éditeur en silence.
+  const [openedVersion, setOpenedVersion] = useState(props.event?.updatedAt ?? null);
+  const dirty = JSON.stringify(form) !== JSON.stringify(initial);
+  const reloadFromServer = (event: EventAdmin) => {
+    const fresh = initialEventForm(event, props.settings);
+    setInitial(fresh);
+    setForm(fresh);
+    setOpenedVersion(event.updatedAt);
+    setTzChoice(null);
+  };
+  const current = props.event;
+  const changedElsewhere = current !== null && openedVersion !== null && current.updatedAt !== openedVersion;
+  // Garde de réentrance (audit B17-c) : un seul envoi à la fois, y compris pendant la revérification des ventes.
+  const [submitting, setSubmitting] = useState(false);
   const [pendingPatch, setPendingPatch] = useState<EventPatchBody | null>(null);
   const [reason, setReason] = useState('');
   const [tzChoice, setTzChoice] = useState<TzChoice | null>(null);
   const [forbidden, setForbidden] = useState(false);
+  if (changedElsewhere && !dirty) reloadFromServer(current); // rien à perdre : version à jour
   const sold = hasSales(props.event);
   // Contrat v1.7 : report d'un événement vendu réservé à l'OWNER (le serveur renverrait 403).
   const datesLocked = sold && props.role !== 'OWNER';
@@ -59,8 +76,12 @@ export function EventEditor(props: Props) {
       props.onCreate(r.body);
       return;
     }
+    if (submitting) return;
     const patch = diffPatch(props.event, initial, form, r.body);
-    void decideAndSend(patch);
+    setSubmitting(true);
+    void decideAndSend(patch).finally(() => {
+      setSubmitting(false);
+    });
   };
 
   const send = async (patch: EventPatchBody) => {
@@ -192,16 +213,26 @@ export function EventEditor(props: Props) {
         ))}
       </div>
 
+      {props.role !== 'OWNER' ? (
+        <p className="alert alert--info">
+          Les règles financières (remboursement, frais, virement, annulation par l’acheteur) sont réservées au propriétaire du collectif.
+        </p>
+      ) : null}
       <SalesRulesEditor
         state={form.rules}
         settings={props.settings}
+        locked={props.role === 'OWNER' ? undefined : FINANCIAL_RULES}
         errors={{ ...ruleServerErrors, ...errors.rules }}
         onChange={(key, field) => setForm((f) => ({ ...f, rules: { ...f.rules, [key]: field } }))}
       />
 
       {props.error && Object.keys(server).length === 0 ? (
         <p className="alert alert--error" role="alert">
-          {errorMessage(props.error)}
+          {isApiError(props.error) && props.error.code === 'FORBIDDEN'
+            ? 'Seul le propriétaire du collectif peut modifier les règles financières ou reporter l’événement. Vos autres modifications n’ont pas été enregistrées.'
+            : isApiError(props.error) && props.error.code === 'CONFLICT'
+              ? 'Un report de cet événement est déjà en cours de traitement (ou l’événement vient d’être annulé) : rien n’a été modifié. Réessayez dans quelques instants.'
+              : errorMessage(props.error)}
         </p>
       ) : null}
       {Object.keys(errors).length ? (
@@ -209,7 +240,22 @@ export function EventEditor(props: Props) {
           Certaines informations sont à corriger.
         </p>
       ) : null}
-      <button type="submit" className="btn" disabled={props.pending}>
+      {changedElsewhere && dirty ? (
+        <div className="alert alert--warning" role="alert">
+          <div className="stack stack--sm">
+            <p>
+              <strong>Cet événement a été modifié entre-temps</strong> (par une autre personne ou dans un autre onglet). Vos modifications non enregistrées sont conservées ;
+              en enregistrant, seuls les champs que vous avez changés seront envoyés.
+            </p>
+            <p>
+              <button type="button" className="btn btn--secondary btn--small" onClick={() => reloadFromServer(current)}>
+                Abandonner mes modifications et recharger
+              </button>
+            </p>
+          </div>
+        </div>
+      ) : null}
+      <button type="submit" className="btn" disabled={props.pending || submitting}>
         {props.pending ? 'Enregistrement…' : props.submitLabel}
       </button>
 

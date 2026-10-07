@@ -131,4 +131,13 @@ describe('formulaire d’événement', () => {
     const f = { ...initialEventForm(event, settings), startsAt: '2027-03-28T02:30', endsAt: '2027-03-28T05:00', salesEndAt: '2027-03-28T01:00' };
     expect(buildEventBody(f, settings).notes.startsAt).toMatch(/n’existe pas/);
   });
+
+  it('M2 : délai de réponse à une offre de liste d’attente borné à 15–360 min (anti-gel)', () => {
+    const def = RULE_DEFS.find((d) => d.key === 'waitlistOfferMinutes');
+    if (!def) throw new Error('règle absente');
+    expect(parseRule(def, '360')).toEqual({ ok: true, value: 360 });
+    expect(parseRule(def, '15')).toEqual({ ok: true, value: 15 });
+    expect(parseRule(def, '361').ok).toBe(false);
+    expect(parseRule(def, '14').ok).toBe(false);
+  });
 });

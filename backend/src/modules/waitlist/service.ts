@@ -10,10 +10,13 @@ import { addHours, addMinutes } from '../../lib/time.js';
 import { alreadyOwned, lockBuyerEvent, lockEventShared } from '../orders/repo.js';
 import { viewOwnOrder } from '../orders/service.js';
 import { resolveEventSettings } from '../settings/resolveEventSettings.js';
-import { distributeWaitlist, lockWaitlistEntries, releaseOffer, salesOpen } from './distribute.js';
+import { distributeMany, distributeWaitlist, lockWaitlistEntries, releaseOffer, salesOpen } from './distribute.js';
+import { getLogger } from '../../lib/logger.js';
 import { withTxRetry } from '../../lib/txRetry.js';
 import { SHA256_HEX_LENGTH } from '../../config/crypto.js';
 import { WAITLIST_OFFERS_PER_TICK, WAITLIST_SWEEP_TYPES_PER_TICK } from '../../config/worker.js';
+import { MAX_EXPIRED_OFFERS_PER_EVENT } from '../../config/waitlist.js';
+import { TimeBudget } from '../../lib/budget.js';
 
 type EntryWithNames = WaitlistEntry & { event: { title: string }; ticketType: { name: string } };
 
@@ -56,6 +59,10 @@ export async function join(userId: string, eventId: string, ticketTypeId: string
     if (quantity > rules.maxPerOrder) {
       throw errors.unprocessable('LIMIT_EXCEEDED', `Au plus ${rules.maxPerOrder} place(s) par demande.`, { max: rules.maxPerOrder, alreadyOwned: 0 });
     }
+    // Anti-gel (contrat 1.17 §6) : un compte qui a laissé expirer deux offres sur l'événement n'y revient pas.
+    if (await tx.waitlistEntry.count({ where: { userId, eventId, offerExpired: true } }) >= MAX_EXPIRED_OFFERS_PER_EVENT) {
+      throw errors.conflict('Vous avez laissé expirer plusieurs offres pour cet événement : la liste d’attente ne vous est plus ouverte.');
+    }
     if (await tx.waitlistEntry.findFirst({ where: { userId, ticketTypeId, status: { in: ['WAITING', 'OFFERED'] } } })) {
       throw errors.state('ALREADY_IN_WAITLIST', 'Vous êtes déjà en liste d’attente pour ce type de place.');
     }
@@ -94,9 +101,12 @@ async function lockOwnEntry(tx: Tx, userId: string, entryId: string): Promise<Wa
 /** Quitter la liste : une offre en cours libère ses places, qui passent aussitôt au suivant. */
 export async function leave(userId: string, entryId: string): Promise<void> {
   await withTxRetry(() => transaction(async (tx) => {
+    // Ordre unique (audit B1) : entrées actives du type (createdAt, id) AVANT l'entrée propre, comme la distribution.
+    const target = await tx.waitlistEntry.findFirst({ where: { id: entryId, userId }, select: { ticketTypeId: true } });
+    if (!target) throw errors.notFound();
+    await lockWaitlistEntries(tx, [target.ticketTypeId]);
     const entry = await lockOwnEntry(tx, userId, entryId);
     if (entry.status !== 'WAITING' && entry.status !== 'OFFERED') throw errors.state('INVALID_STATE', 'Cette inscription n’est plus active.');
-    await lockWaitlistEntries(tx, [entry.ticketTypeId]);
     await tx.waitlistEntry.updateMany({ where: { id: entry.id, status: entry.status }, data: { status: 'LEFT' } });
     if (entry.status === 'OFFERED') {
       await releaseOffer(tx, entry);
@@ -161,37 +171,63 @@ export async function accept(userId: string, entryId: string) {
       // Offre gratuite : confirmée immédiatement (places bloquées → vendues, billets).
       const { settleHeldOrder, loadOrderForUpdate } = await import('../payments/settle.js');
       const loaded = await loadOrderForUpdate(tx, order.id);
-      if (loaded) await settleHeldOrder(tx, loaded, 'PENDING_PAYMENT');
+      // Résultat vérifié : une offre gratuite qui ne peut pas être confirmée n'est pas convertie (rollback).
+      if (!loaded || !(await settleHeldOrder(tx, loaded, 'PENDING_PAYMENT'))) {
+        throw errors.conflict('Stock incohérent pour cette offre : réessayez ou contactez l’organisateur.');
+      }
     }
     return order.id;
   }));
   return transaction((tx) => viewOwnOrder(tx, userId, orderId));
 }
 
-/** Worker : offres échues ⇒ EXPIRED, places libérées et proposées au suivant. Une transaction par offre. */
-export async function expireWaitlistOffers(): Promise<{ expired: number }> {
+/**
+ * Worker : offres échues ⇒ EXPIRED, places libérées et proposées au suivant. Une transaction par offre, rejouée
+ * sur interblocage. Ordre unique (audit B1) : entrées actives de TOUS les types de l'événement (createdAt, id)
+ * verrouillées avant l'offre elle-même. Anti-gel (contrat 1.17 §6) : à la 2e offre laissée expirer sur l'événement,
+ * les autres inscriptions du compte sur cet événement sortent de la liste (EXPIRED).
+ */
+export async function expireWaitlistOffers(budget: TimeBudget = TimeBudget.unlimited()): Promise<{ expired: number; excluded: number }> {
   let expired = 0;
-  for (let i = 0; i < WAITLIST_OFFERS_PER_TICK; i += 1) {
-    const done = await transaction(async (tx) => {
-      const rows = await tx.$queryRaw<{ id: string }[]>`
-        SELECT "id" FROM "waitlist_entries"
-        WHERE "status" = 'OFFERED' AND "offerExpiresAt" <= ${clock.now()}
-        ORDER BY "offerExpiresAt", "id" LIMIT 1 FOR UPDATE SKIP LOCKED`;
-      const id = rows[0]?.id;
-      if (!id) return false;
-      const entry = await tx.waitlistEntry.findUniqueOrThrow({ where: { id } });
-      await lockWaitlistEntries(tx, [entry.ticketTypeId]);
-      const { count } = await tx.waitlistEntry.updateMany({ where: { id, status: 'OFFERED' }, data: { status: 'EXPIRED' } });
-      if (count === 1) {
-        await releaseOffer(tx, entry);
-        await distributeWaitlist(tx, entry.ticketTypeId);
-        expired += 1;
+  let excluded = 0;
+  const skipped: string[] = [];
+  for (let i = 0; i < WAITLIST_OFFERS_PER_TICK && !budget.exhausted(); i += 1) {
+    const done = await withTxRetry(() => transaction(async (tx) => {
+      const rows = await tx.$queryRaw<{ id: string; eventId: string }[]>`
+        SELECT "id", "eventId" FROM "waitlist_entries"
+        WHERE "status" = 'OFFERED' AND "offerExpiresAt" <= ${clock.now()} AND NOT ("id" = ANY(${skipped}::uuid[]))
+        ORDER BY "offerExpiresAt", "id" LIMIT 1`;
+      const candidate = rows[0];
+      if (!candidate) return false;
+      const typeIds = (await tx.ticketType.findMany({ where: { eventId: candidate.eventId }, select: { id: true } })).map((t) => t.id);
+      await lockWaitlistEntries(tx, typeIds);
+      const entry = await tx.waitlistEntry.findUniqueOrThrow({ where: { id: candidate.id } });
+      // Acceptée, quittée ou déjà expirée entre-temps : rien à faire (plus jamais reprise dans ce passage).
+      if (entry.status !== 'OFFERED' || !entry.offerExpiresAt || entry.offerExpiresAt > clock.now()) {
+        skipped.push(entry.id);
+        return true;
       }
+      await tx.waitlistEntry.update({ where: { id: entry.id }, data: { status: 'EXPIRED', offerExpired: true } });
+      await releaseOffer(tx, entry);
+      expired += 1;
+      const misses = await tx.waitlistEntry.count({ where: { userId: entry.userId, eventId: entry.eventId, offerExpired: true } });
+      const affected = new Set([entry.ticketTypeId]);
+      if (misses >= MAX_EXPIRED_OFFERS_PER_EVENT) {
+        const others = await tx.waitlistEntry.findMany({ where: { userId: entry.userId, eventId: entry.eventId, status: { in: ['WAITING', 'OFFERED'] } } });
+        for (const other of others) {
+          await tx.waitlistEntry.update({ where: { id: other.id }, data: { status: 'EXPIRED' } });
+          if (other.status === 'OFFERED') await releaseOffer(tx, other);
+          affected.add(other.ticketTypeId);
+        }
+        excluded += 1;
+        getLogger().warn({ userId: entry.userId, eventId: entry.eventId, misses }, 'liste d’attente : compte écarté de l’événement après des offres expirées');
+      }
+      await distributeMany(tx, affected);
       return true;
-    });
+    }));
     if (!done) break;
   }
-  return { expired };
+  return { expired, excluded };
 }
 
 /** Worker : filet de sécurité — distribue les places libres de tout type ayant des personnes en attente. */

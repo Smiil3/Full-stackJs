@@ -1,6 +1,7 @@
 import { fetchSnapshot } from '../api/hooks/org';
 import { isApiError } from '../api/errors';
 import type { CheckinEvent, TicketStatus } from '../api/types';
+import { trustedKeyFor } from './pinnedKey';
 import { currentGeneration, listSnapshots, pendingCount, purgeEvent, saveSnapshot, SCAN_LOCK, unseenConflictCount, withLock, type LocalTicket } from './db';
 import { EventNotAvailableError } from './engine';
 
@@ -49,6 +50,7 @@ export async function prepareEvent(orgId: string, event: CheckinEvent, signal?: 
     throw e;
   }
   if (snap.eventId !== event.id) throw new Error('Liste reçue pour un autre événement');
+  trustedKeyFor(snap.publicKeyJwk); // clé différente de la clé épinglée ⇒ liste refusée, rien n'est enregistré
   const tickets: LocalTicket[] = snap.tickets
     .filter((t) => PUBLIC_ID.test(t.publicId) && STATUSES.includes(t.status))
     .map((t) => ({ eventId: event.id, publicId: t.publicId, ticketTypeName: t.ticketTypeName, holderInitials: t.holderInitials, status: t.status, usedAt: t.usedAt }));

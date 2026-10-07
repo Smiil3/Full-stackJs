@@ -18,6 +18,9 @@ import { formatDate, formatDateTime } from '../../lib/time';
 import { canCancel } from '../orders/orderRules';
 import { WaitlistSection } from './WaitlistSection';
 
+/** Absence minimale (onglet masqué) avant de revérifier la session au retour sur « Mes billets ». */
+const REVALIDATE_AFTER_HIDDEN_MS = 60_000;
+
 type Group = { orderId: string; event: Ticket['event']; tickets: Ticket[] };
 
 function groupByOrder(tickets: Ticket[]): Group[] {
@@ -46,10 +49,18 @@ export function TicketsPage() {
   const [shown, setShown] = useState<{ orderId: string; index: number } | null>(null);
   const openerRef = useRef<HTMLElement | null>(null);
 
-  // Page de QR redevenue visible (appareil prêté, onglet repris) : session revérifiée, QR masqués entre-temps.
+  // Page de QR redevenue visible APRÈS une vraie absence (appareil prêté, onglet repris longtemps après) :
+  // session revérifiée, QR masqués entre-temps. Pas à chaque coup d'œil ailleurs (audit B17-g), ni sans réseau.
   useEffect(() => {
+    let hiddenAt: number | null = null;
     const onVisible = () => {
-      if (document.visibilityState === 'visible') void revalidate();
+      if (document.visibilityState === 'hidden') {
+        hiddenAt = Date.now();
+        return;
+      }
+      const away = hiddenAt === null ? 0 : Date.now() - hiddenAt;
+      hiddenAt = null;
+      if (away >= REVALIDATE_AFTER_HIDDEN_MS && navigator.onLine) void revalidate();
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => {

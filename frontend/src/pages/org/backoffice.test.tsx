@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup as cleanupRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { delay, http } from 'msw';
 import { describe, expect, it, vi } from 'vitest';
@@ -154,6 +154,27 @@ describe('back-office : événements', () => {
     expect(mock.db.ticketTypes.find((t) => t.name === 'Standard' && t.capacity === 151)?.priceCents).toBe(1999);
     await user.click(screen.getByRole('button', { name: 'Publier l’événement' }));
     expect(await screen.findByText('Publié')).toBeInTheDocument();
+  });
+
+  it('B17-d : ajout d’un type de place ⇒ événement, liste du collectif, statistiques et catalogue public invalidés', async () => {
+    const user = userEvent.setup();
+    const { queryClient } = await renderApp(EVENT, { as: OWNER });
+    await screen.findByRole('heading', { name: 'Types de places' });
+    const keys = [
+      ['events', { page: 1, pageSize: 12 }],
+      ['event', IDS.eventConcert],
+      ['org', IDS.orgNuits, 'events', 'ALL', 1],
+      ['org', IDS.orgNuits, 'event', IDS.eventConcert, 'stats'],
+    ];
+    for (const k of keys) queryClient.setQueryData(k, { périmé: false });
+    await user.click(screen.getByRole('button', { name: 'Ajouter un type de place' }));
+    await user.type(screen.getByLabelText('Nom du type de place'), 'Carré or');
+    await user.type(screen.getByLabelText('Capacité (places)'), '20');
+    await user.type(screen.getByLabelText('Prix (€)'), '55');
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+    await waitFor(() => {
+      for (const k of keys) expect(queryClient.getQueryState(k)?.isInvalidated, JSON.stringify(k)).toBe(true);
+    });
   });
 
   it('publication impossible sans type de place ⇒ message clair', async () => {
@@ -502,6 +523,236 @@ describe('back-office : ventes, commandes, export', () => {
   });
 });
 
+describe('promotion en propriétaire confirmée (audit B17-e)', () => {
+  it('passer un membre OWNER ⇒ dialogue listant ses nouveaux pouvoirs ; rien avant confirmation', async () => {
+    const user = userEvent.setup();
+    await renderApp(`${ORG}/members`, { as: OWNER });
+    const managerCard = (await screen.findByText('manager@nuits.test')).closest('li') as HTMLElement;
+    await user.selectOptions(within(managerCard).getByLabelText('Rôle'), 'OWNER');
+    const dialog = screen.getByRole('dialog', { name: 'Nommer propriétaire ?' });
+    expect(dialog).toHaveTextContent('pourra modifier les coordonnées bancaires');
+    expect(mock.db.memberships.find((m) => m.userId === IDS.userManager && m.orgId === IDS.orgNuits)?.role).toBe('MANAGER');
+    await user.click(within(dialog).getByRole('button', { name: 'Confirmer' }));
+    await waitFor(() => expect(mock.db.memberships.find((m) => m.userId === IDS.userManager && m.orgId === IDS.orgNuits)?.role).toBe('OWNER'));
+  });
+
+  it('ajouter directement un propriétaire ⇒ confirmation ; « Annuler » n’ajoute personne', async () => {
+    const user = userEvent.setup();
+    await renderApp(`${ORG}/members`, { as: OWNER });
+    await user.type(await screen.findByLabelText('Adresse email du compte'), 'acheteur@example.test');
+    await user.selectOptions(screen.getByLabelText('Rôle', { selector: '#new-role' }), 'OWNER');
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+    const dialog = screen.getByRole('dialog', { name: 'Ajouter un propriétaire ?' });
+    expect(dialog).toHaveTextContent('acheteur@example.test pourra ajouter, promouvoir ou retirer des membres');
+    await user.click(within(dialog).getByRole('button', { name: 'Annuler' }));
+    expect(mock.db.memberships.some((m) => m.userId === IDS.userBuyer && m.orgId === IDS.orgNuits)).toBe(false);
+  });
+});
+
+describe('admin plateforme : anomalies (v1.17 §8, audit B2 / B3)', () => {
+  it('remboursement sans commande : listé (payeur PSP), marqué effectué avec note', async () => {
+    const user = userEvent.setup();
+    const now = new Date().toISOString();
+    mock.db.refunds.push({ id: crypto.randomUUID(), orgId: null, orderId: null, eventId: null, pspEmail: 'payeur@example.test', amountCents: 2500, reason: 'UNEXPECTED_PAYMENT', method: 'TRANSFER', status: 'MANUAL_REQUIRED', note: null, createdAt: now, updatedAt: now });
+    await renderApp('/admin/anomalies', { as: 'admin@plateforme.test' });
+    const card = (await screen.findByText(/payeur@example\.test/)).closest('li') as HTMLElement;
+    expect(card).toHaveTextContent(/25,00\s€/);
+    expect(card).toHaveTextContent('Paiement inattendu');
+    await user.click(within(card).getByRole('button', { name: 'Marquer comme effectué' }));
+    const dialog = screen.getByRole('dialog', { name: 'Confirmer le remboursement effectué ?' });
+    await user.type(within(dialog).getByLabelText(/Note/), 'Virement retour le 07/10');
+    await user.click(within(dialog).getByRole('button', { name: 'Marquer comme effectué' }));
+    await waitFor(() => expect(mock.db.refunds.at(-1)?.status).toBe('SUCCEEDED'));
+  });
+
+  it('commande bloquée : listée, « Relancer » après confirmation remet le compteur à zéro', async () => {
+    const user = userEvent.setup();
+    await login('acheteur@example.test', DEMO_PASSWORD);
+    const order = await apiRequest<Order>('/orders', { method: 'POST', body: { eventId: IDS.eventConcert, paymentMethod: 'TRANSFER', items: [{ ticketTypeId: IDS.ttFosse, quantity: 1 }] }, headers: { 'Idempotency-Key': crypto.randomUUID() } });
+    await logout();
+    const stored = mock.db.orders.find((o) => o.id === order.id);
+    if (stored) stored.expireFailures = 5;
+    await renderApp('/admin/anomalies', { as: 'admin@plateforme.test' });
+    const card = (await screen.findByText(/5 échecs d’expiration/)).closest('li') as HTMLElement;
+    expect(card).toHaveTextContent('acheteur@example.test');
+    await user.click(within(card).getByRole('button', { name: 'Relancer' }));
+    const dialog = screen.getByRole('dialog', { name: 'Relancer l’expiration de cette commande ?' });
+    expect(dialog).toHaveTextContent('remis à zéro');
+    expect(stored?.expireFailures).toBe(5); // rien tant que non confirmé
+    await user.click(within(dialog).getByRole('button', { name: 'Relancer' }));
+    await waitFor(() => expect(stored?.expireFailures).toBe(0));
+    expect(await screen.findByText('Aucune commande bloquée.')).toBeInTheDocument();
+  });
+
+  it('non-admin ⇒ page introuvable', async () => {
+    await renderApp('/admin/anomalies', { as: OWNER });
+    expect(await screen.findByRole('heading', { level: 1 })).not.toHaveTextContent('Administration');
+    expect(screen.queryByRole('heading', { name: 'Remboursements sans commande' })).toBeNull();
+    expect(mock.db.calls.get('GET /admin/refunds') ?? 0).toBe(0); // aucune requête d'administration
+  });
+});
+
+describe('éditeur d’événement : modifications extérieures et double envoi (audit B17-b, c)', () => {
+  const externalUpdate = async (queryClient: import('@tanstack/react-query').QueryClient, title: string) => {
+    const e = mock.db.events.find((x) => x.id === IDS.eventConcert);
+    if (e) Object.assign(e, { title, updatedAt: new Date(Date.now() + 1000).toISOString() });
+    await act(() => queryClient.invalidateQueries({ queryKey: ['org', IDS.orgNuits, 'event', IDS.eventConcert] }));
+  };
+
+  it('formulaire modifié + événement changé ailleurs ⇒ avertissement, saisie CONSERVÉE, rechargement au choix', async () => {
+    const user = userEvent.setup();
+    const { queryClient } = await renderApp(EVENT, { as: OWNER });
+    await user.click(await screen.findByRole('button', { name: 'Modifier l’événement' }));
+    await user.clear(screen.getByLabelText('Titre'));
+    await user.type(screen.getByLabelText('Titre'), 'Titre en cours de saisie');
+    await externalUpdate(queryClient, 'Titre changé par un autre membre');
+    expect(await screen.findByText(/Cet événement a été modifié entre-temps/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Titre')).toHaveValue('Titre en cours de saisie');
+    await user.click(screen.getByRole('button', { name: 'Abandonner mes modifications et recharger' }));
+    expect(screen.getByLabelText('Titre')).toHaveValue('Titre changé par un autre membre');
+    expect(screen.queryByText(/Cet événement a été modifié entre-temps/)).toBeNull();
+  });
+
+  it('formulaire intact + événement changé ailleurs ⇒ rechargé sans bruit', async () => {
+    const user = userEvent.setup();
+    const { queryClient } = await renderApp(EVENT, { as: OWNER });
+    await user.click(await screen.findByRole('button', { name: 'Modifier l’événement' }));
+    await externalUpdate(queryClient, 'Nouveau titre venu d’ailleurs');
+    await waitFor(() => expect(screen.getByLabelText('Titre')).toHaveValue('Nouveau titre venu d’ailleurs'));
+    expect(screen.queryByText(/modifié entre-temps/)).toBeNull();
+  });
+
+  it('double clic sur « Enregistrer » pendant la revérification des ventes ⇒ un seul envoi', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get(`*/api/v1/orgs/${IDS.orgNuits}/events/${IDS.eventConcert}`, async () => {
+        await delay(150);
+        return undefined;
+      }),
+    );
+    await renderApp(EVENT, { as: OWNER });
+    await user.click(await screen.findByRole('button', { name: 'Modifier l’événement' }));
+    await user.clear(screen.getByLabelText('Titre'));
+    await user.type(screen.getByLabelText('Titre'), 'Titre unique');
+    const before = mock.db.calls.get('PATCH /orgs/:orgId/events/:eventId') ?? 0;
+    await user.dblClick(screen.getByRole('button', { name: 'Enregistrer les modifications' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Enregistrer les modifications' })).toBeNull());
+    expect((mock.db.calls.get('PATCH /orgs/:orgId/events/:eventId') ?? 0) - before).toBe(1);
+  });
+});
+
+describe('règles financières réservées au propriétaire (v1.17, audit M1)', () => {
+  it('MANAGER : règles financières en lecture seule « réservé au propriétaire », règles opérationnelles modifiables ; OWNER : tout modifiable', async () => {
+    const user = userEvent.setup();
+    await renderApp(EVENT, { as: MANAGER });
+    await user.click(await screen.findByRole('button', { name: 'Modifier l’événement' }));
+    const refund = screen.getByRole('group', { name: 'Remboursement du prix des billets' });
+    expect(refund).toHaveTextContent('Réservé au propriétaire du collectif');
+    expect(within(refund).queryByRole('radio')).toBeNull();
+    for (const label of ['Frais de service fixes par commande', 'Paiement par virement', 'Annulation par l’acheteur']) {
+      expect(within(screen.getByRole('group', { name: label })).queryByRole('radio')).toBeNull();
+    }
+    expect(within(screen.getByRole('group', { name: 'Places maximum par commande' })).getAllByRole('radio')).toHaveLength(2);
+    expect(screen.getByText(/règles financières .* sont réservées au propriétaire du collectif/)).toBeInTheDocument();
+    cleanupRender();
+    await renderApp(EVENT, { as: OWNER });
+    await user.click(await screen.findByRole('button', { name: 'Modifier l’événement' }));
+    expect(within(screen.getByRole('group', { name: 'Remboursement du prix des billets' })).getAllByRole('radio')).toHaveLength(2);
+  });
+
+  it('409 (report déjà en cours de traitement, v1.17) ⇒ message clair, rien de modifié', async () => {
+    const user = userEvent.setup();
+    await renderApp(EVENT, { as: OWNER });
+    await user.click(await screen.findByRole('button', { name: 'Modifier l’événement' }));
+    injectFault({ route: 'PATCH /orgs/:orgId/events/:eventId', status: 409, code: 'CONFLICT' });
+    await user.clear(screen.getByLabelText('Titre'));
+    await user.type(screen.getByLabelText('Titre'), 'Autre titre');
+    await user.click(screen.getByRole('button', { name: 'Enregistrer les modifications' }));
+    expect(await screen.findByText(/Un report de cet événement est déjà en cours de traitement/)).toBeInTheDocument();
+  });
+
+  it('403 au moment d’enregistrer ⇒ explication (propriétaire seulement), pas un message générique', async () => {
+    const user = userEvent.setup();
+    await renderApp(EVENT, { as: MANAGER });
+    await user.click(await screen.findByRole('button', { name: 'Modifier l’événement' }));
+    injectFault({ route: 'PATCH /orgs/:orgId/events/:eventId', status: 403, code: 'FORBIDDEN' });
+    await user.clear(screen.getByLabelText('Titre'));
+    await user.type(screen.getByLabelText('Titre'), 'Nouveau titre');
+    await user.click(screen.getByRole('button', { name: 'Enregistrer les modifications' }));
+    expect(await screen.findByText(/Seul le propriétaire du collectif peut modifier les règles financières/)).toBeInTheDocument();
+  });
+});
+
+describe('réglages modifiés par un autre propriétaire pendant l’édition (audit M6)', () => {
+  it('champ modifié ailleurs mais pas ici ⇒ conservé ; même champ modifié ici et ailleurs ⇒ avertissement, rien d’écrasé', async () => {
+    const user = userEvent.setup();
+    const { queryClient } = await renderApp(`${ORG}/settings`, { as: OWNER });
+    const refund = await screen.findByLabelText(/Remboursement du prix des billets/);
+    const settings = mock.db.settings.get(IDS.orgNuits);
+    if (!settings) throw new Error('réglages absents');
+    // Un autre propriétaire change le délai de paiement carte ET le pourcentage remboursé ; les réglages sont relus.
+    settings.cardHoldMinutes = 30;
+    settings.refundPercent = 80;
+    await act(() => queryClient.invalidateQueries({ queryKey: ['org', IDS.orgNuits, 'settings'] }));
+    await user.clear(refund);
+    await user.type(refund, '50');
+    await user.click(screen.getByRole('button', { name: 'Enregistrer les réglages' }));
+    expect((await screen.findByText(/Modifié par quelqu’un d’autre entre-temps/)).closest('p')).toHaveTextContent(/Remboursement du prix des billets\. Rien n’a été enregistré/);
+    expect(settings.refundPercent).toBe(80); // pas écrasé
+    expect(settings.cardHoldMinutes).toBe(30);
+    // Repartir des valeurs à jour, puis enregistrer : seul le champ voulu change.
+    await user.click(screen.getByRole('button', { name: 'Repartir des valeurs à jour' }));
+    expect(screen.getByLabelText(/Remboursement du prix des billets/)).toHaveValue('80');
+    await user.clear(screen.getByLabelText(/Remboursement du prix des billets/));
+    await user.type(screen.getByLabelText(/Remboursement du prix des billets/), '50');
+    await user.click(screen.getByRole('button', { name: 'Enregistrer les réglages' }));
+    expect(await screen.findByText('Réglages enregistrés.')).toBeInTheDocument();
+    const saved = mock.db.settings.get(IDS.orgNuits); // le serveur simulé remplace l'objet
+    expect(saved?.refundPercent).toBe(50);
+    expect(saved?.cardHoldMinutes).toBe(30); // jamais renvoyé à l'ancienne valeur
+  });
+});
+
+describe('remboursements carte vérifiés auprès du prestataire (v1.17, A2)', () => {
+  function cardRefund(pspState: 'pending' | 'unreachable') {
+    const now = new Date().toISOString();
+    const r = { id: crypto.randomUUID(), orgId: IDS.orgNuits, orderId: crypto.randomUUID(), eventId: IDS.eventConcert, amountCents: 1800, reason: 'SELF_CANCELLATION' as const, method: 'CARD' as const, status: 'FAILED' as const, note: null, createdAt: now, updatedAt: now, pspState };
+    mock.db.refunds.push(r);
+    return r;
+  }
+
+  it('503 au marquage ⇒ « rien n’a été modifié » + Réessayer après Retry-After, puis succès', async () => {
+    const user = userEvent.setup();
+    const r = cardRefund('unreachable');
+    await renderApp(`${ORG}/refunds`, { as: MANAGER });
+    const t0 = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(t0);
+    await user.click(await screen.findByRole('button', { name: 'Marquer comme effectué' }));
+    const dialog = screen.getByRole('dialog', { name: 'Confirmer le remboursement effectué ?' });
+    await user.type(within(dialog).getByLabelText(/Note/), 'Remboursé au guichet');
+    await user.click(within(dialog).getByRole('button', { name: 'Marquer comme effectué' }));
+    expect(await screen.findByText(/prestataire de paiement est momentanément injoignable/)).toHaveTextContent('Rien n’a été modifié');
+    expect(screen.getByRole('button', { name: /^Réessayer/ })).toBeDisabled();
+    delete (r as { pspState?: string }).pspState; // prestataire revenu
+    clock.mockReturnValue(t0 + 5_000);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Réessayer' })).toBeEnabled());
+    await user.click(screen.getByRole('button', { name: 'Réessayer' }));
+    await waitFor(() => expect(mock.db.refunds.find((x) => x.id === r.id)?.status).toBe('SUCCEEDED'));
+    expect(mock.db.refunds.find((x) => x.id === r.id)?.note).toBe('Remboursé au guichet');
+  });
+
+  it('B5 : 409 sur une carte ⇒ « en cours chez le prestataire : ne remboursez pas à la main »', async () => {
+    const user = userEvent.setup();
+    cardRefund('pending');
+    await renderApp(`${ORG}/refunds`, { as: MANAGER });
+    await user.click(await screen.findByRole('button', { name: 'Marquer comme effectué' }));
+    const dialog = screen.getByRole('dialog', { name: 'Confirmer le remboursement effectué ?' });
+    await user.type(within(dialog).getByLabelText(/Note/), 'x');
+    await user.click(within(dialog).getByRole('button', { name: 'Marquer comme effectué' }));
+    expect(await screen.findByText(/en cours chez le prestataire de paiement, ou déjà effectué : ne remboursez pas à la main/)).toBeInTheDocument();
+  });
+});
+
 describe('membres, journal, admin plateforme', () => {
   it('membres : ajout d’un compte inconnu ⇒ message ; dernier propriétaire protégé (après confirmation)', async () => {
     const user = userEvent.setup();
@@ -693,7 +944,7 @@ describe('remboursements (contrat v1.10)', () => {
     await user.click(await screen.findByRole('button', { name: 'Marquer comme effectué' }));
     await user.type(screen.getByLabelText(/Note/), 'fait');
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Marquer comme effectué' }));
-    expect(await screen.findByText('Ce remboursement a déjà été traité.')).toBeInTheDocument();
+    expect(await screen.findByText('Ce remboursement a déjà été traité. La liste a été actualisée.')).toBeInTheDocument();
   });
 
   it('carte remboursée ⇒ SUCCEEDED, rien à faire ; aucune alerte au tableau de bord', async () => {

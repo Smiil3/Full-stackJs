@@ -4,7 +4,7 @@ import { ORDER_STATUSES } from '../../api/types';
 import { base64urlToBytes } from '../../lib/base64url';
 import { audit, control, fail, json, mock, noContent, notFound, param, paginate, readBody, readQuery, requireOrgRole, route, type Validator } from '../core';
 import { mockPublicKeyJwk } from '../crypto';
-import { cancelOrder, expireDueOrders, markPaid } from '../domain';
+import { cancelOrder, expireDueOrders, markPaid, markRefundDone } from '../domain';
 import { toEventAdmin, toMember, toOrderAdmin, toRefund, toSettings, toTicketTypeAdmin, typesOf } from '../serializers';
 import { maskIban, NO_OVERRIDES, remaining, type MockEvent, type MockSettings } from '../state';
 
@@ -20,7 +20,7 @@ const BOUNDS = {
   refundPercent: [0, 100],
   maxPerOrder: [1, 20],
   maxPerUser: [1, 50],
-  waitlistOfferMinutes: [15, 2880],
+  waitlistOfferMinutes: [15, 360], // v1.17 : anti-gel du stock
   serviceFeeFixedCents: [0, 1000],
   serviceFeeBasisPoints: [0, 1500],
 } as const;
@@ -158,6 +158,14 @@ function checkinOpen(e: MockEvent): boolean {
   return e.status === 'PUBLISHED' && now >= Date.parse(e.startsAt) - 12 * 3_600_000 && now < Date.parse(e.endsAt) + 24 * 3_600_000;
 }
 
+/** v1.17 : surcharges financières réservées à l'OWNER (création et modification). */
+const FINANCIAL_OVERRIDES = ['refundPercent', 'serviceFeeFixedCents', 'serviceFeeBasisPoints', 'transferEnabled', 'selfCancellationEnabled', 'cancellationDeadlineHours'] as const;
+function assertFinancialAllowed(role: string | undefined, before: Record<string, unknown>, overrides: unknown): void {
+  if (role === 'OWNER' || typeof overrides !== 'object' || overrides === null) return;
+  const next = overrides as Record<string, unknown>;
+  if (FINANCIAL_OVERRIDES.some((k) => k in next && (next[k] ?? null) !== (before[k] ?? null))) fail(403, 'FORBIDDEN', 'Surcharge financière réservée au propriétaire');
+}
+
 export const orgHandlers = [
   // ---------------- Collectif ----------------
   route('get', '/orgs/:orgId', ({ request, params }) => {
@@ -288,6 +296,7 @@ export const orgHandlers = [
     const actor = requireOrgRole(request, orgId, 'MANAGER');
     const v = await readBody(request, EVENT_FIELDS);
     const d = validateEventBody(v, false);
+    assertFinancialAllowed(mock.db.memberships.find((m) => m.orgId === orgId && m.userId === actor.id)?.role, {}, d.overrides);
     if (d.startsAt && d.endsAt && d.endsAt <= d.startsAt) v.custom('endsAt', 'Doit être après le début');
     if (d.salesEndAt && d.endsAt && d.salesEndAt > d.endsAt) v.custom('salesEndAt', 'Doit être avant la fin de l’événement');
     if (d.salesStartAt && d.salesEndAt && d.salesEndAt <= d.salesStartAt) v.custom('salesEndAt', 'Doit être après l’ouverture des ventes');
@@ -343,6 +352,7 @@ export const orgHandlers = [
     if (e.status === 'CANCELLED') fail(409, 'CONFLICT', 'Événement annulé');
     const role = mock.db.memberships.find((m) => m.orgId === orgId && m.userId === actor.id)?.role;
     if (typeof offline === 'boolean' && role !== 'OWNER') fail(403, 'FORBIDDEN', 'Mode secours réservé au propriétaire');
+    assertFinancialAllowed(role, e.overrides, d.overrides);
     if (typeof offline === 'boolean' && offline !== e.offlineCheckinEnabled) {
       e.offlineCheckinEnabled = offline;
       audit(orgId, actor, offline ? 'event.offlineCheckin.enable' : 'event.offlineCheckin.disable', `event:${e.id}`);
@@ -580,10 +590,7 @@ export const orgHandlers = [
     const v = await readBody(request, ['note']);
     const note = v.str('note', { min: 1, max: 500 });
     v.done();
-    if (r.status !== 'MANUAL_REQUIRED' && r.status !== 'FAILED') fail(409, 'INVALID_STATE', 'Remboursement déjà traité');
-    r.status = 'SUCCEEDED';
-    r.note = note ?? null;
-    r.updatedAt = new Date().toISOString();
+    markRefundDone(r, note ?? '');
     audit(orgId, actor, 'refund.markDone', `refund:${r.id}`, { amountCents: r.amountCents });
     return json(toRefund(r));
   }),
