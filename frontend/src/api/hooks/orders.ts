@@ -12,11 +12,12 @@ import type { CheckoutResponse, CreateOrderBody, Order, Page } from '../types';
  * (utilisateur, empreinte du panier). Même panier ⇒ même clé ⇒ le serveur rend la même commande.
  * Panier différent ⇒ nouvelle clé. Clé OUBLIÉE (audit M5) : après confirmation, quand la commande
  * rendue est EXPIRED / CANCELLED (une clé = une commande pour toujours), sur erreur non transitoire,
- * après ATTEMPT_KEY_TTL_MS, et à la fin de session. Seules les erreurs transitoires (réseau, délai,
- * 5xx, 429) la conservent : c'est là qu'un rejeu doit retrouver la même commande.
+ * et à la fin de session. Pas de durée de vie (audit n° 2, B'1) : une réservation peut durer jusqu'à
+ * 240 h (virement), une clé oubliée trop tôt créerait une SECONDE commande. Seules les erreurs
+ * transitoires (réseau, délai, 5xx, 429, réponse 2xx illisible) la conservent : c'est là qu'un rejeu
+ * doit retrouver la même commande.
  */
-export const ATTEMPT_KEY_TTL_MS = 30 * 60_000;
-const attemptKeys = new Map<string, { key: string; createdAt: number }>();
+const attemptKeys = new Map<string, string>();
 registerSessionCleanup(() => {
   attemptKeys.clear();
 });
@@ -28,18 +29,20 @@ registerSessionCleanup(() => {
 export const captureSession = () => ({ gen: sessionGeneration() });
 export const sameSession = (ctx: { gen: number } | undefined) => ctx !== undefined && ctx.gen === sessionGeneration();
 
-export function idempotencyKeyFor(userId: string, fingerprint: string, now: number = Date.now()): string {
+export function idempotencyKeyFor(userId: string, fingerprint: string): string {
   const slot = `${userId}|${fingerprint}`;
   const kept = attemptKeys.get(slot);
-  if (kept && now - kept.createdAt < ATTEMPT_KEY_TTL_MS) return kept.key;
+  if (kept) return kept;
   const key = crypto.randomUUID();
-  attemptKeys.set(slot, { key, createdAt: now });
+  attemptKeys.set(slot, key);
   return key;
 }
 
 /** Erreurs après lesquelles un rejeu doit retrouver la MÊME commande (la clé est conservée). */
 export function isTransientOrderError(e: unknown): boolean {
   if (!isApiError(e)) return true; // erreur inconnue : prudence, la commande a pu être créée
+  // 2xx au corps vide ou illisible : la commande a PU être créée ⇒ même clé au prochain essai.
+  if (e.code === 'UNEXPECTED_RESPONSE' && e.status >= 200 && e.status < 300) return true;
   return e.code === 'NETWORK_ERROR' || e.code === 'TIMEOUT' || e.code === 'RATE_LIMITED' || e.code === 'SESSION_CHANGED' || e.status >= 500;
 }
 
