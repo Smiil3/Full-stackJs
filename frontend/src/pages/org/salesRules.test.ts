@@ -77,6 +77,15 @@ describe('formulaire d’événement', () => {
     expect(r.body?.startsAt).toBe('2026-07-10T18:30:00.000Z');
   });
 
+  it('M\'4 : événement relu avec d’autres valeurs, formulaire non touché sur ces champs ⇒ rien n’est renvoyé', () => {
+    const f = initialEventForm(event, settings);
+    const f2 = { ...f, description: 'Nouvelle description' };
+    const body = buildEventBody(f2, settings).body;
+    if (!body) throw new Error('body');
+    const relu = { ...event, title: 'Titre changé ailleurs', venue: 'Autre lieu', overrides: { ...event.overrides, refundPercent: 40 } };
+    expect(diffPatch(relu, f, f2, body)).toEqual({ description: 'Nouvelle description' });
+  });
+
   it('PATCH minimal : rien de modifié ⇒ objet vide ; titre seul ⇒ titre seul (pas de faux report)', () => {
     const f = initialEventForm(event, settings);
     const body = buildEventBody(f, settings).body;

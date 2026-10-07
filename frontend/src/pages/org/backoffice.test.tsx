@@ -622,6 +622,56 @@ describe('éditeur d’événement : modifications extérieures et double envoi 
     expect(screen.queryByText(/modifié entre-temps/)).toBeNull();
   });
 
+  /** Corps des PATCH de l'événement réellement envoyés au serveur. */
+  function capturePatchBodies(): unknown[] {
+    const bodies: unknown[] = [];
+    server.events.on('request:start', ({ request }) => {
+      if (request.method === 'PATCH' && /\/events\/[^/]+$/.test(new URL(request.url).pathname)) void request.clone().json().then((b: unknown) => bodies.push(b));
+    });
+    return bodies;
+  }
+
+  it('M\'4 : champs modifiés ailleurs pendant l’édition ⇒ le PATCH ne contient QUE le champ touché (corps vérifié)', async () => {
+    const user = userEvent.setup();
+    const bodies = capturePatchBodies();
+    const { queryClient } = await renderApp(EVENT, { as: OWNER });
+    await user.click(await screen.findByRole('button', { name: 'Modifier l’événement' }));
+    // Un autre membre change le titre et une surcharge financière ; l'événement est relu.
+    await user.type(screen.getByLabelText('Description'), ' — portes à 19h'); // A commence à modifier…
+    const e = mock.db.events.find((x) => x.id === IDS.eventConcert);
+    if (!e) throw new Error('événement absent');
+    // … pendant qu'un autre membre change le titre et une surcharge financière ; l'événement est relu.
+    Object.assign(e, { title: 'Titre changé ailleurs', overrides: { ...e.overrides, refundPercent: 40 }, updatedAt: new Date(Date.now() + 1000).toISOString() });
+    await act(() => queryClient.invalidateQueries({ queryKey: ['org', IDS.orgNuits, 'event', IDS.eventConcert] }));
+    await screen.findByText(/Cet événement a été modifié entre-temps/);
+    await user.click(screen.getByRole('button', { name: 'Enregistrer les modifications' }));
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    server.events.removeAllListeners();
+    expect(Object.keys(bodies[0] as object)).toEqual(['description']);
+    expect(e.title).toBe('Titre changé ailleurs'); // jamais écrasé
+    expect(e.overrides.refundPercent).toBe(40);
+  });
+
+  it('M\'4 : un MANAGER qui modifie le lieu ne renvoie jamais une surcharge financière (pas de 403 incompréhensible)', async () => {
+    const user = userEvent.setup();
+    const bodies = capturePatchBodies();
+    const { queryClient } = await renderApp(EVENT, { as: MANAGER });
+    await user.click(await screen.findByRole('button', { name: 'Modifier l’événement' }));
+    await user.clear(screen.getByLabelText('Lieu'));
+    await user.type(screen.getByLabelText('Lieu'), 'Salle des fêtes'); // le MANAGER commence à modifier…
+    const e = mock.db.events.find((x) => x.id === IDS.eventConcert);
+    if (!e) throw new Error('événement absent');
+    Object.assign(e, { overrides: { ...e.overrides, refundPercent: 40 }, updatedAt: new Date(Date.now() + 1000).toISOString() }); // … pendant que l'OWNER fixe 40 %
+    await act(() => queryClient.invalidateQueries({ queryKey: ['org', IDS.orgNuits, 'event', IDS.eventConcert] }));
+    await screen.findByText(/Cet événement a été modifié entre-temps/);
+    await user.click(screen.getByRole('button', { name: 'Enregistrer les modifications' }));
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    server.events.removeAllListeners();
+    expect(bodies[0]).toEqual({ venue: 'Salle des fêtes' });
+    expect(screen.queryByText(/Seul le propriétaire/)).toBeNull();
+    expect(e.overrides.refundPercent).toBe(40);
+  });
+
   it('double clic sur « Enregistrer » pendant la revérification des ventes ⇒ un seul envoi', async () => {
     const user = userEvent.setup();
     server.use(

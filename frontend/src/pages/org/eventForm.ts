@@ -92,16 +92,19 @@ export function buildEventBody(
 }
 
 /**
- * PATCH minimal : seuls les champs réellement modifiés sont envoyés (une date inchangée n'est jamais
- * renvoyée, ce qui évite un faux « report » dû à un arrondi à la minute).
+ * PATCH minimal (audit M'4) : chaque champ est comparé à l'état INITIAL du formulaire, jamais à
+ * l'événement relu entre-temps : un champ que l'utilisateur n'a pas touché n'est JAMAIS envoyé (pas
+ * d'écrasement d'une modification faite ailleurs, pas de surcharge financière périmée renvoyée par un
+ * MANAGER). Dates : envoyées seulement si touchées ET réellement déplacées (à la minute) par rapport à
+ * l'événement, ce qui évite un faux « report » dû à un arrondi.
  */
 export function diffPatch(event: EventAdmin, initial: EventFormState, current: EventFormState, body: EventCreateBody): EventPatchBody {
   const patch: EventPatchBody = {};
-  if (body.title !== event.title) patch.title = body.title;
-  if ((body.description ?? null) !== event.description) patch.description = body.description ?? null;
-  if (body.isOnline !== event.isOnline) patch.isOnline = body.isOnline;
-  if ((body.venue ?? null) !== event.venue) patch.venue = body.venue ?? null;
-  if ((body.address ?? null) !== event.address) patch.address = body.address ?? null;
+  if (current.title !== initial.title) patch.title = body.title;
+  if (current.description !== initial.description) patch.description = body.description ?? null;
+  if (current.isOnline !== initial.isOnline) patch.isOnline = body.isOnline;
+  if (current.venue !== initial.venue) patch.venue = body.venue ?? null;
+  if (current.address !== initial.address) patch.address = body.address ?? null;
   const tzChanged = current.timezone !== initial.timezone;
   if (tzChanged) patch.timezone = body.timezone;
   // Comparaison en INSTANTS à la minute (précision de la saisie), seulement pour les champs touchés :
@@ -111,8 +114,9 @@ export function diffPatch(event: EventAdmin, initial: EventFormState, current: E
     if ((tzChanged || current[k] !== initial[k]) && minute(body[k]) !== minute(event[k])) patch[k] = body[k];
   }
   const overrides: Partial<EventOverrides> = {};
-  for (const [k, v] of Object.entries(body.overrides ?? {}) as [keyof EventOverrides, EventOverrides[keyof EventOverrides]][]) {
-    if (v !== event.overrides[k]) Object.assign(overrides, { [k]: v });
+  for (const k of Object.keys(current.rules) as RuleKey[]) {
+    const touched = JSON.stringify(current.rules[k]) !== JSON.stringify(initial.rules[k]);
+    if (touched && body.overrides) Object.assign(overrides, { [k]: body.overrides[k] });
   }
   if (Object.keys(overrides).length) patch.overrides = overrides;
   return patch;
