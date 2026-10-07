@@ -4,9 +4,9 @@ import { useAcceptOffer, useLeaveWaitlist, useMyWaitlist } from '../../api/hooks
 import { ErrorAlert } from '../../components/ErrorAlert';
 import { Icon } from '../../components/Icon';
 import { lookup } from '../../lib/lookup';
-import { positionLabel } from '../../lib/waitlist';
+import { positionLabel, unhonoredOffersNotice } from '../../lib/waitlist';
 
-const STATUS: Record<string, string> = { CONVERTED: 'Offre acceptée', EXPIRED: 'Offre expirée', LEFT: 'Inscription retirée' };
+const STATUS: Record<string, string> = { CONVERTED: 'Offre acceptée', EXPIRED: 'Inscription close', LEFT: 'Inscription retirée' };
 
 export function WaitlistSection() {
   const { data } = useMyWaitlist(true);
@@ -54,6 +54,7 @@ export function WaitlistSection() {
             ) : (
               <p className="muted">{lookup(STATUS, w.status) ?? 'Statut inconnu'}</p>
             )}
+            {unhonoredOffersNotice(w.unhonoredOffers) ? <p className="muted">{unhonoredOffersNotice(w.unhonoredOffers)}</p> : null}
             <div className="row">
               {w.status === 'WAITING' || w.status === 'OFFERED' ? (
                 <Link to={apiPath`/waitlist/${w.id}`}>{w.status === 'OFFERED' ? 'Voir l’offre' : 'Voir le détail'}</Link>

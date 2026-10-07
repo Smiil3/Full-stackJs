@@ -13,6 +13,7 @@ import type {
   WaitlistEntry,
 } from '../api/types';
 import { mock } from './core';
+import { MAX_UNHONORED_OFFERS_PER_EVENT, unhonoredOffers } from './domain';
 import {
   availability,
   currentPrice,
@@ -250,6 +251,7 @@ export function toWaitlist(w: MockWaitlist): WaitlistEntry {
     status: w.status,
     position: w.status === 'WAITING' ? queue.findIndex((x) => x.id === w.id) + 1 : null,
     offerExpiresAt: w.offerExpiresAt,
+    unhonoredOffers: Math.min(unhonoredOffers(w.userId, w.eventId), MAX_UNHONORED_OFFERS_PER_EVENT),
     createdAt: w.createdAt,
   };
 }

@@ -212,6 +212,8 @@ export type WaitlistEntry = {
   status: WaitlistStatus;
   position: number | null;
   offerExpiresAt: IsoDateTime | null;
+  /** Offres non honorées de ce compte sur CET événement (0–2, contrat v1.18 §6 anti-gel). */
+  unhonoredOffers: number;
   createdAt: IsoDateTime;
 };
 

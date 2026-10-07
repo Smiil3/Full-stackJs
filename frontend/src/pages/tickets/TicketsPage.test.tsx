@@ -354,4 +354,42 @@ describe('Mes billets — direction « Miroir d’eau » (D1)', () => {
     await user.click(screen.getByRole('button', { name: 'Je laisse ma place' }));
     expect(await screen.findByRole('heading', { name: 'C’est noté, merci !' })).toBeInTheDocument();
   });
+
+  it('B\'4 : offre expirée ⇒ inscription close (jamais « vous restez inscrit·e ») et compteur 1 sur 2, repris après réinscription', async () => {
+    await login(BUYER, DEMO_PASSWORD);
+    const entry = await apiRequest<{ id: string }>(`/events/${IDS.eventSoldOut}/ticket-types/${IDS.ttSoldOut}/waitlist`, { method: 'POST', body: { quantity: 1 } });
+    const tt = mock.db.ticketTypes.find((t) => t.id === IDS.ttSoldOut);
+    if (!tt) throw new Error('type');
+    tt.held -= 2;
+    offerToWaitlist(tt);
+    const stored = mock.db.waitlist.find((w) => w.id === entry.id);
+    if (stored) stored.offerExpiresAt = new Date(Date.now() - 1000).toISOString(); // offre échue
+    const warning = '1 offre non honorée sur 2 : à la prochaine, vous sortez de la liste d’attente de cet événement.';
+    const { router, queryClient } = await renderApp(`/waitlist/${entry.id}`);
+    expect(await screen.findByRole('heading', { name: 'L’offre a expiré' })).toBeInTheDocument();
+    expect(screen.getByText(/Cette inscription est close/)).toBeInTheDocument();
+    expect(screen.queryByText(/restez inscrit/)).toBeNull();
+    expect(screen.getByRole('note')).toHaveTextContent(warning);
+    // Réinscription (type redevenu complet) : l'avertissement suit le compte sur l'événement.
+    tt.held = tt.capacity - tt.sold;
+    const again = await apiRequest<{ id: string }>(`/events/${IDS.eventSoldOut}/ticket-types/${IDS.ttSoldOut}/waitlist`, { method: 'POST', body: { quantity: 1 } });
+    await queryClient.invalidateQueries(); // comme après une inscription faite depuis l'interface
+    await act(() => router.navigate(`/waitlist/${again.id}`));
+    expect(await screen.findByRole('heading', { name: 'Vous êtes sur la liste d’attente' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('note')).toHaveTextContent(warning));
+    await act(() => router.navigate('/me/tickets'));
+    expect(await screen.findByText('Inscription close')).toBeInTheDocument();
+    expect(screen.getAllByText(warning)).toHaveLength(2); // l'inscription close et la nouvelle
+  });
+
+  it('B\'4 : deux offres non honorées ⇒ sortie de la liste annoncée', async () => {
+    await login(BUYER, DEMO_PASSWORD);
+    const entry = await apiRequest<{ id: string }>(`/events/${IDS.eventSoldOut}/ticket-types/${IDS.ttSoldOut}/waitlist`, { method: 'POST', body: { quantity: 1 } });
+    const stored = mock.db.waitlist.find((w) => w.id === entry.id);
+    if (!stored) throw new Error('entrée');
+    mock.db.waitlist.push({ ...stored, id: crypto.randomUUID(), status: 'EXPIRED', offerExpired: true }); // 1re offre non honorée
+    Object.assign(stored, { status: 'EXPIRED', offerExpired: true, offerExpiresAt: new Date().toISOString() });
+    await renderApp(`/waitlist/${entry.id}`);
+    expect(await screen.findByRole('note')).toHaveTextContent('2 offres non honorées sur 2 : vous êtes sorti·e de la liste d’attente de cet événement et ne pouvez plus vous y réinscrire.');
+  });
 });

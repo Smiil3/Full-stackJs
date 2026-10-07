@@ -103,7 +103,10 @@ export type MockWaitlist = {
   ticketTypeId: string;
   quantity: number;
   status: WaitlistStatus;
+  offeredAt: string | null;
   offerExpiresAt: string | null;
+  /** Offre non honorée (v1.18 §6) : expirée, quittée tardivement, ou commande issue de l'offre expirée. */
+  offerExpired: boolean;
   createdAt: string;
 };
 export type MockRefund = {

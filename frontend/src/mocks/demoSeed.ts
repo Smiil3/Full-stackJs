@@ -58,7 +58,9 @@ export async function seedDemoBuyer(): Promise<{ paidOrderId: string; transferOr
       ticketTypeId: tt.id,
       quantity: 2,
       status: 'OFFERED',
+      offeredAt: new Date(Date.now() - 82 * 60_000).toISOString(),
       offerExpiresAt: new Date(Date.now() + 38 * 60_000).toISOString(),
+      offerExpired: false,
       createdAt: new Date(Date.now() - 86_400_000).toISOString(),
     });
   }
