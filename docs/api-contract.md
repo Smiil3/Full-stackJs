@@ -1,7 +1,7 @@
 # Contrat d'API — Billetterie « Les Nuits de la Garonne »
 
 > **Source de vérité commune front / back.** Toute modification passe par le PO (session `fullstack-js`) : demander via une ligne `NEED: changement de contrat …`. Ne jamais diverger silencieusement.
-> Version : 1.16 — 2026-10-06 (voir §11 Historique)
+> Version : 1.17 — 2026-10-06 (voir §11 Historique)
 
 ## 1. Conventions
 
@@ -43,6 +43,7 @@
 | 415 | `UNSUPPORTED_MEDIA_TYPE` | Content-Type non supporté (JSON attendu) |
 | 422 | `LIMIT_EXCEEDED` | Plafond par commande ou par personne dépassé (`details.max`, `details.alreadyOwned`) |
 | 422 | `PAYMENT_METHOD_UNAVAILABLE` | Virement désactivé ou coordonnées bancaires absentes |
+| 503 | `PAYMENT_PROVIDER_UNAVAILABLE` | Prestataire de paiement injoignable ou en erreur : la réservation est conservée jusqu'à `expiresAt`, l'acheteur peut réessayer (en-tête `Retry-After`) |
 | 422 | `AMOUNT_MISMATCH` | Montant de virement reçu ≠ montant dû |
 | 429 | `RATE_LIMITED` | Trop de requêtes (en-tête `Retry-After`) |
 | 500 | `INTERNAL_ERROR` | Jamais de stack ni de détail technique |
@@ -118,7 +119,7 @@ type Order = { id; eventId; eventTitle; eventStartsAt; eventTimezone; status: Or
 | `POST /orders` | Bearer, email vérifié | en-tête **`Idempotency-Key: <uuid>`** (obligatoire) · `{ eventId, paymentMethod, items: [{ ticketTypeId, quantity ≥1 }] (1–10 items, ticketTypeId uniques) }` | **201** `Order` (même Idempotency-Key + même body ⇒ même commande, 200) · 409 `SOLD_OUT`/`SALES_CLOSED`/`IDEMPOTENCY_CONFLICT` · 422 `LIMIT_EXCEEDED`/`PAYMENT_METHOD_UNAVAILABLE` |
 | `GET /orders` | Bearer | `page, pageSize` | 200 page de `Order` (les siennes) |
 | `GET /orders/:orderId` | Bearer | — | 200 `Order` · 404 si pas à lui |
-| `POST /orders/:orderId/checkout` | Bearer | — | 200 `{ redirectUrl }` vers le mock PSP · 409 `ORDER_EXPIRED`/`INVALID_STATE` |
+| `POST /orders/:orderId/checkout` | Bearer | — | 200 `{ redirectUrl }` vers le mock PSP · 409 `ORDER_EXPIRED`/`INVALID_STATE`/`SALES_CLOSED` · **503 `PAYMENT_PROVIDER_UNAVAILABLE`** (PSP injoignable, délai dépassé ou 5xx ; aucune session créée, commande inchangée) |
 | `POST /orders/:orderId/cancel` | Bearer | — | 200 `Order`. Non payée ⇒ `CANCELLED`. Payée ⇒ `REFUNDED` avec `refundAmountCents` · 409 `CANCELLATION_CLOSED`/`INVALID_STATE` |
 
 Prix, tarif early, frais et total sont **toujours calculés par le serveur** ; le client n'envoie jamais de prix.
@@ -157,7 +158,7 @@ type WaitlistEntry = { id; eventId; eventTitle; ticketTypeId; ticketTypeName; qu
 | `DELETE /waitlist/:entryId` | Bearer | — | 204 (statut `LEFT` ; si `OFFERED`, les places passent au suivant) |
 | `POST /waitlist/:entryId/accept` | Bearer | — | 201 `Order` (CARD, `PENDING_PAYMENT`, places déjà réservées) · 409 `OFFER_EXPIRED` |
 
-**Règles de la liste d'attente** : file FIFO (`createdAt`, `id`) par type de place. La tête de file est servie en priorité : les places libérées s'accumulent pour elle (bloquées, ni vendues au public ni offertes aux suivants) pendant au plus `waitlistOfferMinutes` ; passé ce délai sans assez de places, elle est sautée (elle garde son rang) et la suivante est servie. Le plafond par personne est revérifié à l'acceptation (`LIMIT_EXCEEDED`). Distribution et acceptation possibles seulement tant que les ventes sont ouvertes (`now < min(salesEndAt, startsAt)`) ; inscription possible seulement ventes ouvertes. L'échéance d'une offre fait foi (une offre échue mais pas encore balayée ⇒ `OFFER_EXPIRED`).
+**Règles de la liste d'attente** : file FIFO (`createdAt`, `id`) par type de place. La tête de file est servie en priorité : les places libérées s'accumulent pour elle (bloquées, ni vendues au public ni offertes aux suivants) pendant au plus `min(waitlistOfferMinutes, 30 min)` ; passé ce délai sans assez de places, elle est sautée (elle garde son rang) et la suivante est servie. Le plafond par personne est revérifié à l'acceptation (`LIMIT_EXCEEDED`). Distribution et acceptation possibles seulement tant que les ventes sont ouvertes (`now < min(salesEndAt, startsAt)`) ; inscription possible seulement ventes ouvertes. L'échéance d'une offre fait foi (une offre échue mais pas encore balayée ⇒ `OFFER_EXPIRED`). **Anti-gel** : durée d'une offre bornée par le réglage `waitlistOfferMinutes` (15–360 min) ; un compte qui laisse expirer **deux offres** sur un même événement sort de la liste d'attente de cet événement (statut `EXPIRED`, réinscription refusée : 409 `CONFLICT`).
 
 ## 7. Back-office collectif (préfixe `/orgs/:orgId`, Bearer)
 
@@ -200,7 +201,10 @@ type EventAdmin = { id; orgId; title; description: string|null; venue: string|nu
 | `GET /orgs/:orgId/events` | MANAGER+ | `page, pageSize, status?` | 200 page `EventAdmin` |
 | `POST /orgs/:orgId/events` | MANAGER+ | `{ title (1–150), description? (≤5000), venue?, address?, isOnline, startsAt, endsAt (> startsAt), timezone, salesStartAt, salesEndAt (≤ endsAt), overrides? }` | 201 `EventAdmin` (DRAFT) |
 | `GET /orgs/:orgId/events/:eventId` | MANAGER+ | — | 200 `EventAdmin` |
-| `PATCH /orgs/:orgId/events/:eventId` | MANAGER+ | champs ci-dessus, tous optionnels ; `overrides` partiel ; `rescheduleReason` (1–500) requis si report | 200 `EventAdmin` · 409 si `CANCELLED` · 403 si report par un MANAGER · 400 si `rescheduleReason` manquant |
+| `PATCH /orgs/:orgId/events/:eventId` | MANAGER+ | champs ci-dessus, tous optionnels ; `overrides` partiel ; `rescheduleReason` (1–500) requis si report | 200 `EventAdmin` · 409 si `CANCELLED` · 403 si report par un MANAGER · **403 si un MANAGER modifie une surcharge financière** · 400 si `rescheduleReason` manquant |
+
+**Surcharges financières réservées à l'OWNER** (création et modification) : `refundPercent`, `serviceFeeFixedCents`, `serviceFeeBasisPoints`, `transferEnabled`, `selfCancellationEnabled`, `cancellationDeadlineHours`. Un MANAGER garde les surcharges opérationnelles (`cardHoldMinutes`, `transferHoldHours`, `maxPerOrder`, `maxPerUser`, `waitlistOfferMinutes`, `waitlistEnabled`). Toute modification d'une surcharge financière ⇒ AuditLog avant/après champ par champ + mail à tous les OWNER.
+
 | `POST /orgs/:orgId/events/:eventId/publish` | MANAGER+ | — | 200 `EventAdmin` · 409 si aucun type de place |
 | `POST /orgs/:orgId/events/:eventId/cancel` | OWNER | `{ reason (1–500) }` | 200 `EventAdmin` (statut `CANCELLED` immédiatement : plus aucune vente ni scan) — le traitement des commandes (remboursements, annulations, mails, billets) se fait **en arrière-plan par lots** ; `EventAdmin.cancellationPendingOrders` indique le reste à traiter · idempotent (2e appel ⇒ 200 même état) · 409 `CONFLICT` si l'événement a déjà commencé (`startsAt` passé) |
 | `POST /orgs/:orgId/events/:eventId/ticket-types` | MANAGER+ | `{ name (1–80), description?, capacity (1–100000), priceCents (0–1000000), earlyPriceCents?, earlyUntil?, sortOrder? }` (early : les 2 ou aucun, `earlyPriceCents < priceCents`) | 201 `TicketTypeAdmin` |
@@ -234,13 +238,13 @@ type EventStats = { eventId; generatedAt; currency: 'EUR';
 
 ### 7.3 bis Remboursements (suivi organisateur)
 ```ts
-type RefundAdmin = { id; orderId; eventId; eventTitle; buyerEmail; amountCents; reason: 'SELF_CANCELLATION'|'EVENT_CANCELLED'|'LATE_PAYMENT'|'DUPLICATE_PAYMENT'|'UNEXPECTED_PAYMENT';
+type RefundAdmin = { id; orderId: string|null; eventId: string|null; eventTitle: string|null; buyerEmail: string|null; amountCents; reason: 'SELF_CANCELLATION'|'EVENT_CANCELLED'|'LATE_PAYMENT'|'DUPLICATE_PAYMENT'|'UNEXPECTED_PAYMENT';
   method: 'CARD'|'TRANSFER'; status: 'PENDING'|'SUCCEEDED'|'MANUAL_REQUIRED'|'FAILED'; note: string|null; createdAt; updatedAt }
 ```
 | Méthode & chemin | Rôle | Query / Body | Réponse |
 |---|---|---|---|
 | `GET /orgs/:orgId/refunds` | MANAGER+ | `page, pageSize, status?, eventId?` | 200 page `RefundAdmin` (tri `createdAt` desc) |
-| `POST /orgs/:orgId/refunds/:refundId/mark-done` | MANAGER+ | `{ note (1–500) }` (ex. « virement retour effectué le … ») | 200 `RefundAdmin` (`MANUAL_REQUIRED`/`FAILED` ⇒ `SUCCEEDED`, AuditLog) · 409 `INVALID_STATE` |
+| `POST /orgs/:orgId/refunds/:refundId/mark-done` | MANAGER+ | `{ note (1–500) }` (ex. « virement retour effectué le … ») | 200 `RefundAdmin` (`MANUAL_REQUIRED`/`FAILED` ⇒ `SUCCEEDED`, AuditLog) · 409 `INVALID_STATE` — pour un remboursement **carte**, le serveur interroge d'abord le PSP : déjà remboursé ⇒ `SUCCEEDED` automatiquement (note conservée) ; encore en cours côté PSP ⇒ 409 `INVALID_STATE` (« remboursement en cours chez le prestataire, ne pas rembourser à la main ») ; PSP injoignable ⇒ 503 `PAYMENT_PROVIDER_UNAVAILABLE` |
 
 Un remboursement de commande payée par virement est toujours `MANUAL_REQUIRED` (le mail à l'acheteur annonce un remboursement **à venir** par le collectif, pas un remboursement effectué). Un remboursement carte en échec définitif passe `MANUAL_REQUIRED` (jamais un `FAILED` silencieux). `EventStats.totals` ajoute `refundsToProcess: number` (MANUAL_REQUIRED + FAILED).
 
@@ -265,6 +269,8 @@ Un remboursement de commande payée par virement est toujours `MANUAL_REQUIRED` 
 | Méthode & chemin | Auth | Body | Réponse |
 |---|---|---|---|
 | `GET /admin/orgs` | `isPlatformAdmin` | `page, pageSize` | 200 page `{ id, name, slug, createdAt }` (`{ items, page, pageSize, total }`), tri par nom puis id |
+| `GET /admin/refunds` | `isPlatformAdmin` | `page, pageSize, status?` | 200 page `RefundAdmin` des remboursements **sans commande rattachée** (paiements inattendus) — `orderId`, `eventId`, `eventTitle` à `null`, `buyerEmail` = email PSP si connu sinon `null` |
+| `POST /admin/refunds/:refundId/mark-done` | `isPlatformAdmin` | `{ note (1–500) }` | mêmes règles que la version collectif |
 | `POST /admin/orgs` | `isPlatformAdmin` | `{ name (2–80), slug (^[a-z0-9-]{2,40}$), ownerEmail }` | 201 org, propriétaire = compte existant vérifié |
 
 ## 9. Prestataire de paiement simulé (dev / test uniquement)
@@ -291,6 +297,7 @@ Un remboursement de commande payée par virement est toujours `MANUAL_REQUIRED` 
 - En-têtes de sécurité via helmet ; CORS : origine `FRONT_URL` uniquement, `credentials: true`.
 
 ## 11. Historique
+- **1.17** (2026-10-07) : `503 PAYMENT_PROVIDER_UNAVAILABLE` ; surcharges financières réservées à l'OWNER ; anti-gel de la liste d'attente (offres ≤ 360 min, sortie après 2 offres expirées) ; `mark-done` carte vérifié auprès du PSP ; remboursements orphelins visibles par l'admin plateforme (suite au rapport d'audit du 2026-10-06).
 - **1.16** (2026-10-06) : `Order.paymentInProgress`.
 - **1.15** (2026-10-06) : PSP — échéance des sessions, consultation de session (rapprochement), réessais de webhook, débit limité sur signatures invalides seulement ; paiement tardif soumis à toutes les règles ; droits du report étendus aux commandes non payées ; fenêtre de contrôle `startsAt − 12 h` → `endsAt + 24 h`.
 - **1.14** (2026-10-06) : annulation d'événement asynchrone par lots (`cancellationPendingOrders`), refusée après le début ; règles d'équité de la liste d'attente ; plafond revérifié à l'acceptation ; mail de remboursement de virement « à venir ».
