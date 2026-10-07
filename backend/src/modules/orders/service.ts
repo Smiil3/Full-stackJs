@@ -15,7 +15,7 @@ import { priceAt } from '../../lib/pricing.js';
 import { iso } from '../../lib/schemas.js';
 import { addHours, addMinutes, formatWithZone } from '../../lib/time.js';
 import { resolveEventSettings } from '../settings/resolveEventSettings.js';
-import { getPspClient } from '../../lib/psp.js';
+import { getPspClient, isPspUnavailable } from '../../lib/psp.js';
 import { issueTickets } from '../tickets/issue.js';
 import { refundPreview } from './refund.js';
 import * as repo from './repo.js';
@@ -306,6 +306,8 @@ export async function checkout(userId: string, orderId: string): Promise<{ redir
   if (event.status !== 'PUBLISHED' || now >= event.startsAt) throw errors.state('SALES_CLOSED', 'Les ventes sont closes pour cet événement.');
   if (order.pspSessionUrl) return { redirectUrl: order.pspSessionUrl };
   const env = getEnv();
+  // PSP injoignable : 503 PAYMENT_PROVIDER_UNAVAILABLE, rien n'est enregistré (la tentative suivante réutilise
+  // la même clé d'idempotence, donc la même session si le PSP l'avait créée sans pouvoir répondre).
   const session = await getPspClient().createCheckoutSession({
     orderId: order.id,
     amountCents: order.totalCents,
@@ -316,6 +318,12 @@ export async function checkout(userId: string, orderId: string): Promise<{ redir
     idempotencyKey: `${order.id}:${order.checkoutAttempt}`,
     // La session expire avec la réservation : impossible de payer après l'échéance.
     expiresAt: order.expiresAt,
+  }).catch((err: unknown) => {
+    if (isPspUnavailable(err)) {
+      getLogger().warn({ err, orderId: order.id }, 'checkout : prestataire de paiement injoignable');
+      throw errors.paymentProviderUnavailable();
+    }
+    throw err;
   });
   const expiresAt = order.expiresAt;
   return transaction(async (tx) => {

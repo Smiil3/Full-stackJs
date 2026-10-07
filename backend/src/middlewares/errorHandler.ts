@@ -34,10 +34,11 @@ export const errorHandler: ErrorRequestHandler = (err: unknown, req, res, _next)
   }
   if (err instanceof AppError) {
     if (err.status >= HTTP_SERVER_ERROR_MIN) req.log.error({ err }, 'erreur applicative');
-    if (err.code === 'RATE_LIMITED') {
-      const retryAfter = err.details?.['retryAfterSeconds'];
-      if (typeof retryAfter === 'number') res.setHeader('Retry-After', String(retryAfter));
-      res.status(HTTP_STATUS.TOO_MANY_REQUESTS).json(body(err.code, err.message));
+    // Délai conseillé (limites de requêtes, prestataire de paiement injoignable) : en-tête Retry-After, pas dans le corps.
+    const retryAfter = err.details?.['retryAfterSeconds'];
+    if (typeof retryAfter === 'number') {
+      res.setHeader('Retry-After', String(retryAfter));
+      res.status(err.status).json(body(err.code, err.message));
       return;
     }
     res.status(err.status).json(body(err.code, err.message, err.details));

@@ -13,8 +13,8 @@ function isPermanent(err: unknown): boolean {
 
 /**
  * Réponse du PSP interprétée selon son statut, jamais supposée réussie :
- * succeeded ⇒ SUCCEEDED ; pending ⇒ reste PENDING (identifiant noté, webhook ou nouvel essai idempotent) ;
- * failed ou inconnu ⇒ MANUAL_REQUIRED.
+ * succeeded ⇒ SUCCEEDED ; pending ⇒ reste PENDING (identifiant noté, reconsulté périodiquement SANS limite d'essais :
+ * le passer en traitement manuel exposerait à un double remboursement, audit B5) ; failed ou inconnu ⇒ MANUAL_REQUIRED.
  */
 async function recordOutcome(
   row: { id: string; attempts: number }, result: { id: string; status: string },
@@ -24,7 +24,8 @@ async function recordOutcome(
     await db.refund.updateMany({ where: { id: row.id, status: 'PENDING' }, data: { status: 'SUCCEEDED', providerRefundId: result.id, lastError: null } });
     return 'succeeded';
   }
-  if (result.status === 'pending' && row.attempts < MAX_REFUND_ATTEMPTS) {
+  if (result.status === 'pending') {
+    if (row.attempts >= MAX_REFUND_ATTEMPTS) getLogger().warn({ refundId: row.id, attempts: row.attempts }, 'remboursement toujours en cours chez le PSP : rapprochement périodique');
     await db.refund.updateMany({
       where: { id: row.id, status: 'PENDING' },
       data: { providerRefundId: result.id, nextAttemptAt: new Date(clock.now().getTime() + REFUND_PENDING_RECHECK_MS), lastError: 'PSP pending' },
@@ -49,8 +50,8 @@ export async function processRefunds(): Promise<{ succeeded: number; manual: num
   // Une seule horloge : celle de l'application, qui pose aussi les échéances.
   const now = clock.now();
   const leased = await db.$transaction(async (tx) => {
-    const rows = await tx.$queryRaw<{ id: string; amountCents: number; attempts: number; providerPaymentId: string }[]>`
-      SELECT r."id", r."amountCents", r."attempts", p."providerPaymentId"
+    const rows = await tx.$queryRaw<{ id: string; amountCents: number; attempts: number; providerPaymentId: string; providerRefundId: string | null }[]>`
+      SELECT r."id", r."amountCents", r."attempts", p."providerPaymentId", r."providerRefundId"
       FROM "refunds" r JOIN "payments" p ON p."id" = r."paymentId"
       WHERE r."status" = 'PENDING' AND r."nextAttemptAt" <= ${now}
       ORDER BY r."nextAttemptAt", r."id"
@@ -84,6 +85,11 @@ export async function processRefunds(): Promise<{ succeeded: number; manual: num
             if (outcome === 'manual') manual += 1;
             continue;
           }
+        }
+        if (!isPermanent(err) && row.providerRefundId !== null) {
+          // Le PSP a déjà accepté ce remboursement (« pending ») : jamais de traitement manuel, on le reconsultera.
+          await db.refund.updateMany({ where: { id: row.id, status: 'PENDING' }, data: { nextAttemptAt: new Date(clock.now().getTime() + REFUND_PENDING_RECHECK_MS), lastError: reason } });
+          continue;
         }
         if (isPermanent(err) || row.attempts >= MAX_REFUND_ATTEMPTS) {
           await db.refund.updateMany({ where: { id: row.id, status: 'PENDING' }, data: { status: 'MANUAL_REQUIRED', lastError: reason } });

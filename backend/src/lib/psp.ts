@@ -1,6 +1,6 @@
 import { getEnv } from '../config/env.js';
 import { PSP_ID_MAX_LENGTH, PSP_TIMEOUT_MS } from '../config/payments.js';
-import { HTTP_STATUS } from '../config/http.js';
+import { HTTP_SERVER_ERROR_MIN, HTTP_STATUS } from '../config/http.js';
 
 /** Client du prestataire de paiement (mock en dev / test). Appels réseau bornés, JAMAIS dans une transaction. */
 export interface PspSessionStatus {
@@ -27,6 +27,16 @@ export class PspError extends Error {
     super(`Réponse PSP inattendue (${status})`);
     this.name = 'PspError';
   }
+}
+
+/**
+ * Le PSP n'a pas pu traiter la demande (réseau coupé, délai dépassé, 5xx) : la demande peut être rejouée
+ * (clés d'idempotence) — à distinguer d'un refus (4xx) ou d'un bug.
+ */
+export function isPspUnavailable(err: unknown): boolean {
+  if (err instanceof PspError) return err.status >= HTTP_SERVER_ERROR_MIN;
+  if (!(err instanceof Error)) return false;
+  return err.name === 'TimeoutError' || err.name === 'AbortError' || (err instanceof TypeError && err.message === 'fetch failed');
 }
 
 async function call<T>(path: string, body: unknown, idempotencyKey: string): Promise<T> {
