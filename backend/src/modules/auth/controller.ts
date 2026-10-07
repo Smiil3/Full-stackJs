@@ -50,8 +50,8 @@ export async function resendVerification({ body }: In<EmailBody>) {
   return { message: service.GENERIC_ACCEPTED_MESSAGE };
 }
 
-export async function login({ body }: In<LoginBody>, _req: Request, res: Response) {
-  const result = await service.login(body.email, body.password);
+export async function login({ body }: In<LoginBody>, req: Request, res: Response) {
+  const result = await service.login(body.email, body.password, req.ip);
   setRefreshCookie(res, result.refreshToken);
   return result.session;
 }

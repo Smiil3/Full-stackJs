@@ -112,6 +112,7 @@ model User {
   auditLogs       AuditLog[]
   ticketsScanned  Ticket[]        @relation("TicketUsedBy")
 
+  loginLockouts LoginLockout[]
   @@map("users")
 }
 
@@ -601,4 +602,21 @@ model RescheduleNotification {
 
   @@id([rescheduleId, userId])
   @@map("reschedule_notifications")
+}
+
+/// Verrou de connexion par couple (compte, empreinte d'IP) — audit M7 : un tiers ne verrouille que SON couple.
+/// Le plafond global du compte (tous IP) reste sur users (failedLoginCount / lockedUntil).
+model LoginLockout {
+  userId       String    @db.Uuid
+  /// SHA-256 de l'IP normalisée (sous-réseau IPv6), ou d'une clé fixe pour les ré-authentifications de session.
+  fingerprint  String    @db.Char(64)
+  failedCount  Int       @default(0)
+  lastFailedAt DateTime? @db.Timestamptz(3)
+  lockedUntil  DateTime? @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, fingerprint])
+  @@index([lastFailedAt])
+  @@map("login_lockouts")
 }

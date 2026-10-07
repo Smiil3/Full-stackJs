@@ -1,7 +1,7 @@
 import type { EmailTokenPurpose } from '../../generated/prisma/client.js';
 import { getDb, type Tx } from '../../lib/db.js';
 import { clock } from '../../lib/clock.js';
-import { FAILURE_WINDOW_MINUTES, LOCK_GROWTH_FACTOR, LOCK_THRESHOLD, MAX_LOCK_MINUTES } from '../../config/auth.js';
+import { ACCOUNT_FAILURE_WINDOW_MINUTES, ACCOUNT_LOCK_MINUTES, ACCOUNT_LOCK_THRESHOLD, FAILURE_WINDOW_MINUTES, LOCK_GROWTH_FACTOR, LOCK_THRESHOLD, MAX_LOCK_MINUTES } from '../../config/auth.js';
 
 export function findUserByEmail(email: string) {
   return getDb().user.findUnique({ where: { email } });
@@ -22,40 +22,63 @@ export function findUserWithMemberships(userId: string) {
 }
 
 /**
- * Réserve une tentative de mot de passe AVANT toute vérification (UPDATE atomique) :
- * - compte verrouillé ⇒ aucune réservation (null) : la tentative est refusée sans évaluation ;
- * - le compteur repart à 1 après 15 min sans échec (fenêtre glissante) ;
- * - dès le seuil (5), le verrou est posé immédiatement (1 min, puis 2, 4… plafonné à 15 min) :
- *   une rafale parallèle ne peut donc jamais obtenir plus de 5 évaluations.
- * Une tentative réussie efface ensuite compteur et verrou (recordLoginSuccess).
+ * Réserve une tentative de mot de passe AVANT toute vérification (audit M7 : deux niveaux, atomiques) :
+ * 1. couple (compte, empreinte d'IP) — `login_lockouts` : le compteur repart à 1 après 15 min sans échec ; dès le
+ *    seuil (5) le verrou est posé immédiatement (1 min, puis 2, 4… plafonné à 15 min) : une rafale parallèle ne
+ *    peut jamais obtenir plus de 5 évaluations. Un tiers ne verrouille que SON couple, pas le titulaire ;
+ * 2. compte, toutes IP — `users` : 50 échecs en 1 h ⇒ verrou de 15 min (attaque distribuée).
+ * Couple ou compte verrouillé ⇒ false : la tentative est refusée sans évaluation.
+ * Expressions évaluées sur la version COURANTE des lignes (re-vérifiée après attente du verrou de ligne).
  */
-export async function reserveLoginAttempt(userId: string): Promise<boolean> {
+export async function reserveLoginAttempt(userId: string, fingerprint: string): Promise<boolean> {
   const now = clock.now();
-  // Expressions évaluées sur la version COURANTE de la ligne (re-vérifiée après attente du verrou
-  // de ligne) : aucune lecture préalable susceptible d'être périmée en cas de rafale concurrente.
-  const rows = await getDb().$queryRaw<{ failedLoginCount: number }[]>`
+  const db = getDb();
+  const pair = await db.$queryRaw<{ failedCount: number }[]>`
+    INSERT INTO "login_lockouts" AS l ("userId", "fingerprint", "failedCount", "lastFailedAt", "lockedUntil")
+    VALUES (${userId}::uuid, ${fingerprint}, 1, ${now}, NULL)
+    ON CONFLICT ("userId", "fingerprint") DO UPDATE SET
+      "failedCount" = CASE
+          WHEN l."lastFailedAt" IS NULL OR l."lastFailedAt" < ${now}::timestamptz - make_interval(mins => ${FAILURE_WINDOW_MINUTES}) THEN 1
+          ELSE l."failedCount" + 1
+        END,
+      "lockedUntil" = CASE
+          WHEN (CASE
+                  WHEN l."lastFailedAt" IS NULL OR l."lastFailedAt" < ${now}::timestamptz - make_interval(mins => ${FAILURE_WINDOW_MINUTES}) THEN 1
+                  ELSE l."failedCount" + 1
+                END) >= ${LOCK_THRESHOLD}
+            THEN ${now}::timestamptz + make_interval(mins => LEAST(${MAX_LOCK_MINUTES}, power(${LOCK_GROWTH_FACTOR}::int, l."failedCount" + 1 - ${LOCK_THRESHOLD})::int))
+          ELSE NULL
+        END,
+      "lastFailedAt" = ${now}
+    WHERE l."lockedUntil" IS NULL OR l."lockedUntil" <= ${now}
+    RETURNING "failedCount"`;
+  if (pair.length !== 1) return false;
+  const account = await db.$queryRaw<{ failedLoginCount: number }[]>`
     UPDATE "users"
     SET "failedLoginCount" = CASE
-          WHEN "lastFailedLoginAt" IS NULL OR "lastFailedLoginAt" < ${now}::timestamptz - make_interval(mins => ${FAILURE_WINDOW_MINUTES}) THEN 1
+          WHEN "lastFailedLoginAt" IS NULL OR "lastFailedLoginAt" < ${now}::timestamptz - make_interval(mins => ${ACCOUNT_FAILURE_WINDOW_MINUTES}) THEN 1
           ELSE "failedLoginCount" + 1
         END,
         "lockedUntil" = CASE
           WHEN (CASE
-                  WHEN "lastFailedLoginAt" IS NULL OR "lastFailedLoginAt" < ${now}::timestamptz - make_interval(mins => ${FAILURE_WINDOW_MINUTES}) THEN 1
+                  WHEN "lastFailedLoginAt" IS NULL OR "lastFailedLoginAt" < ${now}::timestamptz - make_interval(mins => ${ACCOUNT_FAILURE_WINDOW_MINUTES}) THEN 1
                   ELSE "failedLoginCount" + 1
-                END) >= ${LOCK_THRESHOLD}
-            THEN ${now}::timestamptz + make_interval(mins => LEAST(${MAX_LOCK_MINUTES}, power(${LOCK_GROWTH_FACTOR}::int, "failedLoginCount" + 1 - ${LOCK_THRESHOLD})::int))
+                END) >= ${ACCOUNT_LOCK_THRESHOLD}
+            THEN ${now}::timestamptz + make_interval(mins => ${ACCOUNT_LOCK_MINUTES})
           ELSE NULL
         END,
         "lastFailedLoginAt" = ${now},
         "updatedAt" = ${now}
     WHERE "id" = ${userId}::uuid AND ("lockedUntil" IS NULL OR "lockedUntil" <= ${now})
     RETURNING "failedLoginCount"`;
-  return rows.length === 1;
+  return account.length === 1;
 }
 
-export async function recordLoginSuccess(userId: string): Promise<void> {
-  await getDb().user.update({ where: { id: userId }, data: { failedLoginCount: 0, lockedUntil: null, lastFailedLoginAt: null } });
+/** Tentative réussie : compteur du couple supprimé, compteur global du compte remis à zéro. */
+export async function recordLoginSuccess(userId: string, fingerprint: string): Promise<void> {
+  const db = getDb();
+  await db.loginLockout.deleteMany({ where: { userId, fingerprint } });
+  await db.user.update({ where: { id: userId }, data: { failedLoginCount: 0, lockedUntil: null, lastFailedLoginAt: null } });
 }
 
 /** Invalide les jetons mail encore valides d'un usage donné (un seul lien actif à la fois). */

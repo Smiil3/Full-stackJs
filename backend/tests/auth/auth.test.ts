@@ -8,6 +8,9 @@ import { getDb } from '../../src/lib/db.js';
 import { api, createUser, csrfHeaders, lastMail, login, loggedInUser, PASSWORD, refreshCookieOf, tokenFromMail } from '../helpers.js';
 
 /** Altère un caractère de données de la signature (jamais une altération nulle, quel que soit le tirage). */
+/** Verrou de connexion du couple (compte, IP de test) : une seule IP en test. */
+const pairOf = (userId: string) => getDb().loginLockout.findFirstOrThrow({ where: { userId } });
+
 const tamper = (jwt: string) => `${jwt.slice(0, -4)}${jwt.at(-4) === 'A' ? 'B' : 'A'}${jwt.slice(-3)}`;
 
 const A = '/api/v1/auth';
@@ -118,20 +121,22 @@ describe('connexion', () => {
     for (let i = 0; i < 5; i += 1) {
       await api().post(`${A}/login`).send({ email: user.email, password: 'mauvais-mot-de-passe' }).expect(401);
     }
-    const locked = await getDb().user.findUniqueOrThrow({ where: { id: user.id } });
-    expect(locked.failedLoginCount).toBe(5);
+    // Verrou du couple (compte, IP) — audit M7.
+    const locked = await pairOf(user.id);
+    expect(locked.failedCount).toBe(5);
     expect(locked.lockedUntil!.getTime()).toBeGreaterThan(Date.now() + 50_000);
     const res = await api().post(`${A}/login`).send({ email: user.email, password: PASSWORD });
     expect(res.status).toBe(401);
     expect(res.body.error.code).toBe('INVALID_CREDENTIALS');
     // 6e échec : verrou doublé (2 min).
-    await getDb().user.update({ where: { id: user.id }, data: { lockedUntil: new Date(Date.now() - 1000) } });
+    await getDb().loginLockout.updateMany({ where: { userId: user.id }, data: { lockedUntil: new Date(Date.now() - 1000) } });
     await api().post(`${A}/login`).send({ email: user.email, password: 'mauvais-mot-de-passe' }).expect(401);
-    const relocked = await getDb().user.findUniqueOrThrow({ where: { id: user.id } });
+    const relocked = await pairOf(user.id);
     expect(relocked.lockedUntil!.getTime()).toBeGreaterThan(Date.now() + 110_000);
     // Verrou levé : connexion réussie et compteur remis à zéro.
-    await getDb().user.update({ where: { id: user.id }, data: { lockedUntil: new Date(Date.now() - 1000) } });
+    await getDb().loginLockout.updateMany({ where: { userId: user.id }, data: { lockedUntil: new Date(Date.now() - 1000) } });
     await api().post(`${A}/login`).send({ email: user.email, password: PASSWORD }).expect(200);
+    expect(await getDb().loginLockout.count({ where: { userId: user.id } })).toBe(0);
     const reset = await getDb().user.findUniqueOrThrow({ where: { id: user.id } });
     expect(reset.failedLoginCount).toBe(0);
     expect(reset.lockedUntil).toBeNull();
@@ -154,30 +159,31 @@ describe('connexion', () => {
   it('fenêtre glissante : le compteur repart de zéro après 15 min sans échec (B2.1 M4)', async () => {
     const user = await createUser({ email: 'window@test.fr' });
     for (let i = 0; i < 4; i += 1) await api().post(`${A}/login`).send({ email: user.email, password: 'mauvais-mot-de-passe' }).expect(401);
-    await getDb().user.update({ where: { id: user.id }, data: { lastFailedLoginAt: new Date(Date.now() - 16 * 60_000) } });
+    await getDb().loginLockout.updateMany({ where: { userId: user.id }, data: { lastFailedAt: new Date(Date.now() - 16 * 60_000) } });
     await api().post(`${A}/login`).send({ email: user.email, password: 'mauvais-mot-de-passe' }).expect(401);
-    const after = await getDb().user.findUniqueOrThrow({ where: { id: user.id } });
-    expect(after.failedLoginCount).toBe(1);
+    const after = await pairOf(user.id);
+    expect(after.failedCount).toBe(1);
     expect(after.lockedUntil).toBeNull();
   });
 
   it('verrou plafonné à 15 minutes (B2.1 M4)', async () => {
     const user = await createUser({ email: 'cap@test.fr' });
-    await getDb().user.update({ where: { id: user.id }, data: { failedLoginCount: 30, lastFailedLoginAt: new Date(), lockedUntil: new Date(Date.now() - 1000) } });
     await api().post(`${A}/login`).send({ email: user.email, password: 'mauvais-mot-de-passe' }).expect(401);
-    const after = await getDb().user.findUniqueOrThrow({ where: { id: user.id } });
+    await getDb().loginLockout.updateMany({ where: { userId: user.id }, data: { failedCount: 30, lastFailedAt: new Date(), lockedUntil: new Date(Date.now() - 1000) } });
+    await api().post(`${A}/login`).send({ email: user.email, password: 'mauvais-mot-de-passe' }).expect(401);
+    const after = await pairOf(user.id);
     expect(after.lockedUntil!.getTime()).toBeLessThanOrEqual(Date.now() + 15 * 60_000 + 1000);
     expect(after.lockedUntil!.getTime()).toBeGreaterThan(Date.now() + 14 * 60_000);
   });
 
-  it('change-password partage compteur et verrou (B2.1 M4)', async () => {
+  it('change-password a son propre verrou (couple « session ») : il ne bloque pas la connexion depuis une IP (audit M7)', async () => {
     const u = await loggedInUser();
     for (let i = 0; i < 5; i += 1) {
       await api().post(`${A}/change-password`).set(u.auth).send({ currentPassword: 'faux-mot-de-passe', newPassword: 'nouveau-mot-de-passe-42' }).expect(401);
     }
-    // Verrouillé : le bon mot de passe actuel est refusé, et la connexion aussi.
+    // Verrouillé : le bon mot de passe actuel est refusé ; la connexion du titulaire reste possible.
     await api().post(`${A}/change-password`).set(u.auth).send({ currentPassword: PASSWORD, newPassword: 'nouveau-mot-de-passe-42' }).expect(401);
-    await api().post(`${A}/login`).send({ email: u.email, password: PASSWORD }).expect(401);
+    await api().post(`${A}/login`).send({ email: u.email, password: PASSWORD }).expect(200);
   });
 
   it('rate limiting sur le login ⇒ 429 RATE_LIMITED avec Retry-After', async () => {

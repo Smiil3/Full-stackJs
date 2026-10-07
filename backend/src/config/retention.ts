@@ -22,3 +22,5 @@ export const RETENTION = {
 
 /** Purge lancée au plus une fois par période (les durées se comptent en jours). */
 export const RETENTION_PURGE_INTERVAL_MS = hours(1);
+/** Verrous de connexion par couple (compte, empreinte d'IP) sans échec récent : 1 jour. */
+export const LOGIN_LOCKOUT_RETENTION_MS = days(1);

@@ -1,4 +1,4 @@
-import { RETENTION } from '../config/retention.js';
+import { LOGIN_LOCKOUT_RETENTION_MS, RETENTION } from '../config/retention.js';
 import { RETENTION_DELETE_BATCH } from '../config/worker.js';
 import { TimeBudget } from '../lib/budget.js';
 import { clock } from '../lib/clock.js';
@@ -40,6 +40,11 @@ export async function purgeRetention(budget: TimeBudget = TimeBudget.unlimited()
       DELETE FROM "check_ins" WHERE "id" IN (
         SELECT c."id" FROM "check_ins" c JOIN "events" e ON e."id" = c."eventId"
         WHERE e."endsAt" < ${ago(RETENTION.checkInsAfterEventMs)}
+        LIMIT ${RETENTION_DELETE_BATCH})`],
+    ['loginLockouts', () => db.$executeRaw`
+      DELETE FROM "login_lockouts" WHERE ("userId", "fingerprint") IN (
+        SELECT "userId", "fingerprint" FROM "login_lockouts"
+        WHERE "lastFailedAt" < ${ago(LOGIN_LOCKOUT_RETENTION_MS)} AND ("lockedUntil" IS NULL OR "lockedUntil" < ${clock.now()})
         LIMIT ${RETENTION_DELETE_BATCH})`],
   ];
   const deleted: Record<string, number> = {};

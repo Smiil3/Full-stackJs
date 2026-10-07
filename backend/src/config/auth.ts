@@ -35,3 +35,11 @@ export const AUTH_EMAIL_QUOTAS = {
   login: { windowMs: minutes(15), max: 30 },
   mail: { windowMs: hours(1), max: 5 },
 } as const;
+
+/**
+ * Plafond GLOBAL d'un compte, toutes adresses IP confondues (audit M7) : bien plus haut que le verrou par couple
+ * (compte, IP), il ne se déclenche que sur une attaque distribuée. Fenêtre en minutes, verrou fixe en minutes.
+ */
+export const ACCOUNT_LOCK_THRESHOLD = 50;
+export const ACCOUNT_FAILURE_WINDOW_MINUTES = 60;
+export const ACCOUNT_LOCK_MINUTES = 15;

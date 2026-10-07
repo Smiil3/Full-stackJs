@@ -153,7 +153,7 @@ describe('rétention des données (B8)', () => {
     await db.checkIn.create({ data: { scanId: randomUUID(), eventId, scannerId: org.scanner.id, deviceId: randomUUID(), scannedAt: recent, result: 'INVALID' } });
     const audits = await db.auditLog.count();
 
-    expect(await purgeRetention()).toEqual({ emailOutbox: 2, emailTokens: 1, refreshTokens: 2, webhookEvents: 1, pspSessions: 1, checkIns: 1 });
+    expect(await purgeRetention()).toEqual({ emailOutbox: 2, emailTokens: 1, refreshTokens: 2, webhookEvents: 1, pspSessions: 1, checkIns: 1, loginLockouts: 0 });
     expect(await db.emailOutbox.count()).toBe(2);
     expect(await db.emailToken.count({ where: { tokenHash: 'b'.repeat(64) } })).toBe(1);
     expect(await db.webhookEvent.count()).toBe(1);
