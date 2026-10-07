@@ -20,7 +20,7 @@ const BOUNDS = {
   refundPercent: [0, 100],
   maxPerOrder: [1, 20],
   maxPerUser: [1, 50],
-  waitlistOfferMinutes: [15, 2880],
+  waitlistOfferMinutes: [15, 360], // v1.17 : anti-gel du stock
   serviceFeeFixedCents: [0, 1000],
   serviceFeeBasisPoints: [0, 1500],
 } as const;

@@ -19,7 +19,7 @@ export const RULE_DEFS: readonly RuleDef[] = [
   { key: 'maxPerOrder', label: 'Places maximum par commande', kind: 'int', min: 1, max: 20 },
   { key: 'maxPerUser', label: 'Places maximum par personne', kind: 'int', min: 1, max: 50, hint: 'Doit être au moins égal au maximum par commande' },
   { key: 'waitlistEnabled', label: 'Liste d’attente', kind: 'bool', min: 0, max: 1 },
-  { key: 'waitlistOfferMinutes', label: 'Délai de réponse à une offre de liste d’attente', kind: 'int', min: 15, max: 2880, unit: 'min' },
+  { key: 'waitlistOfferMinutes', label: 'Délai de réponse à une offre de liste d’attente', kind: 'int', min: 15, max: 360, unit: 'min', hint: 'Entre 15 min et 6 h : les places offertes restent bloquées pendant ce délai' },
   { key: 'serviceFeeFixedCents', label: 'Frais de service fixes par commande', kind: 'euros', min: 0, max: 1000, unit: '€' },
   { key: 'serviceFeeBasisPoints', label: 'Frais de service proportionnels', kind: 'basisPoints', min: 0, max: 1500, unit: '%' },
 ];

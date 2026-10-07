@@ -235,6 +235,17 @@ describe('page événement et commande', () => {
     expect(screen.getByRole('button', { name: 'Copier la référence' })).toBeInTheDocument();
   });
 
+  it('M2 : deux offres expirées sur l’événement ⇒ réinscription refusée avec une explication claire', async () => {
+    const user = userEvent.setup();
+    const tt = mock.db.ticketTypes.find((t) => t.id === IDS.ttSoldOut);
+    for (let i = 0; i < 2; i++) {
+      mock.db.waitlist.push({ id: crypto.randomUUID(), userId: IDS.userBuyer, eventId: IDS.eventSoldOut, ticketTypeId: tt?.id ?? '', quantity: 1, status: 'EXPIRED', offerExpiresAt: null, createdAt: new Date().toISOString() });
+    }
+    await renderApp(`/events/${IDS.eventSoldOut}`, { as: BUYER });
+    await user.click(await screen.findByRole('button', { name: 'Rejoindre la liste d’attente' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Vous avez laissé passer deux offres de places pour cet événement');
+  });
+
   it('événement complet ⇒ inscription à la liste d’attente avec position', async () => {
     const user = userEvent.setup();
     await renderApp(`/events/${IDS.eventSoldOut}`, { as: BUYER });
