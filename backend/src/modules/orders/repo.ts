@@ -1,6 +1,7 @@
 import type { Prisma } from '../../generated/prisma/client.js';
 import { getDb, type Tx } from '../../lib/db.js';
 import { clock } from '../../lib/clock.js';
+import { offersCutoff } from '../waitlist/rules.js';
 
 export const orderInclude = {
   event: { select: { title: true, startsAt: true, timezone: true } },
@@ -77,8 +78,10 @@ export async function reserve(tx: Tx, eventId: string, ticketTypeId: string, qua
       AND "sold" + "held" + ${quantity} <= "capacity"
       -- Priorité à la liste d'attente : bloqué seulement si une personne en attente pourrait être servie
       -- avec les places libres (une demande trop grosse ne bloque ni les suivantes ni le public).
-      AND NOT EXISTS (SELECT 1 FROM "waitlist_entries" w
+      AND NOT EXISTS (SELECT 1 FROM "waitlist_entries" w JOIN "events" e ON e."id" = w."eventId"
                       WHERE w."ticketTypeId" = ${ticketTypeId}::uuid AND w."status" = 'WAITING'
+                        -- Plus d'offre possible (fin des ventes à moins de 15 min) : le public n'attend plus (contrat 1.18 §6).
+                        AND LEAST(e."salesEndAt", e."startsAt") >= ${offersCutoff(now)}
                         AND (w."quantity" <= "capacity" - "sold" - "held"
                              -- La tête de file accumule les places libérées pour elle (contrat 1.14 §6).
                              OR (w."accumulatingUntil" > ${now} AND NOT w."accumulationSkipped")))

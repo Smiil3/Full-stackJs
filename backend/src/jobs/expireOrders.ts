@@ -6,7 +6,7 @@ import { getDb, transaction } from '../lib/db.js';
 import { getLogger } from '../lib/logger.js';
 import { enqueueEmail } from '../lib/outbox.js';
 import { releaseHeld } from '../modules/orders/repo.js';
-import { distributeMany, lockWaitlistEntries } from '../modules/waitlist/distribute.js';
+import { distributeMany, eventTicketTypeIds, lockWaitlistEntries, recordUnhonoredOffer } from '../modules/waitlist/distribute.js';
 import { reconcileOrder } from './reconcilePayments.js';
 import { EXPIRE_ORDERS_PER_TICK, MAX_EXPIRE_FAILURES, RECONCILE_CONCURRENCY } from '../config/worker.js';
 import { RECONCILE_GRACE_MS } from '../config/payments.js';
@@ -74,12 +74,17 @@ export async function expireOrders(budget: TimeBudget = TimeBudget.unlimited()):
           where: { id },
           include: { items: { orderBy: { ticketTypeId: 'asc' } }, user: { select: { email: true, displayName: true } }, event: { select: { title: true } } },
         });
-        await lockWaitlistEntries(tx, order.items.map((i) => i.ticketTypeId));
+        const itemTypes = order.items.map((i) => i.ticketTypeId);
+        // Commande issue d'une offre de liste d'attente : son expiration compte comme offre NON HONORÉE (contrat 1.18
+        // §6, audit M'2), ce qui peut écarter les autres inscriptions du compte ⇒ entrées de tout l'événement verrouillées.
+        await lockWaitlistEntries(tx, order.waitlistEntryId ? await eventTicketTypeIds(tx, order.eventId) : itemTypes);
         for (const item of order.items) await releaseHeld(tx, order.eventId, item.ticketTypeId, item.quantity);
         await enqueueEmail(tx, order.user.email, 'orderExpired', { displayName: order.user.displayName, eventTitle: order.event.title });
+        const affected = new Set(itemTypes);
+        if (order.waitlistEntryId) for (const typeId of (await recordUnhonoredOffer(tx, order.waitlistEntryId)).affected) affected.add(typeId);
         // Places libérées : proposées d'abord à la liste d'attente, dans la même transaction.
-        await distributeMany(tx, order.items.map((i) => i.ticketTypeId));
-        return order.items.map((i) => i.ticketTypeId);
+        await distributeMany(tx, affected);
+        return [...affected];
       }));
       // Comptes tenus APRÈS validation (une tentative rejouée ne compte pas deux fois).
       if (done === null) break;

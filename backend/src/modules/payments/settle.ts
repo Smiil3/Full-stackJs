@@ -11,6 +11,7 @@ import { formatWithZone } from '../../lib/time.js';
 import { alreadyOwned, heldToSold, lockBuyerEvent, releaseHeld } from '../orders/repo.js';
 import { resolveEventSettings } from '../settings/resolveEventSettings.js';
 import { distributeMany, lockWaitlistEntries } from '../waitlist/distribute.js';
+import { offersCutoff } from '../waitlist/rules.js';
 import { issueTickets } from '../tickets/issue.js';
 import { HTTP_STATUS } from '../../config/http.js';
 
@@ -108,7 +109,9 @@ export async function tryResettleExpiredOrder(tx: Tx, order: SettlementOrder): P
   for (const item of order.items) {
     const rows = await tx.$queryRaw<{ ok: boolean }[]>`
       SELECT ("sold" + "held" + ${item.quantity} <= "capacity"
-              AND NOT EXISTS (SELECT 1 FROM "waitlist_entries" w WHERE w."ticketTypeId" = t."id" AND w."status" = 'WAITING'
+              AND NOT EXISTS (SELECT 1 FROM "waitlist_entries" w JOIN "events" e ON e."id" = w."eventId"
+                              WHERE w."ticketTypeId" = t."id" AND w."status" = 'WAITING'
+                                AND LEAST(e."salesEndAt", e."startsAt") >= ${offersCutoff(clock.now())}
                                 AND (w."quantity" <= t."capacity" - t."sold" - t."held"
                                      OR (w."accumulatingUntil" > ${clock.now()} AND NOT w."accumulationSkipped")))) AS ok
       FROM "ticket_types" t WHERE t."id" = ${item.ticketTypeId}::uuid AND t."eventId" = ${order.eventId}::uuid FOR UPDATE`;

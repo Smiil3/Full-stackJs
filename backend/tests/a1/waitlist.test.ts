@@ -4,7 +4,7 @@ import { getDb } from '../../src/lib/db.js';
 import { testClock } from '../../src/lib/clock.js';
 import { expireOrders } from '../../src/jobs/expireOrders.js';
 import { expireWaitlistOffers } from '../../src/modules/waitlist/service.js';
-import { MAX_EXPIRED_OFFERS_PER_EVENT } from '../../src/config/waitlist.js';
+import { MAX_UNHONORED_OFFERS_PER_EVENT } from '../../src/config/waitlist.js';
 import { api, loggedInUser, type LoggedIn } from '../helpers.js';
 import { createEvent, orgWithStaff, type OrgFixture } from '../fixtures.js';
 
@@ -35,7 +35,7 @@ describe('anti-gel de la liste d’attente (M2, contrat 1.17 §6)', () => {
     await api().patch(`/api/v1/orgs/${org.id}/events/${eventId}`).set(org.manager.auth).send({ overrides: { waitlistOfferMinutes: 361 } }).expect(400);
   });
 
-  it(`${MAX_EXPIRED_OFFERS_PER_EVENT}e offre expirée sur l’événement ⇒ autres inscriptions EXPIRED, réinscription 409 CONFLICT`, async () => {
+  it(`${MAX_UNHONORED_OFFERS_PER_EVENT}e offre expirée sur l’événement ⇒ autres inscriptions EXPIRED, réinscription 409 CONFLICT`, async () => {
     const { eventId, ticketTypeIds } = await createEvent(org, {
       ticketTypes: [{ name: 'T1', capacity: 1, priceCents: 1000 }, { name: 'T2', capacity: 1, priceCents: 1000 }], publish: true,
     });
@@ -55,7 +55,7 @@ describe('anti-gel de la liste d’attente (M2, contrat 1.17 §6)', () => {
 
     const entries = await getDb().waitlistEntry.findMany({ where: { userId: squatter.id }, orderBy: { createdAt: 'asc' } });
     expect(entries.every((e) => e.status === 'EXPIRED')).toBe(true);
-    expect(entries.filter((e) => e.offerExpired)).toHaveLength(MAX_EXPIRED_OFFERS_PER_EVENT);
+    expect(entries.filter((e) => e.offerExpired)).toHaveLength(MAX_UNHONORED_OFFERS_PER_EVENT);
     const again = await join(squatter, eventId, t1);
     expect(again.status).toBe(409);
     expect(again.body.error.code).toBe('CONFLICT');
@@ -124,5 +124,78 @@ describe('offre gratuite (INFO audit)', () => {
     expect(res.status).toBe(409);
     expect((await getDb().waitlistEntry.findUniqueOrThrow({ where: { id: entry.id } })).status).toBe('OFFERED');
     expect(await getDb().order.count({ where: { userId: fan.id } })).toBe(0);
+  });
+});
+
+describe('offres non honorées : quitter tard ou ne pas payer compte aussi (audit M\'2, contrat 1.18 §6)', () => {
+  const myEntries = async (u: LoggedIn) => (await api().get('/api/v1/me/waitlist').set(u.auth).expect(200)).body.items as { id: string; status: string; unhonoredOffers: number }[];
+  const offeredTo = (userId: string) => getDb().waitlistEntry.findFirstOrThrow({ where: { userId, status: 'OFFERED' } });
+  /** Quitte l'offre `delayMin` minutes après son émission. */
+  async function leaveAfter(u: LoggedIn, delayMin: number) {
+    const offer = await offeredTo(u.id);
+    testClock.freeze(new Date((offer.offeredAt ?? new Date()).getTime() + delayMin * 60_000));
+    await api().delete(`/api/v1/waitlist/${offer.id}`).set(u.auth).expect(204);
+    testClock.reset();
+  }
+
+  it('cycle de gel A/B : chaque offre gardée puis quittée tardivement est comptée ; à la 2e, A est exclu (409)', async () => {
+    const { eventId, ticketTypeIds } = await createEvent(org, { ticketTypes: [{ name: 'T', capacity: 1, priceCents: 1000 }], publish: true });
+    const tt = ticketTypeIds[0]!;
+    const holder = (await order(await loggedInUser(), eventId, tt).expect(201)).body.id as string;
+    const a = await loggedInUser();
+    const b = await loggedInUser();
+    await join(a, eventId, tt).expect(201);
+    await join(b, eventId, tt).expect(201);
+    await releaseOrder(holder);
+    await leaveAfter(a, 16); // A garde l'offre puis la quitte : place à B
+    expect((await myEntries(a))[0]).toMatchObject({ status: 'LEFT', unhonoredOffers: 1 });
+    await join(a, eventId, tt).expect(201); // complet : B détient l'offre
+    await leaveAfter(b, 16); // B fait de même : place de nouveau à A
+    await leaveAfter(a, 16); // 2e offre non honorée de A
+    const again = await join(a, eventId, tt);
+    expect(again.status).toBe(409);
+    expect(again.body.error.code).toBe('CONFLICT');
+    expect((await myEntries(a)).every((e) => e.unhonoredOffers === MAX_UNHONORED_OFFERS_PER_EVENT)).toBe(true);
+  });
+
+  it('offre quittée dans les 15 min : aucune pénalité', async () => {
+    const { eventId, ticketTypeIds } = await createEvent(org, { ticketTypes: [{ name: 'T', capacity: 1, priceCents: 1000 }], publish: true });
+    const tt = ticketTypeIds[0]!;
+    const holder = (await order(await loggedInUser(), eventId, tt).expect(201)).body.id as string;
+    const a = await loggedInUser();
+    await join(a, eventId, tt).expect(201);
+    await releaseOrder(holder);
+    await leaveAfter(a, 14);
+    expect((await myEntries(a))[0]).toMatchObject({ status: 'LEFT', unhonoredOffers: 0 });
+    expect(await getDb().waitlistEntry.count({ where: { userId: a.id, offerExpired: true } })).toBe(0);
+  });
+
+  it('commande issue d’une offre qui expire sans paiement : offre non honorée', async () => {
+    const { eventId, ticketTypeIds } = await createEvent(org, { ticketTypes: [{ name: 'T', capacity: 1, priceCents: 1000 }], publish: true });
+    const tt = ticketTypeIds[0]!;
+    const holder = (await order(await loggedInUser(), eventId, tt).expect(201)).body.id as string;
+    const a = await loggedInUser();
+    await join(a, eventId, tt).expect(201);
+    await releaseOrder(holder);
+    const offer = await offeredTo(a.id);
+    const accepted = (await api().post(`/api/v1/waitlist/${offer.id}/accept`).set(a.auth).expect(201)).body.id as string;
+    await releaseOrder(accepted);
+    expect((await getDb().order.findUniqueOrThrow({ where: { id: accepted } })).status).toBe('EXPIRED');
+    expect((await myEntries(a))[0]).toMatchObject({ status: 'CONVERTED', unhonoredOffers: 1 });
+  });
+});
+
+describe('pas d’offre intenable près de la fin des ventes (audit B\'5)', () => {
+  it('moins de 15 min avant la fin des ventes : aucune offre, la place va au public', async () => {
+    const { eventId, ticketTypeIds } = await createEvent(org, { ticketTypes: [{ name: 'T', capacity: 1, priceCents: 1000 }], publish: true });
+    const tt = ticketTypeIds[0]!;
+    const holder = (await order(await loggedInUser(), eventId, tt).expect(201)).body.id as string;
+    const a = await loggedInUser();
+    await join(a, eventId, tt).expect(201);
+    await getDb().event.update({ where: { id: eventId }, data: { salesEndAt: new Date(Date.now() + 10 * 60_000) } });
+    await releaseOrder(holder);
+    expect(await getDb().waitlistEntry.findFirstOrThrow({ where: { userId: a.id } })).toMatchObject({ status: 'WAITING', offerExpired: false });
+    // Le public n'attend plus la liste d'attente : la place se réserve directement.
+    await order(await loggedInUser(), eventId, tt).expect(201);
   });
 });
