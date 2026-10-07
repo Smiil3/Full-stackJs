@@ -2,6 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
 import { assertPspConfig } from './lib/pspRedirect';
+import './styles/fonts.css';
 import './styles/global.css';
 
 async function bootstrap() {

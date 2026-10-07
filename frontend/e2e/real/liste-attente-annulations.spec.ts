@@ -48,6 +48,7 @@ test('liste d’attente : complet ⇒ inscription ⇒ annulation d’un autre ac
   await b.getByRole('button', { name: /^Payer$/ }).click();
   await expect(b.getByText(/Paiement confirmé/)).toBeVisible({ timeout: 30_000 });
   await b.getByRole('link', { name: 'Mes billets' }).first().click();
+  await b.getByRole('button', { name: 'Afficher le QR code' }).click();
   await expect(b.getByRole('img', { name: /QR code du billet Unique/ })).toBeVisible();
 });
 
@@ -76,5 +77,5 @@ test('annulation d’événement : remboursements suivis, billets annulés chez 
   const scanner = await loggedPage(browser, 'scanner@nuits.test', PASSWORD, `/scan/${ev.orgId}/${ev.eventId}`);
   await scanner.getByLabel('Saisie manuelle du code').fill(bought[0]?.qrs[0] ?? '');
   await scanner.getByRole('button', { name: 'Vérifier' }).click();
-  await expect(scanner.getByRole('alertdialog')).toContainText('BILLET ANNULÉ');
+  await expect(scanner.locator('.scan-result:not(.scan-result--pending)')).toContainText('Billet annulé');
 });

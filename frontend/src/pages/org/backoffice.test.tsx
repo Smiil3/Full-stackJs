@@ -14,6 +14,15 @@ const MANAGER = 'manager@nuits.test';
 const ORG = `/org/${IDS.orgNuits}`;
 const EVENT = `${ORG}/events/${IDS.eventConcert}`;
 
+/** Envoi des coordonnées bancaires : confirmation (ancien / nouveau compte) puis envoi. */
+async function submitBank(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole('button', { name: 'Enregistrer les coordonnées' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Changer le compte qui reçoit les virements ?' });
+  expect(dialog).toHaveTextContent(/Ancien compte : FR76 •••• •••• 0189/);
+  expect(dialog).toHaveTextContent(/Nouveau compte : FR76 3000 6000 0112 3456 7890 189/);
+  await user.click(within(dialog).getByRole('button', { name: 'Oui, changer le compte' }));
+}
+
 describe('back-office : accès et réglages', () => {
   it('accueil : OWNER de 2 collectifs ⇒ sélecteur ; MANAGER d’un seul ⇒ redirection directe', async () => {
     const owner = await renderApp('/org', { as: OWNER });
@@ -77,12 +86,12 @@ describe('back-office : accès et réglages', () => {
     await user.clear(screen.getByLabelText('IBAN complet'));
     await user.type(screen.getByLabelText('IBAN complet'), 'FR76 3000 6000 0112 3456 7890 189');
     await user.type(screen.getByLabelText('Votre mot de passe (confirmation)'), 'mauvais');
-    await user.click(screen.getByRole('button', { name: 'Enregistrer les coordonnées' }));
+    await submitBank(user);
     expect(await screen.findByText('Mot de passe incorrect.')).toBeInTheDocument();
     expect(mock.db.calls.get('POST /auth/refresh') ?? 0).toBeLessThanOrEqual(1); // seul le refresh de démarrage
     await user.type(screen.getByLabelText('IBAN complet'), 'FR76 3000 6000 0112 3456 7890 189'); // effacé après l'échec (M2)
     await user.type(screen.getByLabelText('Votre mot de passe (confirmation)'), DEMO_PASSWORD);
-    await user.click(screen.getByRole('button', { name: 'Enregistrer les coordonnées' }));
+    await submitBank(user);
     await waitFor(() => expect(screen.queryByLabelText('IBAN complet')).toBeNull());
   });
 
@@ -95,13 +104,13 @@ describe('back-office : accès et réglages', () => {
     await user.type(screen.getByLabelText('IBAN complet'), 'FR76 3000 6000 0112 3456 7890 189');
     await user.type(screen.getByLabelText('BIC'), 'AGRIFRPP');
     await user.type(screen.getByLabelText('Votre mot de passe (confirmation)'), 'mauvais-mot-de-passe');
-    await user.click(screen.getByRole('button', { name: 'Enregistrer les coordonnées' }));
+    await submitBank(user);
     expect(await screen.findByText('Mot de passe incorrect.')).toBeInTheDocument();
     expect(dump()).not.toMatch(/7890189|mauvais-mot-de-passe/);
     expect(screen.getByLabelText('IBAN complet')).toHaveValue('');
     await user.type(screen.getByLabelText('IBAN complet'), 'FR76 3000 6000 0112 3456 7890 189');
     await user.type(screen.getByLabelText('Votre mot de passe (confirmation)'), DEMO_PASSWORD);
-    await user.click(screen.getByRole('button', { name: 'Enregistrer les coordonnées' }));
+    await submitBank(user);
     await waitFor(() => expect(screen.queryByLabelText('IBAN complet')).toBeNull());
     expect(dump()).not.toMatch(new RegExp(`7890189|${DEMO_PASSWORD}`));
   });
@@ -290,11 +299,27 @@ describe('back-office : événements', () => {
     const decomposed = '  Garonne E\u0301lectrique   —  soirée d’ouverture '; // « É » décomposé
     await user.type(within(dialog).getByLabelText(/recopiez le titre/), decomposed);
     expect(within(dialog).getByRole('button', { name: 'Annuler l’événement' })).toBeEnabled();
-    await user.click(within(dialog).getByRole('button', { name: 'Ne rien faire' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Garder l’événement' }));
     await user.click(screen.getByRole('button', { name: 'Annuler l’événement…' }));
     dialog = screen.getByRole('dialog', { name: 'Annuler définitivement l’événement ?' });
     expect(within(dialog).getByLabelText(/recopiez le titre/)).toHaveValue('');
     expect(within(dialog).getByLabelText(/Motif/)).toHaveValue('');
+  });
+
+  it('D1 : annulation — conséquences chiffrées, bouton prudent en principal, alternative « Reporter »', async () => {
+    const user = userEvent.setup();
+    await renderApp(EVENT, { as: OWNER });
+    await user.click(await screen.findByRole('button', { name: 'Annuler l’événement…' }));
+    const dialog = screen.getByRole('dialog', { name: 'Annuler définitivement l’événement ?' });
+    expect(await within(dialog).findByText(/commandes? payées?/)).toBeInTheDocument();
+    expect(dialog).toHaveTextContent(/encaissés/);
+    expect(dialog).toHaveTextContent('Tous les acheteurs sont prévenus par e-mail');
+    expect(within(dialog).getByRole('button', { name: 'Garder l’événement' })).not.toHaveClass('btn--secondary'); // action principale
+    expect(within(dialog).getByRole('button', { name: 'Annuler l’événement' })).toHaveClass('btn--danger');
+    expect(within(dialog).getByRole('button', { name: 'Annuler l’événement' })).toBeDisabled();
+    await user.click(within(dialog).getByRole('button', { name: 'Reporter l’événement plutôt' }));
+    expect(screen.queryByRole('dialog', { name: 'Annuler définitivement l’événement ?' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Enregistrer les modifications' })).toBeInTheDocument(); // éditeur ouvert
   });
 
   it('M3 : après publication, catalogue public et données dépendantes invalidés', async () => {
@@ -365,8 +390,8 @@ describe('back-office : ventes, commandes, export', () => {
     const before = mock.db.calls.get('GET /orgs/:orgId/events/:eventId/stats') ?? 0;
     await act(() => vi.advanceTimersByTimeAsync(5_100));
     await waitFor(() => expect(mock.db.calls.get('GET /orgs/:orgId/events/:eventId/stats') ?? 0).toBeGreaterThan(before));
-    expect(screen.getByText(/Mis à jour il y a/)).toBeInTheDocument();
-    expect(screen.getAllByRole('meter').length).toBeGreaterThan(0);
+    expect(screen.getByText(/mis à jour il y a/)).toBeInTheDocument();
+    expect(screen.getAllByRole('img', { name: /% vendu, \d+ % en attente de paiement/ }).length).toBeGreaterThan(0); // jauges
     injectFault({ route: 'GET /orgs/:orgId/events/:eventId/stats', status: 0, code: 'INTERNAL_ERROR', network: true, times: 10 });
     await act(() => vi.advanceTimersByTimeAsync(5_100));
     expect(await screen.findByText(/Données non rafraîchies/)).toBeInTheDocument();
@@ -600,7 +625,7 @@ describe('changement de collectif dans la même session (revue F3.1)', () => {
     const { router } = await renderApp(ORG, { as: OWNER });
     expect(await screen.findByRole('link', { name: /Garonne Électrique/ })).toBeInTheDocument();
     await act(() => router.navigate(ORG_B));
-    expect(screen.getByText(/Collectif :/)).toHaveTextContent('Collectif Rive Droite');
+    expect(screen.getByRole('combobox', { name: /ESPACE/ })).toHaveDisplayValue('Collectif Rive Droite');
     expect(screen.queryByRole('link', { name: /Garonne Électrique/ })).toBeNull();
     expect(await screen.findByRole('link', { name: 'Rive Droite Jazz Club' })).toBeInTheDocument();
   });

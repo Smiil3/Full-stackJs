@@ -1,9 +1,10 @@
-/** Retour sonore et vibration (si disponibles) : bip aigu = entrée, grave = refus. */
+/** Retour sonore et vibration (si disponibles) : bip aigu = entrée, grave = refus ; vibrations 1 / 2 / 3. */
 let ctx: AudioContext | null = null;
 
 export function signal(ok: boolean | 'warn'): void {
   try {
-    if ('vibrate' in navigator) navigator.vibrate(ok === true ? 80 : [200, 80, 200]);
+    // Canal non visuel : 1 vibration = entrée, 2 = décision humaine, 3 = refus.
+    if ('vibrate' in navigator) navigator.vibrate(ok === true ? 120 : ok === 'warn' ? [150, 90, 150] : [150, 90, 150, 90, 150]);
   } catch {
     // Vibration indisponible : sans effet.
   }

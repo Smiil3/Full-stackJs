@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Fondations</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&amp;family=Atkinson+Hyperlegible+Next:wght@400;500;700&amp;family=Atkinson+Hyperlegible+Mono:wght@400;600&amp;display=swap">
+<style>
+body{margin:0;background:#110F1F}
+*{box-sizing:border-box}
+button,input{font:inherit}
+:focus-visible{outline:3px solid #F3C76B;outline-offset:3px}
+a{color:#F3C76B}a:hover{color:#FFE2A3}
+</style>
+</helmet>
+<div style="width: 1280px; height: 1040px; background: #110F1F; color: #F4EFE6; font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif; padding: 56px 64px; display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); column-gap: 64px; row-gap: 40px">
+
+  <div style="display: flex; flex-direction: column; gap: 40px">
+    <div style="display: flex; flex-direction: column; gap: 16px">
+      <div style="display: flex; align-items: center; gap: 16px">
+        <svg width="56" height="56" viewBox="0 0 28 28" fill="none" aria-hidden="true"><path d="M16 3a6 6 0 1 0 5 9.3A5 5 0 0 1 16 3z" fill="#F3C76B"></path><path d="M3 17.5h22" stroke="#F4EFE6" stroke-width="1.4" stroke-linecap="round"></path><path d="M8 21.5h12M11 25h6" stroke="#F3C76B" stroke-opacity=".55" stroke-width="1.4" stroke-linecap="round"></path></svg>
+        <div style="font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-weight: 700; font-size: 44px; line-height: 1; letter-spacing: -0.02em">Les Nuits<br>de la Garonne</div>
+      </div>
+      <p style="margin: 0; font-size: 18px; line-height: 1.5; color: #B9B2CF; max-width: 520px; text-wrap: pretty">Direction « Miroir d'eau » : le bleu de la nuit sur les quais, l'or des lampadaires, et leur reflet. Le reflet (un trait d'horizon et sa copie en miroir) est le seul motif décoratif, utilisé sur les affiches et le logo.</p>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 14px">
+      <div style="font-size: 13px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #B9B2CF">Nuit — registre par défaut</div>
+      <div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px">
+        <div style="display: flex; flex-direction: column; gap: 6px"><div style="height: 72px; border-radius: 10px; background: #110F1F; border: 1px solid #36305A"></div><div style="font-size: 13px">Fond</div><div style="font-family: 'Atkinson Hyperlegible Mono', monospace; font-size: 12px; color: #B9B2CF">#110F1F</div></div>
+        <div style="display: flex; flex-direction: column; gap: 6px"><div style="height: 72px; border-radius: 10px; background: #1B1830"></div><div style="font-size: 13px">Surface</div><div style="font-family: 'Atkinson Hyperlegible Mono', monospace; font-size: 12px; color: #B9B2CF">#1B1830</div></div>
+        <div style="display: flex; flex-direction: column; gap: 6px"><div style="height: 72px; border-radius: 10px; background: #36305A"></div><div style="font-size: 13px">Filet</div><div style="font-family: 'Atkinson Hyperlegible Mono', monospace; font-size: 12px; color: #B9B2CF">#36305A</div></div>
+        <div style="display: flex; flex-direction: column; gap: 6px"><div style="height: 72px; border-radius: 10px; background: #B9B2CF"></div><div style="font-size: 13px">Texte 2</div><div style="font-family: 'Atkinson Hyperlegible Mono', monospace; font-size: 12px; color: #B9B2CF">#B9B2CF</div></div>
+        <div style="display: flex; flex-direction: column; gap: 6px"><div style="height: 72px; border-radius: 10px; background: #F4EFE6"></div><div style="font-size: 13px">Texte</div><div style="font-family: 'Atkinson Hyperlegible Mono', monospace; font-size: 12px; color: #B9B2CF">#F4EFE6</div></div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 14px">
+      <div style="font-size: 13px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #B9B2CF">Jour — paiement, back-office, mode clair</div>
+      <div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px">
+        <div style="display: flex; flex-direction: column; gap: 6px"><div style="height: 72px; border-radius: 10px; background: #F7F4EE"></div><div style="font-size: 13px">Fond</div><div style="font-family: 'Atkinson Hyperlegible Mono', monospace; font-size: 12px; color: #B9B2CF">#F7F4EE</div></div>
+        <div style="display: flex; flex-direction: column; gap: 6px"><div style="height: 72px; border-radius: 10px; background: #FFFFFF"></div><div style="font-size: 13px">Surface</div><div style="font-family: 'Atkinson Hyperlegible Mono', monospace; font-size: 12px; color: #B9B2CF">#FFFFFF</div></div>
+        <div style="display: flex; flex-direction: column; gap: 6px"><div style="height: 72px; border-radius: 10px; background: #E3DED3"></div><div style="font-size: 13px">Filet</div><div style="font-family: 'Atkinson Hyperlegible Mono', monospace; font-size: 12px; color: #B9B2CF">#E3DED3</div></div>
+        <div style="display: flex; flex-direction: column; gap: 6px"><div style="height: 72px; border-radius: 10px; background: #2B2560"></div><div style="font-size: 13px">Action</div><div style="font-family: 'Atkinson Hyperlegible Mono', monospace; font-size: 12px; color: #B9B2CF">#2B2560</div></div>
+        <div style="display: flex; flex-direction: column; gap: 6px"><div style="height: 72px; border-radius: 10px; background: #1C1A2B; border: 1px solid #36305A"></div><div style="font-size: 13px">Texte</div><div style="font-family: 'Atkinson Hyperlegible Mono', monospace; font-size: 12px; color: #B9B2CF">#1C1A2B</div></div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 14px">
+      <div style="font-size: 13px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #B9B2CF">Accent — l'or des lampadaires</div>
+      <div style="display: flex; gap: 16px; align-items: center">
+        <div style="width: 120px; height: 72px; border-radius: 10px; background: #F3C76B"></div>
+        <p style="margin: 0; font-size: 15px; line-height: 1.5; color: #B9B2CF">#F3C76B — bouton principal (texte #1A1407, contraste 11:1), focus visible, « Dernières places ». Sur fond clair, l'or devient #8A5A00 pour le texte.</p>
+      </div>
+    </div>
+  </div>
+
+  <div style="display: flex; flex-direction: column; gap: 36px">
+    <div style="display: flex; flex-direction: column; gap: 14px">
+      <div style="font-size: 13px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #B9B2CF">Couleurs de scan — réservées, jamais décoratives</div>
+      <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px">
+        <div style="background: #1B1830; border: 3px solid #3DD68C; color: #F4EFE6; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px; min-height: 128px">
+          <svg width="32" height="32" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="#3DD68C"></circle><path d="M7 12.5l3.2 3.2L17 9" fill="none" stroke="#0B0A14" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>
+          <div style="font-weight: 700; font-size: 18px; color: #3DD68C">Vert = entrer</div>
+          <div style="font-family: 'Atkinson Hyperlegible Mono', monospace; font-size: 12px">#3DD68C · sur nuit 9:1</div>
+        </div>
+        <div style="background: #1B1830; border: 3px solid #FF6B61; color: #F4EFE6; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px; min-height: 128px">
+          <svg width="32" height="32" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 1h8l7 7v8l-7 7H8l-7-7V8z" fill="#FF6B61"></path><path d="M9 9l6 6M15 9l-6 6" stroke="#0B0A14" stroke-width="2.6" stroke-linecap="round"></path></svg>
+          <div style="font-weight: 700; font-size: 18px; color: #FF6B61">Rouge = refuser</div>
+          <div style="font-family: 'Atkinson Hyperlegible Mono', monospace; font-size: 12px">#FF6B61 · sur nuit 6:1</div>
+        </div>
+        <div style="background: #1B1830; border: 3px solid #FFA940; color: #F4EFE6; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px; min-height: 128px">
+          <svg width="32" height="32" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1.5l11 20H1z" fill="#FFA940"></path><path d="M12 9v5M12 17.5v.1" stroke="#0B0A14" stroke-width="2.6" stroke-linecap="round"></path></svg>
+          <div style="font-weight: 700; font-size: 18px; color: #FFA940">Orange = décider</div>
+          <div style="font-family: 'Atkinson Hyperlegible Mono', monospace; font-size: 12px">#FFA940 · sur nuit 9:1</div>
+        </div>
+      </div>
+      <p style="margin: 0; font-size: 14px; line-height: 1.5; color: #B9B2CF">Toujours avec une icône de forme différente (cercle, octogone, triangle) et un mot en capitales : le résultat se lit sans percevoir la couleur. Ailleurs sur le site, les statuts utilisent l'or, l'ivoire et le gris.</p>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 14px">
+      <div style="font-size: 13px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #B9B2CF">Typographie — auto-hébergée (WOFF2, licence OFL)</div>
+      <div style="font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-weight: 700; font-size: 56px; line-height: 1; letter-spacing: -0.02em">Quais Électriques</div>
+      <div style="font-size: 14px; color: #B9B2CF">Bricolage Grotesque — titres, affiches, chiffres du scanner</div>
+      <div style="font-size: 18px; line-height: 1.5">Atkinson Hyperlegible Next — textes, formulaires, back-office. Dessinée pour distinguer 0/O, 1/l/I, même de loin.</div>
+      <div style="display: flex; align-items: baseline; gap: 16px"><span style="font-family: 'Atkinson Hyperlegible Mono', monospace; font-weight: 600; font-size: 22px; letter-spacing: 0.06em; color: #F3C76B">NDG-7K4M-2Q</span><span style="font-size: 14px; color: #B9B2CF">Mono — références, IBAN, comptes à rebours</span></div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 14px">
+      <div style="font-size: 13px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: #B9B2CF">Composants — cibles de 44 px minimum</div>
+      <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center">
+        <button type="button" style="min-height: 52px; padding: 0 24px; border-radius: 999px; border: 0; background: #F3C76B; color: #1A1407; font-weight: 700; font-size: 16px; cursor: pointer">Réserver mes places</button>
+        <button type="button" style="min-height: 52px; padding: 0 22px; border-radius: 999px; border: 1.5px solid #F4EFE6; background: transparent; color: #F4EFE6; font-weight: 700; font-size: 16px; cursor: pointer">Liste d'attente</button>
+        <button type="button" style="min-height: 52px; padding: 0 22px; border-radius: 999px; border: 3px solid #F3C76B; outline: 2px solid #110F1F; background: #1B1830; color: #F4EFE6; font-weight: 700; font-size: 16px">Focus visible</button>
+      </div>
+      <div style="display: flex; flex-wrap: wrap; gap: 10px; align-items: center">
+        <span style="display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border-radius: 999px; border: 1px solid #6F67A0; font-size: 13px; font-weight: 700"><svg width="8" height="8" viewBox="0 0 8 8" aria-hidden="true"><circle cx="4" cy="4" r="4" fill="#F4EFE6"></circle></svg>Disponible</span>
+        <span style="display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border-radius: 999px; background: #F3C76B; color: #1A1407; font-size: 13px; font-weight: 700"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M12 3v10M12 18v2"></path></svg>Dernières places</span>
+        <span style="display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border-radius: 999px; background: #2A2640; color: #B9B2CF; font-size: 13px; font-weight: 700"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14"></path></svg>Complet</span>
+        <span style="display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; border-radius: 999px; background: #1B1830; border: 1px solid #36305A; color: #F4EFE6; font-size: 13px; font-weight: 700"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M2 8.5a15 15 0 0 1 20 0M5.5 12a10 10 0 0 1 13 0M9 15.5a5 5 0 0 1 6 0M12 19h.01"></path></svg>Disponible hors-ligne</span>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 6px; max-width: 420px">
+        <label for="f-demo" style="font-size: 14px; font-weight: 700">Votre e-mail</label>
+        <input id="f-demo" type="email" value="camille@exemple.fr" style="height: 52px; border-radius: 12px; border: 1.5px solid #6F67A0; background: #1B1830; color: #F4EFE6; padding: 0 16px; font-size: 17px">
+        <div style="font-size: 13px; color: #B9B2CF">Vos billets y seront envoyés.</div>
+      </div>
+    </div>
+
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; font-size: 13px; line-height: 1.45; color: #B9B2CF">
+      <div style="border-top: 1px solid #36305A; padding-top: 10px"><strong style="color: #F4EFE6">Contraste AA</strong><br>texte 4,5:1 minimum, vérifié en Nuit et en Jour.</div>
+      <div style="border-top: 1px solid #36305A; padding-top: 10px"><strong style="color: #F4EFE6">CSP stricte</strong><br>polices et icônes SVG servies localement, aucun CDN.</div>
+      <div style="border-top: 1px solid #36305A; padding-top: 10px"><strong style="color: #F4EFE6">Une main</strong><br>actions principales en bas d'écran, à portée du pouce.</div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1280,"height":1040}}'>
+class Component extends DCLogic {
+  renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

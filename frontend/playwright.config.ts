@@ -8,7 +8,7 @@ if (existsSync(E2E_ENV)) process.loadEnvFile(E2E_ENV);
 /** E2E mobile contre le back réel (jalon F5). Le back doit tourner sur :4000 (voir README). */
 export default defineConfig({
   testDir: './e2e',
-  testIgnore: ['**/mock/**', '**/pwa/**'],
+  testIgnore: ['**/mock/**', '**/pwa/**', '**/captures/**'],
   // Les specs « real » ne passent pas les tests en parallèle sur les mêmes comptes.
   workers: 1,
   timeout: 60_000,

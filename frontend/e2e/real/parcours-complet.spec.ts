@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { API, apiLogin, createEvent, createVerifiedBuyer, IN_CHECKIN_WINDOW } from './fixtures';
+import { API, IN_CHECKIN_WINDOW, apiLogin, createEvent, createVerifiedBuyer, openEventFromCatalogue } from './fixtures';
 import { waitForMail } from './mailpit';
 
 /**
@@ -20,9 +20,9 @@ test('achat carte ⇒ mail ⇒ billet QR ⇒ scan OK puis DÉJÀ UTILISÉ', asyn
   await buyer.getByLabel('Adresse email').fill(account.email);
   await buyer.getByLabel('Mot de passe').fill(account.password);
   await buyer.getByRole('button', { name: 'Se connecter' }).click();
-  await buyer.getByRole('main').getByRole('link', { name: ev.title }).click();
-  await buyer.getByLabel('Nombre de places « Unique »').selectOption('1');
-  await buyer.getByRole('button', { name: 'Réserver 1 place' }).click();
+  await openEventFromCatalogue(buyer, ev.title);
+  await buyer.getByRole('button', { name: 'Ajouter une place Unique' }).click();
+  await buyer.getByRole('button', { name: /^Réserver 1 place/ }).click();
   await buyer.getByRole('button', { name: /Payer .* par carte/ }).click();
   await buyer.getByRole('button', { name: /^Payer$/ }).click();
   await expect(buyer.getByText(/Paiement confirmé/)).toBeVisible({ timeout: 30_000 });
@@ -33,8 +33,8 @@ test('achat carte ⇒ mail ⇒ billet QR ⇒ scan OK puis DÉJÀ UTILISÉ', asyn
 
   // 3. Billet dans « Mes billets » : QR affiché, plein écran
   await buyer.getByRole('link', { name: 'Mes billets' }).first().click();
+  await buyer.getByRole('button', { name: 'Afficher le QR code' }).click();
   await expect(buyer.getByRole('img', { name: /QR code du billet Unique/ })).toBeVisible();
-  await buyer.getByRole('button', { name: 'Afficher en plein écran' }).click();
   await expect(buyer.getByText('Augmentez la luminosité de votre écran')).toBeVisible();
   await buyer.getByRole('button', { name: 'Fermer' }).click();
 
@@ -53,10 +53,10 @@ test('achat carte ⇒ mail ⇒ billet QR ⇒ scan OK puis DÉJÀ UTILISÉ', asyn
   // Mode par défaut : contrôle EN LIGNE, aucune liste téléchargée.
   const card = scanner.locator('li', { has: scanner.getByRole('heading', { name: ev.title }) });
   await card.getByRole('link', { name: 'Contrôler les entrées' }).click();
-  for (const expected of [/^OK/, /DÉJÀ UTILISÉ à \d{2}:\d{2}/]) {
+  for (const expected of [/OK — entrée/, /Déjà utilisé.*à \d{2}:\d{2}/]) {
     await scanner.getByLabel('Saisie manuelle du code').fill(qr);
     await scanner.getByRole('button', { name: 'Vérifier' }).click();
-    const result = scanner.getByRole('alertdialog');
+    const result = scanner.locator('.scan-result:not(.scan-result--pending)');
     await expect(result).toContainText(expected);
     await result.getByRole('button', { name: 'Scanner le suivant' }).click();
   }

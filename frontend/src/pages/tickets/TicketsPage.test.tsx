@@ -9,7 +9,7 @@ import { markPaid, offerToWaitlist } from '../../mocks/domain';
 import { server } from '../../mocks/server';
 import { DEMO_PASSWORD, IDS } from '../../mocks/state';
 import { loadTickets } from '../../offline/tickets';
-import { BUYER, renderApp } from '../../test/renderApp';
+import { BUYER, expectLoggedOut, openMenu, renderApp } from '../../test/renderApp';
 
 async function buy(qty = 2) {
   await login(BUYER, DEMO_PASSWORD);
@@ -24,13 +24,20 @@ async function buy(qty = 2) {
 }
 
 describe('mes billets', () => {
-  it('affiche un QR par billet et le plein écran', async () => {
+  it('une carte par commande ; QR en plein écran avec navigation entre les billets', async () => {
     const user = userEvent.setup();
     await buy(2);
     await renderApp('/me/tickets');
-    expect(await screen.findAllByRole('img', { name: /QR code du billet Fosse/ })).toHaveLength(2);
-    await user.click(screen.getAllByRole('button', { name: 'Afficher en plein écran' })[0] as HTMLElement);
-    expect(screen.getByRole('dialog', { name: /Billet Garonne/ })).toHaveTextContent('Augmentez la luminosité');
+    expect(await screen.findByText('2 billets · Fosse')).toBeInTheDocument();
+    expect(screen.queryByRole('img', { name: /QR code/ })).toBeNull(); // pas de QR dans la liste
+    await user.click(screen.getByRole('button', { name: 'Afficher le QR code' }));
+    const dialog = screen.getByRole('dialog', { name: /Billet Garonne/ });
+    expect(dialog).toHaveTextContent('Augmentez la luminosité');
+    expect(dialog).toHaveTextContent('Billet 1 sur 2');
+    expect(screen.getByRole('img', { name: /QR code du billet Fosse/ })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Billet suivant' }));
+    expect(dialog).toHaveTextContent('Billet 2 sur 2');
+    expect(screen.getByRole('button', { name: 'Billet suivant' })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Fermer' }));
     expect(screen.queryByRole('dialog')).toBeNull();
   });
@@ -39,7 +46,7 @@ describe('mes billets', () => {
     const user = userEvent.setup();
     await buy(1);
     const { queryClient } = await renderApp('/me/tickets');
-    const openBtn = await screen.findByRole('button', { name: 'Afficher en plein écran' });
+    const openBtn = await screen.findByRole('button', { name: 'Afficher le QR code' });
     await user.click(openBtn);
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     const t = mock.db.tickets[0];
@@ -53,9 +60,9 @@ describe('mes billets', () => {
     const user = userEvent.setup();
     await buy(1);
     await renderApp('/me/tickets');
-    await user.click(await screen.findByRole('button', { name: 'Afficher en plein écran' }));
+    await user.click(await screen.findByRole('button', { name: 'Afficher le QR code' }));
     await user.keyboard('{Escape}');
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Afficher en plein écran' })).toHaveFocus());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Afficher le QR code' })).toHaveFocus());
   });
 
   it('M4 : verrou d’écran redemandé au retour au premier plan', async () => {
@@ -64,7 +71,7 @@ describe('mes billets', () => {
     Object.defineProperty(navigator, 'wakeLock', { configurable: true, value: { request } });
     await buy(1);
     await renderApp('/me/tickets');
-    await user.click(await screen.findByRole('button', { name: 'Afficher en plein écran' }));
+    await user.click(await screen.findByRole('button', { name: 'Afficher le QR code' }));
     expect(request).toHaveBeenCalledTimes(1);
     document.dispatchEvent(new Event('visibilitychange'));
     expect(request).toHaveBeenCalledTimes(2);
@@ -82,7 +89,8 @@ describe('mes billets', () => {
   it('F6-M3 : retour du cache avant/arrière avec la session d’un AUTRE compte ⇒ contenu masqué puis purgé', async () => {
     await buy(1);
     await renderApp('/me/tickets');
-    expect(await screen.findByRole('img', { name: /QR code du billet Fosse/ })).toBeInTheDocument();
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Afficher le QR code' }));
+    expect(screen.getByRole('img', { name: /QR code du billet Fosse/ })).toBeInTheDocument();
     mock.db.refreshCookie = { token: 'autre-onglet', userId: IDS.userOwner }; // un autre compte s'est connecté
     slowRefresh();
     window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
@@ -95,6 +103,7 @@ describe('mes billets', () => {
   it('F6-M3 : retour du cache avant/arrière après fin de session ⇒ plus aucun billet affiché', async () => {
     await buy(1);
     const { router } = await renderApp('/me/tickets');
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Afficher le QR code' }));
     await screen.findByRole('img', { name: /QR code du billet Fosse/ });
     mock.db.refreshCookie = null; // session révoquée entre-temps
     window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
@@ -105,6 +114,7 @@ describe('mes billets', () => {
   it('F6-M3 : page de QR redevenue visible ⇒ QR masqués pendant la revérification, puis réaffichés (même compte)', async () => {
     await buy(1);
     await renderApp('/me/tickets');
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Afficher le QR code' }));
     await screen.findByRole('img', { name: /QR code du billet Fosse/ });
     slowRefresh();
     const refreshes = mock.db.calls.get('POST /auth/refresh') ?? 0;
@@ -129,7 +139,7 @@ describe('mes billets', () => {
   it('hors-ligne : affiche la dernière liste enregistrée (sans jeton), purgée à la déconnexion', async () => {
     await buy(1);
     const first = await renderApp('/me/tickets');
-    await screen.findAllByRole('img', { name: /QR code/ });
+    await screen.findAllByRole('button', { name: 'Afficher le QR code' });
     const saved = await loadTickets(null);
     expect(saved?.tickets).toHaveLength(1);
     expect(JSON.stringify(saved)).not.toMatch(/mock-at-|accessToken|acheteur@example/);
@@ -138,7 +148,7 @@ describe('mes billets', () => {
     injectFault({ route: 'GET /me/tickets', status: 0, code: 'INTERNAL_ERROR', network: true });
     await renderApp('/me/tickets');
     expect(await screen.findByText(/Hors-ligne : billets enregistrés sur cet appareil/)).toBeInTheDocument();
-    expect(screen.getAllByRole('img', { name: /QR code/ })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Afficher le QR code' })).toHaveLength(1);
 
     await logout();
     await waitFor(async () => expect(await loadTickets(null)).toBeNull());
@@ -147,17 +157,19 @@ describe('mes billets', () => {
   it('M1 : la déconnexion n’est terminée qu’une fois les billets hors-ligne effacés', async () => {
     await buy(1);
     await renderApp('/me/tickets');
-    await screen.findAllByRole('img', { name: /QR code/ });
+    await screen.findAllByRole('button', { name: 'Afficher le QR code' });
     expect(await loadTickets(null)).not.toBeNull();
-    await userEvent.setup().click(screen.getByRole('button', { name: 'Se déconnecter' }));
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Se déconnecter' })).toBeNull());
+    const user = userEvent.setup();
+    await openMenu(user);
+    await user.click(screen.getByRole('button', { name: 'Se déconnecter' }));
+    await expectLoggedOut();
     expect(await loadTickets(null)).toBeNull();
   });
 
   it('M2 : résultat hors-ligne remplacé par les données en ligne dès que la session revient', async () => {
     await buy(1);
     const first = await renderApp('/me/tickets');
-    await screen.findAllByRole('img', { name: /QR code/ });
+    await screen.findAllByRole('button', { name: 'Afficher le QR code' });
     first.unmount();
     __resetClientForTests();
     injectFault({ route: 'POST /auth/refresh', status: 0, code: 'INTERNAL_ERROR', network: true });
@@ -165,7 +177,7 @@ describe('mes billets', () => {
     expect(await screen.findByText(/Hors-ligne : billets enregistrés/)).toBeInTheDocument();
     await login(BUYER, DEMO_PASSWORD); // réseau revenu, session restaurée
     await waitFor(() => expect(screen.queryByText(/Hors-ligne : billets enregistrés/)).toBeNull());
-    expect(await screen.findAllByRole('img', { name: /QR code/ })).toHaveLength(1);
+    expect(await screen.findAllByRole('button', { name: 'Afficher le QR code' })).toHaveLength(1);
     expect(screen.queryByText(/Hors-ligne/)).toBeNull();
   });
 
@@ -213,5 +225,61 @@ describe('mes billets', () => {
     injectFault({ route: 'POST /waitlist/:entryId/accept', status: 409, code: 'OFFER_EXPIRED' });
     await user.click(await screen.findByRole('button', { name: 'Accepter et payer' }));
     expect(await screen.findByText('Cette offre de la liste d’attente a expiré.')).toBeInTheDocument();
+  });
+});
+
+describe('Mes billets — direction « Miroir d’eau » (D1)', () => {
+  it('annulation depuis la carte : panneau clair, montant du serveur, « Garder mes billets » puis « Oui, annuler »', async () => {
+    const user = userEvent.setup();
+    await buy(2);
+    await renderApp('/me/tickets');
+    await user.click(await screen.findByRole('button', { name: 'Annuler' }));
+    const panel = screen.getByRole('group', { name: 'Annuler ces 2 billets ?' });
+    expect(panel).toHaveAttribute('data-theme', 'light');
+    expect(panel).toHaveTextContent(/Remboursé sur votre carte\s*36,00\s€/);
+    await user.click(screen.getByRole('button', { name: 'Garder mes billets' }));
+    expect(screen.queryByRole('group', { name: /Annuler ces/ })).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Annuler' }));
+    await user.click(screen.getByRole('button', { name: 'Oui, annuler' }));
+    await waitFor(() => expect(mock.db.orders[0]?.status).toBe('REFUNDED'));
+  });
+
+  it('commande en attente de virement : carte dédiée, durée figée, lien vers les coordonnées', async () => {
+    await login(BUYER, DEMO_PASSWORD);
+    const order = await apiRequest<Order>('/orders', {
+      method: 'POST',
+      body: { eventId: IDS.eventConcert, paymentMethod: 'TRANSFER', items: [{ ticketTypeId: IDS.ttBalcon, quantity: 1 }] },
+      headers: { 'Idempotency-Key': crypto.randomUUID() },
+    });
+    await renderApp('/me/tickets');
+    expect(await screen.findByText('En attente du virement')).toBeInTheDocument();
+    expect(screen.getByText(/Place gardée encore/)).toHaveTextContent(/\d+ h/);
+    expect(screen.getByRole('link', { name: 'Revoir les coordonnées bancaires' })).toHaveAttribute('href', `/orders/${order.id}`);
+  });
+
+  it('onglet « Passés » vide : message d’attente', async () => {
+    const user = userEvent.setup();
+    await buy(1);
+    await renderApp('/me/tickets');
+    expect(await screen.findByRole('tab', { name: 'À venir (1)' })).toHaveAttribute('aria-selected', 'true');
+    await user.click(screen.getByRole('tab', { name: 'Passés' }));
+    expect(screen.getByText('Pas encore de souvenirs ici')).toBeInTheDocument();
+  });
+
+  it('écran d’offre : anneau de temps, total estimé, « Je laisse ma place »', async () => {
+    const user = userEvent.setup();
+    await login(BUYER, DEMO_PASSWORD);
+    const entry = await apiRequest<{ id: string }>(`/events/${IDS.eventSoldOut}/ticket-types/${IDS.ttSoldOut}/waitlist`, { method: 'POST', body: { quantity: 1 } });
+    const tt = mock.db.ticketTypes.find((t) => t.id === IDS.ttSoldOut);
+    if (tt) {
+      tt.held -= 2;
+      offerToWaitlist(tt);
+    }
+    await renderApp(`/waitlist/${entry.id}`);
+    expect(await screen.findByRole('heading', { name: 'Une place s’est libérée pour vous' })).toBeInTheDocument();
+    expect(screen.getByRole('timer')).toHaveAccessibleName(/Temps restant pour accepter : \d+ minutes?/);
+    expect(await screen.findByRole('button', { name: /^Accepter et payer \d+,\d{2}\s€$/ })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Je laisse ma place' }));
+    expect(await screen.findByRole('heading', { name: 'C’est noté, merci !' })).toBeInTheDocument();
   });
 });

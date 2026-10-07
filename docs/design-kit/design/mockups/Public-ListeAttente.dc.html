@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Liste d'attente — une place pour vous</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&amp;family=Atkinson+Hyperlegible+Next:wght@400;500;700&amp;family=Atkinson+Hyperlegible+Mono:wght@400;600&amp;display=swap">
+<style>
+body{margin:0;background:#110F1F}
+*{box-sizing:border-box}
+button{font:inherit}
+:focus-visible{outline:3px solid #F3C76B;outline-offset:2px}
+a{color:#F3C76B}a:hover{color:#FFE2A3}
+</style>
+</helmet>
+<div style="width: 390px; min-height: 1240px; background: #110F1F; color: #F4EFE6; font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif; display: flex; flex-direction: column">
+
+  <header style="height: 60px; padding: 0 8px; display: flex; align-items: center">
+    <a href="Public-MesBillets.dc.html" style="height: 44px; padding: 0 12px 0 6px; display: flex; align-items: center; gap: 6px; color: #F4EFE6; text-decoration: none; font-weight: 700; font-size: 15px"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"></path></svg>Mes billets</a>
+  </header>
+
+  <ol aria-label="Votre parcours en liste d'attente" style="list-style: none; margin: 0; padding: 4px 20px 0; display: flex; flex-direction: column; gap: 0">
+    <li style="display: flex; gap: 12px; align-items: center; min-height: 34px; font-size: 14px; color: #B9B2CF"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#B9B2CF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"></path></svg>Inscription le 2 mars · 11<sup>e</sup> dans la file</li>
+    <li style="display: flex; gap: 12px; align-items: center; min-height: 34px; font-size: 14px; color: #B9B2CF"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#B9B2CF" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"></path></svg>Hier · vous êtes passé·e 4<sup>e</sup></li>
+    <li aria-current="step" style="display: flex; gap: 12px; align-items: center; min-height: 34px; font-size: 14px; font-weight: 700; color: #F3C76B"><svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="6" fill="#F3C76B"></circle></svg>Aujourd'hui 18:20 · une offre pour vous</li>
+  </ol>
+
+  <sc-if value="{{ active }}" hint-placeholder-val="{{ true }}">
+  <section style="padding: 20px 16px 0; display: flex; flex-direction: column; gap: 20px">
+    <h1 style="margin: 0 4px; font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-weight: 800; font-size: 36px; line-height: 1; letter-spacing: -0.02em">Deux places se sont libérées pour vous</h1>
+
+    <div role="timer" aria-label="{{ timerLabel }}" style="align-self: center; position: relative; width: 220px; height: 220px; display: flex; align-items: center; justify-content: center">
+      <svg width="220" height="220" viewBox="0 0 200 200" aria-hidden="true" style="position: absolute; inset: 0; transform: rotate(-90deg)"><circle cx="100" cy="100" r="88" fill="none" stroke="#2A2545" stroke-width="10"></circle><circle cx="100" cy="100" r="88" fill="none" stroke="#F3C76B" stroke-width="10" stroke-linecap="round" stroke-dasharray="552.9" stroke-dashoffset="{{ dashOffset }}"></circle></svg>
+      <div style="display: flex; flex-direction: column; align-items: center; gap: 2px">
+        <span style="font-family: 'Atkinson Hyperlegible Mono', monospace; font-weight: 600; font-size: 46px; font-variant-numeric: tabular-nums">{{ clock }}</span>
+        <span style="font-size: 14px; color: #B9B2CF">pour accepter</span>
+      </div>
+    </div>
+
+    <p style="margin: 0 4px; font-size: 16px; line-height: 1.5; color: #DCD6EC; text-align: center; text-wrap: pretty">Ces places sont réservées pour vous jusqu'à 18:50. Ensuite, elles seront proposées à la personne suivante.</p>
+
+    <div style="background: #1B1830; border: 1px solid #2A2545; border-radius: 20px; padding: 16px; display: flex; flex-direction: column; gap: 10px">
+      <div style="font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-weight: 700; font-size: 20px">Nuit Bacalan Sound</div>
+      <div style="font-size: 15px">ven. 19 mars · 23:00 heure de Paris</div>
+      <div style="font-size: 15px; color: #B9B2CF">Hangar, Bacalan</div>
+      <div style="height: 1px; background: #2A2545; margin: 4px 0"></div>
+      <div style="display: flex; justify-content: space-between; font-size: 15px"><span>2 × Fosse</span><span>24,00 €</span></div>
+      <div style="display: flex; justify-content: space-between; font-size: 15px; color: #B9B2CF"><span>Frais de service</span><span>1,20 €</span></div>
+      <div style="display: flex; justify-content: space-between; align-items: baseline"><strong>Total</strong><strong style="font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-size: 24px">25,20 €</strong></div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 10px; padding-bottom: 40px">
+      <a href="Public-Evenement.dc.html" style="height: 58px; border-radius: 999px; background: #F3C76B; color: #1A1407; text-decoration: none; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 18px">Accepter et payer 25,20 €</a>
+      <button type="button" onClick="{{ decline }}" style="height: 52px; border-radius: 999px; border: 1.5px solid #4A4373; background: transparent; color: #F4EFE6; font-weight: 700; font-size: 16px; cursor: pointer">Je laisse ma place</button>
+      <p style="margin: 4px 0 0; font-size: 14px; line-height: 1.45; color: #B9B2CF; text-align: center">Vous pouvez aussi n'en prendre qu'une : le nombre se règle à l'étape suivante.</p>
+    </div>
+  </section>
+  </sc-if>
+
+  <sc-if value="{{ ended }}" hint-placeholder-val="{{ false }}">
+    <section style="margin: 24px 16px; background: #1B1830; border-radius: 20px; padding: 28px 20px; display: flex; flex-direction: column; gap: 12px; align-items: center; text-align: center">
+      <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="#F3C76B" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 2"></path></svg>
+      <h1 style="margin: 0; font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-weight: 700; font-size: 26px">{{ endTitle }}</h1>
+      <p style="margin: 0; font-size: 16px; line-height: 1.5; color: #DCD6EC">Les places passent à la personne suivante. Vous restez inscrit·e sur la liste si d'autres se libèrent.</p>
+      <button type="button" onClick="{{ restart }}" style="margin-top: 6px; height: 48px; padding: 0 20px; border-radius: 999px; border: 1.5px solid #F4EFE6; background: transparent; color: #F4EFE6; font-weight: 700; cursor: pointer">Revoir l'offre (démo)</button>
+    </section>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":390,"height":1240}}'>
+class Component extends DCLogic {
+  constructor(props) { super(props); this.state = { left: 29 * 60 + 41, declined: false }; }
+  componentDidMount() { this.t = setInterval(() => this.setState({ left: Math.max(0, this.state.left - 1) }), 1000); }
+  componentWillUnmount() { clearInterval(this.t); }
+  renderVals() {
+    const s = this.state.left;
+    const pad = (n) => String(n).padStart(2, '0');
+    const ended = s === 0 || this.state.declined;
+    return {
+      clock: pad(Math.floor(s / 60)) + ':' + pad(s % 60),
+      timerLabel: 'Il reste ' + Math.floor(s / 60) + ' minutes pour accepter',
+      dashOffset: (552.9 * (1 - s / 1800)).toFixed(1),
+      active: !ended, ended,
+      endTitle: this.state.declined ? 'C’est noté, merci !' : 'L’offre a expiré',
+      decline: () => this.setState({ declined: true }),
+      restart: () => this.setState({ declined: false, left: 29 * 60 + 41 })
+    };
+  }
+}
+</script>
+</body>
+</html>

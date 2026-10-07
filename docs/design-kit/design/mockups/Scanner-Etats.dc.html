@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>Scanner — résultats</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&amp;family=Atkinson+Hyperlegible+Next:wght@400;500;700&amp;family=Atkinson+Hyperlegible+Mono:wght@400;600&amp;display=swap">
+<style>
+body{margin:0;background:#0B0A14}
+*{box-sizing:border-box}
+button{font:inherit}
+:focus-visible{outline:4px solid #FFFFFF;outline-offset:3px}
+@keyframes ndg-spin{to{transform:rotate(360deg)}}
+</style>
+</helmet>
+<div style="width: 2206px; height: 1010px; background: #0B0A14; color: #F4EFE6; font-family: 'Atkinson Hyperlegible Next', system-ui, sans-serif; padding: 36px 48px 24px; display: flex; flex-direction: column; gap: 16px">
+
+  <div style="height: 56px; display: flex; align-items: center; justify-content: space-between">
+    <div style="font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-weight: 700; font-size: 30px">Application contrôleur — le résultat s'affiche sur l'écran caméra</div>
+    <div style="display: flex; gap: 24px; font-size: 16px; font-weight: 700">
+      <span style="display: flex; align-items: center; gap: 8px"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="#3DD68C"></circle><path d="M7 12.5l3.2 3.2L17 9" fill="none" stroke="#0B0A14" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"></path></svg>Vert = entrer</span>
+      <span style="display: flex; align-items: center; gap: 8px"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 1h8l7 7v8l-7 7H8l-7-7V8z" fill="#FF6B61"></path><path d="M9 9l6 6M15 9l-6 6" stroke="#0B0A14" stroke-width="2.6" stroke-linecap="round"></path></svg>Rouge = refuser</span>
+      <span style="display: flex; align-items: center; gap: 8px"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1.5l11 20H1z" fill="#FFA940"></path><path d="M12 9v5M12 17.5v.1" stroke="#0B0A14" stroke-width="2.6" stroke-linecap="round"></path></svg>Orange = à vous de décider</span>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 40px">
+
+    <sc-for list="{{ results }}" as="r" hint-placeholder-count="3">
+      <div style="display: flex; flex-direction: column; gap: 10px">
+        <div style="height: 24px; font-size: 16px; font-weight: 700; color: #B9B2CF">{{ r.caption }}</div>
+        <div style="width: 390px; height: 844px; border-radius: 44px; overflow: hidden; background: #050508; color: #FFFFFF; display: flex; flex-direction: column; border: 1px solid #2A2545">
+          <div style="height: 56px; padding: 0 22px; display: flex; align-items: center; justify-content: space-between; font-size: 14px; color: #CFC9E3"><span>Quais Électriques · Entrée quai</span><span style="font-variant-numeric: tabular-nums">146 / 380</span></div>
+          <div style="flex: 1; display: flex; align-items: center; justify-content: center; background: #121218">
+            <div style="width: 232px; height: 232px; border-radius: 32px; border: 5px solid {{ r.color }}; display: flex; align-items: center; justify-content: center">
+              <div style="width: 120px; height: 120px; border-radius: 999px; background: {{ r.color }}; color: #0B0A14; display: flex; align-items: center; justify-content: center">
+                <sc-if value="{{ r.ok }}" hint-placeholder-val="{{ true }}"><svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"></path></svg></sc-if>
+                <sc-if value="{{ r.ko }}" hint-placeholder-val="{{ false }}"><svg width="72" height="72" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5h8l5.5 5.5v8L16 21.5H8L2.5 16V8z"></path><path d="M9 9l6 6M15 9l-6 6"></path></svg></sc-if>
+              </div>
+            </div>
+          </div>
+          <div role="{{ r.role }}" style="background: #1B1830; border-radius: 28px 28px 0 0; padding: 24px 22px 28px; display: flex; flex-direction: column; gap: 6px">
+            <div style="font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-weight: 800; font-size: 40px; line-height: 1; letter-spacing: -0.01em; color: {{ r.color }}">{{ r.title }}</div>
+            <div style="font-size: 26px; font-weight: 700; line-height: 1.2">{{ r.line }}</div>
+            <div style="font-size: 16px; line-height: 1.4; color: #CFC9E3">{{ r.detail }}</div>
+            <button type="button" style="margin-top: 14px; height: 60px; border-radius: 999px; border: 2px solid #F4EFE6; background: transparent; color: #F4EFE6; font-weight: 700; font-size: 18px">Scanner le suivant</button>
+            <div style="text-align: center; font-size: 14px; color: #B9B2CF; min-height: 20px">{{ r.foot }}</div>
+          </div>
+        </div>
+      </div>
+    </sc-for>
+
+    <div style="display: flex; flex-direction: column; gap: 10px">
+      <div style="height: 24px; font-size: 16px; font-weight: 700; color: #B9B2CF">4 · Décision humaine (aussi « Autre événement »)</div>
+      <div style="width: 390px; height: 844px; border-radius: 44px; overflow: hidden; background: #050508; color: #FFFFFF; display: flex; flex-direction: column; border: 1px solid #2A2545">
+        <div role="status" style="background: #1C1A2B; border-bottom: 1px solid #4A4373; padding: 16px 20px 12px; display: flex; gap: 10px; align-items: center; font-size: 15px; line-height: 1.3"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true" style="flex: 0 0 22px"><path d="M2 8.5a15 15 0 0 1 4-2.6M22 8.5a15 15 0 0 0-8.5-3.9M5.5 12a10 10 0 0 1 3-1.8M18.5 12a10 10 0 0 0-3-1.8M12 19h.01M3 3l18 18"></path></svg><span><strong>Mode secours hors-ligne</strong> · liste mise à jour à 21:30</span></div>
+        <div style="flex: 1; display: flex; align-items: center; justify-content: center; background: #121218">
+          <div style="width: 200px; height: 200px; border-radius: 32px; border: 5px solid #FFA940; display: flex; align-items: center; justify-content: center">
+            <div style="width: 108px; height: 108px; border-radius: 999px; background: #FFA940; color: #0B0A14; display: flex; align-items: center; justify-content: center"><svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l9.5 17h-19z"></path><path d="M12 10v4.5M12 17.4v.1"></path></svg></div>
+          </div>
+        </div>
+        <div role="alert" style="background: #1B1830; border-radius: 28px 28px 0 0; padding: 24px 22px 28px; display: flex; flex-direction: column; gap: 6px">
+          <div style="font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-weight: 800; font-size: 40px; line-height: 1; letter-spacing: -0.01em; color: #FFA940">À vous de décider</div>
+          <div style="font-size: 22px; font-weight: 700; line-height: 1.25">Billet authentique, absent de la liste</div>
+          <div style="font-size: 16px; line-height: 1.4; color: #CFC9E3">Fosse · L.M. · acheté à 21:38, après la dernière mise à jour</div>
+          <div style="margin-top: 14px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px">
+            <button type="button" style="height: 64px; border-radius: 999px; border: 0; background: #F4EFE6; color: #0B0A14; font-weight: 700; font-size: 18px; display: flex; align-items: center; justify-content: center; gap: 8px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7"></path></svg>Laisser entrer</button>
+            <button type="button" style="height: 64px; border-radius: 999px; border: 2px solid #F4EFE6; background: transparent; color: #F4EFE6; font-weight: 700; font-size: 18px; display: flex; align-items: center; justify-content: center; gap: 8px"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>Refuser</button>
+          </div>
+          <div style="text-align: center; font-size: 14px; color: #B9B2CF">Choix enregistré, vérifié au retour du réseau</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 10px">
+      <div style="height: 24px; font-size: 16px; font-weight: 700; color: #B9B2CF">5 · Vérification en cours, hors-ligne</div>
+      <div style="width: 390px; height: 844px; border-radius: 44px; overflow: hidden; background: #050508; color: #FFFFFF; display: flex; flex-direction: column; border: 1px solid #2A2545">
+        <div role="status" style="background: #1C1A2B; color: #FFFFFF; border-bottom: 1px solid #4A4373; padding: 16px 20px 12px; display: flex; gap: 10px; align-items: center; font-size: 15px; line-height: 1.3"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true" style="flex: 0 0 22px"><path d="M2 8.5a15 15 0 0 1 4-2.6M22 8.5a15 15 0 0 0-8.5-3.9M5.5 12a10 10 0 0 1 3-1.8M18.5 12a10 10 0 0 0-3-1.8M12 19h.01M3 3l18 18"></path></svg><span><strong>Hors-ligne</strong> · les scans sont vérifiés sur le téléphone et envoyés plus tard</span></div>
+        <div style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; background: #121218">
+          <div style="width: 260px; height: 260px; border-radius: 28px; border: 4px solid rgba(255,255,255,0.9); display: flex; align-items: center; justify-content: center">
+            <div aria-hidden="true" style="width: 72px; height: 72px; border-radius: 999px; border: 6px solid rgba(255,255,255,0.25); border-top-color: #FFFFFF; animation: ndg-spin 0.9s linear infinite"></div>
+          </div>
+          <div role="status" style="font-family: 'Bricolage Grotesque', system-ui, sans-serif; font-weight: 700; font-size: 34px">Vérification en cours…</div>
+          <div style="font-size: 17px; color: #CFC9E3">Gardez le billet devant la caméra</div>
+        </div>
+        <div style="padding: 16px 20px 28px; display: flex; gap: 10px; background: #050508">
+          <button type="button" style="flex: 1; height: 60px; border-radius: 999px; border: 2px solid #FFFFFF; background: transparent; color: #FFFFFF; font-weight: 700; font-size: 17px">Saisir le code</button>
+          <button type="button" aria-label="Allumer la lampe" style="width: 60px; height: 60px; border-radius: 999px; border: 2px solid #FFFFFF; background: transparent; color: #FFFFFF; display: flex; align-items: center; justify-content: center"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 2h10v5l-3 4v11h-4V11L7 7z"></path><path d="M7 7h10"></path></svg></button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":2206,"height":1010}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const results = [
+      { caption: '1 · Billet valide', ok: true, color: '#3DD68C', role: 'status', title: 'OK — entrée', line: 'Balcon · J.D.', detail: 'Billet 1 sur 1', foot: 'Retour à la caméra dans 3 s' },
+      { caption: '2 · Déjà utilisé', ok: false, color: '#FF6B61', role: 'alert', title: 'Déjà utilisé', line: 'à 21:04', detail: 'Fosse · C.M. · scanné à l’Entrée quai par Sam', foot: '' },
+      { caption: '3 · Annulé (même écran pour « Invalide »)', ok: false, color: '#FF6B61', role: 'alert', title: 'Billet annulé', line: 'Ne pas laisser entrer', detail: 'Annulé et remboursé le 3 mars', foot: '' }
+    ].map((r) => ({ ...r, ko: !r.ok }));
+    return { results };
+  }
+}
+</script>
+</body>
+</html>

@@ -14,6 +14,14 @@ test('rechargement hors-ligne de l’application, contrôle local puis resynchro
     if (m.type() === 'error' && /Content Security Policy|Refused to/i.test(m.text())) errors.push(m.text());
   });
 
+  // D1 : toute violation CSP (polices locales, sprite d'icônes, styles) est relevée dans la page.
+  await context.addInitScript(() => {
+    const w = window as unknown as { __csp: string[] };
+    w.__csp = [];
+    document.addEventListener('securitypolicyviolation', (e) => w.__csp.push(`${e.violatedDirective} ${e.blockedURI}`));
+  });
+  const cspViolations = () => page.evaluate(() => (window as unknown as { __csp?: string[] }).__csp ?? []);
+
   // Billet acheté et payé (virement validé) pour un acheteur neuf.
   const account = await createVerifiedBuyer(request);
   const event = await createEvent(request, PASSWORD, 10, { startsInMs: IN_CHECKIN_WINDOW, offlineCheckinEnabled: true });
@@ -39,15 +47,28 @@ test('rechargement hors-ligne de l’application, contrôle local puis resynchro
   // Plus aucun réseau : l'application se recharge depuis le cache et reste utilisable.
   await context.setOffline(true);
   await page.goto(scanUrl);
-  await expect(page.getByText('Vous êtes hors-ligne')).toBeVisible();
+  await expect(page.getByText(/Pas de réseau\. Vos billets restent disponibles/)).toBeVisible();
+  // Hors-ligne : polices et sprite d'icônes servis par le service worker (précache woff2 / svg).
+  await page.evaluate(() => document.fonts.ready);
+  expect(await page.evaluate(() => document.fonts.check('16px "Atkinson Hyperlegible Next"') && document.fonts.check('700 16px "Bricolage Grotesque"'))).toBe(true);
+  expect(await page.evaluate(async () => (await fetch('/icons.svg')).ok)).toBe(true);
+  expect(await cspViolations()).toEqual([]);
   await page.getByLabel('Saisie manuelle du code').fill(qr);
   await page.getByRole('button', { name: 'Vérifier' }).click();
-  await expect(page.getByRole('alertdialog')).toContainText('OK');
-  await expect(page.getByRole('alertdialog')).toContainText('Vérifié hors-ligne');
+  await expect(page.locator('.scan-result:not(.scan-result--pending)')).toContainText('OK — entrée');
+  await expect(page.locator('.scan-result:not(.scan-result--pending)')).toContainText('Vérifié hors-ligne');
   await expect(page.getByText(/1 scan en attente de synchro/)).toBeVisible();
 
   // Retour du réseau : session restaurée, synchro automatique.
   await context.setOffline(false);
   await expect(page.getByText(/0 scan en attente de synchro/)).toBeVisible({ timeout: 45_000 });
+  // Pages publiques (polices, affiches, icônes) sous la CSP de production : aucune violation.
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'La nuit, côté Garonne.' })).toBeVisible();
+  await page.evaluate(() => document.fonts.ready);
+  expect(await cspViolations()).toEqual([]);
+  await page.goto('/me/tickets');
+  await page.evaluate(() => document.fonts.ready);
+  expect(await cspViolations()).toEqual([]);
   expect(errors).toEqual([]);
 });

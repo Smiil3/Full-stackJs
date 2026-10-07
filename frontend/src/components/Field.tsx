@@ -1,8 +1,9 @@
 import { useId, type InputHTMLAttributes } from 'react';
+import { Icon } from './Icon';
 
 type Props = InputHTMLAttributes<HTMLInputElement> & { label: string; hint?: string; error?: string | undefined };
 
-/** Champ accessible : label associé, aide et erreur reliées par aria-describedby. */
+/** Champ accessible : label associé, aide et erreur (icône + texte, jamais une simple bordure) reliées par aria-describedby. */
 export function Field({ label, hint, error, id, ...input }: Props) {
   const autoId = useId();
   const fieldId = id ?? autoId;
@@ -19,7 +20,8 @@ export function Field({ label, hint, error, id, ...input }: Props) {
       ) : null}
       {error ? (
         <span id={errorId} className="field__error">
-          {error}
+          <Icon name="alert-triangle" size="sm" />
+          <span>{error}</span>
         </span>
       ) : null}
     </div>

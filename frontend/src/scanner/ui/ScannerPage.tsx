@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type SubmitEvent } from 'reac
 import { Link, useParams } from 'react-router';
 import { useCheckinEvents } from '../../api/hooks/org';
 import { useAuth } from '../../auth/AuthContext';
+import { Icon } from '../../components/Icon';
 import { PageLoader } from '../../components/PageLoader';
 import { useLocalNow } from '../../lib/hooks/useLocalNow';
 import { useOnline } from '../../lib/hooks/useOnline';
@@ -176,39 +177,93 @@ export function ScannerPage() {
 
   if (meta === undefined || owner === undefined) return <PageLoader />;
   const overlayOpen = outcome !== null || checking !== false || failure !== null;
+  const offlineBanner = online ? null : rescue ? `Mode secours hors-ligne · liste mise à jour à ${meta ? formatTime(meta.savedAt, userTimeZone()) : '—'}` : 'Pas de réseau : aucun billet ne peut être vérifié';
   const listAge = meta ? localNow - Date.parse(meta.savedAt) : 0;
 
   return (
     <section className="page scanner">
       {checking !== false ? (
-        <div className="scan-result scan-result--pending" role="status" aria-live="assertive">
-          <p className="scan-result__title">Vérification en cours…</p>
-          {checking === 'retry' ? <p className="scan-result__detail">Réseau lent : nouvelle tentative</p> : null}
-        </div>
+        <section className="scan-result scan-result--pending" role="status" aria-live="assertive" aria-labelledby="scan-pending-title">
+          <header className="scan-topbar">
+            <span>{title}</span>
+          </header>
+          {offlineBanner ? (
+            <div className="scan-banner">
+              <Icon name="wifi-off" />
+              <span>{offlineBanner}</span>
+            </div>
+          ) : null}
+          <div className="scan-result__view">
+            <div className="scan-result__frame">
+              <span className="scan-result__icon">
+                <span className="scan-result__spinner" />
+              </span>
+            </div>
+          </div>
+          <div className="scan-result__sheet">
+            <p id="scan-pending-title" className="scan-result__title">
+              Vérification en cours…
+            </p>
+            <p className="scan-result__line">Gardez le billet devant la caméra</p>
+            {checking === 'retry' ? <p className="scan-result__detail">Réseau lent : nouvelle tentative</p> : null}
+          </div>
+        </section>
       ) : null}
       {failure ? (
-        <div className="scan-result scan-result--ko" role="alertdialog" aria-modal="true" aria-labelledby="scan-failure-title">
-          <p id="scan-failure-title" className="scan-result__title">
-            Vérification impossible — réessayez
-          </p>
-          <p className="scan-result__detail">Pas de réponse du serveur : ne laissez pas entrer.</p>
-          <div className="scan-result__actions">
-            {/* eslint-disable-next-line jsx-a11y/no-autofocus -- action principale de l'écran plein écran */}
-            <button type="button" className="btn btn--block scan-result__btn" autoFocus onClick={() => handleCode(failure.qrPayload, failure.scanId)}>
-              Réessayer
-            </button>
-            <button type="button" className="btn btn--block btn--secondary scan-result__btn" onClick={() => setFailure(null)}>
-              Annuler
-            </button>
+        <section className="scan-result scan-result--ko" role="alertdialog" aria-modal="true" aria-labelledby="scan-failure-title" aria-describedby="scan-failure-line">
+          <header className="scan-topbar">
+            <span>{title}</span>
+          </header>
+          <div className="scan-result__view">
+            <div className="scan-result__frame">
+              <span className="scan-result__icon">
+                <Icon name="x-octagon" />
+              </span>
+            </div>
           </div>
-        </div>
+          <div className="scan-result__sheet">
+            <p id="scan-failure-title" className="scan-result__title">
+              Vérification impossible — réessayez
+            </p>
+            <p id="scan-failure-line" className="scan-result__line">
+              Pas de réponse du serveur : ne laissez pas entrer.
+            </p>
+            <div className="scan-result__actions">
+              {/* eslint-disable-next-line jsx-a11y/no-autofocus -- action principale de l'écran plein écran */}
+              <button type="button" className="btn" autoFocus onClick={() => handleCode(failure.qrPayload, failure.scanId)}>
+                <Icon name="retry" /> Réessayer
+              </button>
+              <button type="button" className="btn btn--secondary" onClick={() => setFailure(null)}>
+                Annuler
+              </button>
+            </div>
+          </div>
+        </section>
       ) : null}
-      {outcome ? <ResultOverlay outcome={outcome} timezone={timezone} busy={admitting} onClose={() => setOutcome(null)} onAdmit={() => void admit()} /> : null}
+      {outcome ? (
+        <ResultOverlay
+          outcome={outcome}
+          timezone={timezone}
+          eventTitle={title}
+          banner={offlineBanner}
+          autoCloseSeconds={Math.ceil(AUTO_DISMISS_MS / 1000)}
+          busy={admitting}
+          onClose={() => setOutcome(null)}
+          onAdmit={() => void admit()}
+        />
+      ) : null}
 
       <div className="row row--between">
-        <h1 className="m-0">{title}</h1>
-        <span className={`badge ${online ? 'badge--available' : 'badge--low'}`}>{online ? 'En ligne' : 'Hors-ligne'}</span>
+        <h1>{title}</h1>
+        <span className={`badge ${online ? 'badge--available' : 'badge--info'}`}>{online ? 'En ligne' : 'Hors-ligne'}</span>
       </div>
+      {offlineBanner ? (
+        // Bandeau hors-ligne PERMANENT tant que le réseau n'est pas revenu.
+        <div className="scan-banner" role="status">
+          <Icon name="wifi-off" />
+          <span>{offlineBanner}</span>
+        </div>
+      ) : null}
 
       {rescue ? (
         <p className="alert alert--warning m-0" role="note">

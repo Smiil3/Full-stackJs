@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router';
 import { apiPath } from '../../api/client';
 import { errorMessage, isApiError } from '../../api/errors';
-import { useEventMutations, useExportAttendees, useOrgEvent, useOrgSettings } from '../../api/hooks/org';
+import { useEventMutations, useEventStats, useExportAttendees, useOrgEvent, useOrgSettings } from '../../api/hooks/org';
 import { useAuth } from '../../auth/AuthContext';
 import { membershipFor } from '../../auth/roles';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
@@ -10,6 +10,7 @@ import { ErrorAlert } from '../../components/ErrorAlert';
 import { EventTime } from '../../components/EventTime';
 import { PageLoader } from '../../components/PageLoader';
 import { EVENT_STATUS_LABELS } from '../../lib/labels';
+import { formatCents } from '../../lib/money';
 import { lookup } from '../../lib/lookup';
 import { EventEditor } from './EventEditor';
 import { useNow } from '../../lib/hooks/useNow';
@@ -31,6 +32,9 @@ export function EventAdminPage() {
   const { data: titleData } = useOrgEvent(orgId, eventId);
   const exportCsv = useExportAttendees(orgId, eventId, titleData?.title);
   const [cancelOpen, setCancelOpen] = useState(false);
+  // Conséquences chiffrées de l'annulation (nombre de commandes, montant) : statistiques du serveur.
+  const statsQuery = useEventStats(orgId, eventId, cancelOpen);
+  const stats = { data: cancelOpen ? statsQuery.data : undefined };
   const [confirmTitle, setConfirmTitle] = useState('');
   const [reason, setReason] = useState('');
   const [editing, setEditing] = useState(false);
@@ -148,8 +152,28 @@ export function EventAdminPage() {
       <ConfirmDialog
         open={cancelOpen}
         title="Annuler définitivement l’événement ?"
+        icon="calendar-x"
         confirmLabel="Annuler l’événement"
-        cancelLabel="Ne rien faire"
+        cancelLabel="Garder l’événement"
+        consequences={[
+          stats.data ? (
+            <>
+              <strong>{stats.data.ordersByStatus.PAID} commande{stats.data.ordersByStatus.PAID > 1 ? 's' : ''} payée{stats.data.ordersByStatus.PAID > 1 ? 's' : ''}</strong> remboursée
+              {stats.data.ordersByStatus.PAID > 1 ? 's' : ''} intégralement ({formatCents(stats.data.totals.revenueCents)} encaissés)
+            </>
+          ) : (
+            'Les commandes payées sont remboursées intégralement'
+          ),
+          stats.data ? (
+            <>
+              <strong>{stats.data.ordersByStatus.PENDING_PAYMENT + stats.data.ordersByStatus.AWAITING_TRANSFER}</strong> réservation(s) en attente de paiement annulée(s)
+            </>
+          ) : (
+            'Les réservations en attente de paiement sont annulées'
+          ),
+          'Tous les acheteurs sont prévenus par e-mail, avec le motif',
+          'Action irréversible : l’événement ne pourra pas être remis en vente',
+        ]}
         danger
         busy={m.cancel.isPending}
         confirmDisabled={!sameTitle(confirmTitle, event.title) || reason.trim().length < 1 || reason.length > 500}
@@ -157,7 +181,16 @@ export function EventAdminPage() {
         onConfirm={() => m.cancel.mutate(reason.trim(), { onSuccess: closeCancel })}
       >
         <p>
-          Les <strong>commandes payées seront remboursées intégralement</strong>, les autres annulées, et tous les acheteurs prévenus. Cette action est <strong>irréversible</strong>.
+          <button
+            type="button"
+            className="btn btn--ghost btn--small"
+            onClick={() => {
+              closeCancel();
+              setEditing(true);
+            }}
+          >
+            Reporter l’événement plutôt
+          </button>
         </p>
         <div className="field">
           <label htmlFor="cancel-reason">Motif (communiqué aux acheteurs)</label>

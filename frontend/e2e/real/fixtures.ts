@@ -1,4 +1,4 @@
-import { expect, type APIRequestContext } from '@playwright/test';
+import { expect, type APIRequestContext, type Page } from '@playwright/test';
 import { waitForLink } from './mailpit';
 
 export const API = 'http://localhost:4000/api/v1';
@@ -91,3 +91,27 @@ export async function buyByTransfer(request: APIRequestContext, managerPassword:
 
 /** Événement de test contrôlable maintenant (début dans 2 h). */
 export const IN_CHECKIN_WINDOW = 2 * 3_600_000;
+
+/**
+ * Ouvre un événement depuis une liste paginée (catalogue public ou événements du back-office) : la base
+ * de dev accumule les événements « E2E … » des campagnes précédentes, qui repoussent ceux du seed.
+ */
+export async function openEventFromCatalogue(page: Page, title: string): Promise<void> {
+  const main = page.getByRole('main');
+  const firstEvent = main.locator('a[href*="/events/"]:not([href$="/events/new"])').first();
+  for (let i = 0; i < 20; i++) {
+    await expect(firstEvent).toBeVisible();
+    await expect(main.locator('[aria-busy="true"]')).toHaveCount(0);
+    const link = main.getByRole('link', { name: title, exact: true });
+    if ((await link.count()) > 0) {
+      await link.first().click();
+      return;
+    }
+    const next = main.getByRole('navigation', { name: 'Pagination' }).getByRole('button', { name: 'Suivant' });
+    if ((await next.count()) === 0 || (await next.isDisabled())) break;
+    const before = await firstEvent.getAttribute('href');
+    await next.click();
+    await expect.poll(() => firstEvent.getAttribute('href')).not.toBe(before); // nouvelle page affichée
+  }
+  throw new Error(`Événement introuvable : ${title}`);
+}

@@ -11,6 +11,13 @@ export function formatCents(cents: number): string {
   return EUR.format(cents / 100); // affichage seulement : division exacte au centime pour des entiers sûrs
 }
 
+/** Prix affiché : « 15 € » pour un montant rond, « 31,20 € » sinon (HANDOFF § 7). */
+const EUR_ROUND = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
+export function formatPrice(cents: number): string {
+  if (!Number.isSafeInteger(cents)) return '—';
+  return cents % 100 === 0 ? EUR_ROUND.format(cents / 100) : formatCents(cents);
+}
+
 type Parsed = { ok: true; value: number } | { ok: false };
 
 /**

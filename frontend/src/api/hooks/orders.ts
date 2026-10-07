@@ -64,9 +64,10 @@ export function useCreateOrder() {
   });
 }
 
-export function useOrders(page: number) {
+export function useOrders(page: number, enabled = true) {
   const { user } = useAuth();
   return useQuery({
+    enabled,
     queryKey: qk.orders(user?.id ?? 'anonyme', page),
     queryFn: ({ signal }) => apiRequest<Page<Order>>('/orders', { query: { page, pageSize: 20 }, signal }),
   });

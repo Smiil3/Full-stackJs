@@ -119,7 +119,7 @@ describe('AuthProvider', () => {
     injectFault({ route: 'POST /auth/refresh', status: 403, code: 'CSRF_CHECK_FAILED' });
     const { auth } = setup();
     expect(await screen.findByText('anonymous:-')).toBeInTheDocument();
-    expect(auth().notice).toBe('csrf');
+    await waitFor(() => expect(auth().notice).toBe('csrf')); // contexte recopié par un effet après le rendu
     await act(() => auth().login('acheteur@example.test', DEMO_PASSWORD));
     expect(auth().notice).toBeNull();
   });
@@ -130,10 +130,14 @@ describe('AuthProvider', () => {
     injectFault({ route: 'POST /auth/refresh', status: 0, code: 'INTERNAL_ERROR', network: true });
     const { auth } = setup();
     expect(await screen.findByText('offline:-')).toBeInTheDocument();
-    injectFault({ route: 'POST /auth/refresh', status: 403, code: 'CSRF_CHECK_FAILED' });
-    window.dispatchEvent(new Event('online'));
-    expect(await screen.findByText('anonymous:-')).toBeInTheDocument();
-    expect(auth().notice).toBe('csrf');
+    injectFault({ route: 'POST /auth/refresh', status: 403, code: 'CSRF_CHECK_FAILED', times: 50 });
+    // L'écouteur « online » est posé par un effet APRÈS l'affichage : l'événement est redéclenché
+    // jusqu'à sa prise en compte (sous charge, le premier peut précéder l'écouteur).
+    await waitFor(() => {
+      window.dispatchEvent(new Event('online'));
+      expect(screen.getByText('anonymous:-')).toBeInTheDocument();
+    });
+    await waitFor(() => expect(auth().notice).toBe('csrf')); // contexte recopié par un effet après le rendu
   });
 
   it('logout ⇒ cache TanStack Query vidé et nettoyages hors-ligne exécutés', async () => {

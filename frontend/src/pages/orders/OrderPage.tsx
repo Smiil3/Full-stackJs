@@ -9,9 +9,11 @@ import { ErrorAlert } from '../../components/ErrorAlert';
 import { EventTime } from '../../components/EventTime';
 import { OrderStatusBadge } from '../../components/OrderStatusBadge';
 import { PageLoader } from '../../components/PageLoader';
+import { Icon } from '../../components/Icon';
 import { useNow } from '../../lib/hooks/useNow';
 import { formatCents } from '../../lib/money';
 import { currentPspEnv, resolvePspRedirect } from '../../lib/pspRedirect';
+import { formatTime } from '../../lib/time';
 import { OrderSummary } from './OrderSummary';
 import { canCancel } from './orderRules';
 import { TransferInstructions } from './TransferInstructions';
@@ -78,12 +80,22 @@ export function OrderPage() {
     });
   };
 
+  const transfer = order.status === 'AWAITING_TRANSFER' && order.transferInstructions !== null;
   return (
     <section className="page">
       <p>
         <Link to="/me/orders">← Mes commandes</Link>
       </p>
-      <h1>Commande</h1>
+      {transfer ? (
+        <div className="stack stack--sm">
+          <p className="row ok-line">
+            <Icon name="check-circle" /> Réservation enregistrée
+          </p>
+          <h1>Il ne reste plus qu’à faire le virement</h1>
+        </div>
+      ) : (
+        <h1>Commande</h1>
+      )}
       <div className="card stack">
         <h2 className="card__title">
           <Link to={apiPath`/events/${order.eventId}`}>{order.eventTitle}</Link>
@@ -93,7 +105,11 @@ export function OrderPage() {
           <OrderStatusBadge status={order.status} />
           <span className="muted">{order.paymentMethod === 'CARD' ? 'Carte bancaire' : 'Virement'}</span>
         </p>
+        <p className="muted">
+          {order.items.map((i) => `${i.quantity} × ${i.name}`).join(', ')} · <a href="#details-commande">Détails</a>
+        </p>
       </div>
+      {transfer && order.transferInstructions ? <TransferInstructions order={order} t={order.transferInstructions} /> : null}
 
       <div aria-live="polite">
         {awaitingConfirmation ? (
@@ -112,7 +128,11 @@ export function OrderPage() {
         ) : null}
         {payment === 'failed' && order.status === 'PENDING_PAYMENT' ? (
           <p className="alert alert--error" role="alert">
-            Le paiement n’a pas abouti. Aucun montant n’a été débité ; vous pouvez réessayer tant que la réservation est active.
+            <Icon name="info" />
+            <span>
+              Le paiement n’est pas passé. Aucun montant n’a été débité.
+              {order.expiresAt ? ` Vos places restent gardées jusqu’à ${formatTime(order.expiresAt, order.eventTimezone)}.` : ''} Vous pouvez réessayer.
+            </span>
           </p>
         ) : null}
         {order.status === 'PAID' ? (
@@ -131,7 +151,9 @@ export function OrderPage() {
         ) : null}
       </div>
 
-      <OrderSummary order={order} />
+      <div id="details-commande">
+        <OrderSummary order={order} />
+      </div>
 
       {order.status === 'PENDING_PAYMENT' && order.expiresAt ? (
         <div className="stack">
@@ -155,7 +177,6 @@ export function OrderPage() {
         </div>
       ) : null}
 
-      {order.status === 'AWAITING_TRANSFER' && order.transferInstructions ? <TransferInstructions order={order} t={order.transferInstructions} /> : null}
 
       {canCancel(order, now) && !paymentInProgress && !polling ? (
         <div className="stack">
