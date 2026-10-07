@@ -149,7 +149,8 @@ Un billet passe `CANCELLED` dès que sa commande devient `CANCELLED`, `REFUNDED`
 
 ```ts
 type WaitlistEntry = { id; eventId; eventTitle; ticketTypeId; ticketTypeName; quantity; status: 'WAITING'|'OFFERED'|'CONVERTED'|'EXPIRED'|'LEFT';
-  position: number|null /* rang dans la file, si WAITING */; offerExpiresAt: string|null; createdAt }
+  position: number|null /* rang dans la file, si WAITING */; offerExpiresAt: string|null;
+  unhonoredOffers: number /* offres non honorées de ce compte sur CET événement (0–2), cf. anti-gel */; createdAt }
 ```
 | Méthode & chemin | Auth | Body | Réponse |
 |---|---|---|---|
@@ -315,7 +316,7 @@ Un report est **bloqué** s'il n'est pas terminé ET (au moins une de ses comman
 - En-têtes de sécurité via helmet ; CORS : origine `FRONT_URL` uniquement, `credentials: true`.
 
 ## 11. Historique
-- **1.18** (2026-10-07) : anti-gel élargi (offre quittée tardivement, commande d'offre non payée, pas d'offre < 15 min) ; `EventAdmin.reschedulePendingOrders`, `GET /admin/stuck-reschedules` + `retry` ; tableau §8 réparé (suite au rapport d'audit n° 2).
+- **1.18** (2026-10-07) : anti-gel élargi (offre quittée tardivement, commande d'offre non payée, pas d'offre < 15 min) ; `EventAdmin.reschedulePendingOrders`, `GET /admin/stuck-reschedules` + `retry`, `WaitlistEntry.unhonoredOffers` ; tableau §8 réparé (suite au rapport d'audit n° 2).
 - **1.17** (2026-10-07) : report concurrent ⇒ 409 ; `GET /admin/stuck-orders` + `retry` ; `503 PAYMENT_PROVIDER_UNAVAILABLE` ; surcharges financières réservées à l'OWNER ; anti-gel de la liste d'attente (offres ≤ 360 min, sortie après 2 offres expirées) ; `mark-done` carte vérifié auprès du PSP ; remboursements orphelins visibles par l'admin plateforme (suite au rapport d'audit du 2026-10-06).
 - **1.16** (2026-10-06) : `Order.paymentInProgress`.
 - **1.15** (2026-10-06) : PSP — échéance des sessions, consultation de session (rapprochement), réessais de webhook, débit limité sur signatures invalides seulement ; paiement tardif soumis à toutes les règles ; droits du report étendus aux commandes non payées ; fenêtre de contrôle `startsAt − 12 h` → `endsAt + 24 h`.
