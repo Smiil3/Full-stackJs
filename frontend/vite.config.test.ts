@@ -68,9 +68,17 @@ describe('en-têtes de sécurité (revue F1.1 — M7)', () => {
     expect(metas).toEqual(['<meta name="referrer" content="no-referrer"']);
   });
 
+  it('Info audit : img-src limité à la même origine ; upgrade-insecure-requests seulement pour le site déployé', () => {
+    expect(contentSecurityPolicy(false)).toContain("img-src 'self';");
+    expect(contentSecurityPolicy(false)).not.toMatch(/data:|blob:/);
+    expect(contentSecurityPolicy(false)).not.toContain('upgrade-insecure-requests'); // aperçu en http://localhost
+    expect(contentSecurityPolicy(false, true)).toMatch(/; upgrade-insecure-requests$/);
+    expect(contentSecurityPolicy(true, true)).not.toContain('upgrade-insecure-requests');
+  });
+
   it('la conf nginx d’exemple reprend exactement la CSP et les en-têtes, plus HSTS, partout', () => {
     const snippet = readFileSync(new URL('./deploy/nuits-security-headers.conf', import.meta.url), 'utf8');
-    for (const [name, value] of Object.entries(securityHeaders(false))) {
+    for (const [name, value] of Object.entries(securityHeaders(false, true))) {
       expect(snippet).toContain(`add_header ${name} "${value}" always;`);
     }
     expect(snippet).toContain('Strict-Transport-Security');

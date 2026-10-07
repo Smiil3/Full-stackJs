@@ -243,7 +243,9 @@ async function reflectOnlineResult(eventId: string, res: ScanResponse): Promise<
  * Vérification locale (mode secours). Sous verrou inter-onglets ; lecture + marquage + mise en file dans
  * UNE transaction qui revérifie la génération de session et la présence de la liste.
  */
-export async function localScan(args: { orgId: string; eventId: string; qrPayload: string; scanId: string; owner: string; reason: LocalReason }): Promise<ScanOutcome> {
+export async function localScan(input: { orgId: string; eventId: string; qrPayload: string; scanId: string; owner: string; reason: LocalReason }): Promise<ScanOutcome> {
+  // Identifiants normalisés en minuscules (URL saisie en majuscules ⇒ même événement que le QR).
+  const args = { ...input, orgId: input.orgId.toLowerCase(), eventId: input.eventId.toLowerCase() };
   return withLock(SCAN_LOCK, async () => {
     const generation = await currentGeneration();
     const meta = await getSnapshotMeta(args.eventId);
@@ -254,7 +256,7 @@ export async function localScan(args: { orgId: string; eventId: string; qrPayloa
     const mode = { offline: true as const, reason: args.reason };
     const parsed = parseQr(args.qrPayload);
     if (!parsed || !(await verifySignature(parsed, trustedKeyFor(meta.publicKeyJwk)))) return { kind: 'INVALID', ...mode };
-    if (parsed.eventId !== args.eventId) return { kind: 'WRONG_EVENT', ...mode };
+    if (parsed.eventId.toLowerCase() !== args.eventId) return { kind: 'WRONG_EVENT', ...mode };
 
     const db = await scannerDb();
     const tx = db.transaction(['device', 'snapshots', 'tickets', 'queue'], 'readwrite');

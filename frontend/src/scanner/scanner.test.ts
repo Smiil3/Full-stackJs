@@ -334,6 +334,15 @@ describe('mode secours hors-ligne', () => {
   });
 });
 
+describe('identifiant d’événement en majuscules dans l’URL (audit, info)', () => {
+  it('même événement écrit en majuscules ⇒ billet reconnu, pas « autre événement »', async () => {
+    const [qr] = await ticketsFor(1);
+    await prepareEvent(ORG, EVENT);
+    const out = await localScan({ ...scanArgs(qr ?? ''), eventId: IDS.eventConcert.toUpperCase() });
+    expect(out.kind).not.toBe('WRONG_EVENT');
+  });
+});
+
 describe('clé publique épinglée (audit B14)', () => {
   afterEach(async () => {
     const { __setPinnedTicketKey } = await import('./pinnedKey');

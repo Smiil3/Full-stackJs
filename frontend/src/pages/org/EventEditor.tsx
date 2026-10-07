@@ -230,7 +230,9 @@ export function EventEditor(props: Props) {
         <p className="alert alert--error" role="alert">
           {isApiError(props.error) && props.error.code === 'FORBIDDEN'
             ? 'Seul le propriétaire du collectif peut modifier les règles financières ou reporter l’événement. Vos autres modifications n’ont pas été enregistrées.'
-            : errorMessage(props.error)}
+            : isApiError(props.error) && props.error.code === 'CONFLICT'
+              ? 'Un report de cet événement est déjà en cours de traitement (ou l’événement vient d’être annulé) : rien n’a été modifié. Réessayez dans quelques instants.'
+              : errorMessage(props.error)}
         </p>
       ) : null}
       {Object.keys(errors).length ? (

@@ -660,6 +660,17 @@ describe('règles financières réservées au propriétaire (v1.17, audit M1)', 
     expect(within(screen.getByRole('group', { name: 'Remboursement du prix des billets' })).getAllByRole('radio')).toHaveLength(2);
   });
 
+  it('409 (report déjà en cours de traitement, v1.17) ⇒ message clair, rien de modifié', async () => {
+    const user = userEvent.setup();
+    await renderApp(EVENT, { as: OWNER });
+    await user.click(await screen.findByRole('button', { name: 'Modifier l’événement' }));
+    injectFault({ route: 'PATCH /orgs/:orgId/events/:eventId', status: 409, code: 'CONFLICT' });
+    await user.clear(screen.getByLabelText('Titre'));
+    await user.type(screen.getByLabelText('Titre'), 'Autre titre');
+    await user.click(screen.getByRole('button', { name: 'Enregistrer les modifications' }));
+    expect(await screen.findByText(/Un report de cet événement est déjà en cours de traitement/)).toBeInTheDocument();
+  });
+
   it('403 au moment d’enregistrer ⇒ explication (propriétaire seulement), pas un message générique', async () => {
     const user = userEvent.setup();
     await renderApp(EVENT, { as: MANAGER });
