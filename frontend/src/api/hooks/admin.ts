@@ -1,9 +1,9 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { apiPath, apiRequest } from '../client';
 import { isApiError } from '../errors';
-import type { Page, RefundAdmin, StuckOrder } from '../types';
+import type { Page, RefundAdmin, StuckOrder, StuckReschedule } from '../types';
 
-/** Anomalies de la plateforme (contrat v1.17 §8) : remboursements sans commande, commandes bloquées. */
+/** Anomalies de la plateforme (contrat v1.18 §8) : remboursements sans commande, commandes et reports bloqués. */
 const KEY = ['admin', 'anomalies'] as const;
 
 export const useAdminRefunds = (page: number) =>
@@ -36,5 +36,20 @@ export function useRetryStuckOrder() {
   return useMutation({
     mutationFn: (orderId: string) => apiRequest<StuckOrder>(apiPath`/admin/stuck-orders/${orderId}/retry`, { method: 'POST' }),
     onSettled: () => qc.invalidateQueries({ queryKey: [...KEY, 'stuck'] }),
+  });
+}
+
+export const useStuckReschedules = (page: number) =>
+  useQuery({
+    queryKey: [...KEY, 'stuck-reschedules', page],
+    queryFn: ({ signal }) => apiRequest<Page<StuckReschedule>>('/admin/stuck-reschedules', { query: { page, pageSize: 20 }, signal }),
+    placeholderData: keepPreviousData,
+  });
+
+export function useRetryStuckReschedule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (rescheduleId: string) => apiRequest<StuckReschedule>(apiPath`/admin/stuck-reschedules/${rescheduleId}/retry`, { method: 'POST' }),
+    onSettled: () => qc.invalidateQueries({ queryKey: [...KEY, 'stuck-reschedules'] }),
   });
 }

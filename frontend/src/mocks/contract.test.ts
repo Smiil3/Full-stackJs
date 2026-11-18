@@ -306,6 +306,31 @@ describe('MSW — couverture du contrat', () => {
     expect(audit.items.some((a) => a.actorEmail === null)).toBe(true);
   });
 
+  it('v1.18 : reports — 409 si un report est en cours ; bloqué après 15 min ⇒ listé admin ; relance d’un report non bloqué ⇒ 404', async () => {
+    const { control } = await import('./core');
+    control.rescheduleBatchDelayMs = 60_000; // worker lent : le report reste en cours
+    await login('acheteur@example.test', DEMO_PASSWORD);
+    await post<Order>('/orders', { eventId: IDS.eventConcert, paymentMethod: 'CARD', items: [{ ticketTypeId: IDS.ttFosse, quantity: 1 }] }, { 'Idempotency-Key': crypto.randomUUID() });
+    await logout();
+    const evPath = apiPath`/orgs/${IDS.orgNuits}/events/${IDS.eventConcert}`;
+    const ev = mock.db.events.find((e) => e.id === IDS.eventConcert);
+    const shift = (iso: string | undefined, days: number) => new Date(Date.parse(iso ?? '') + days * 86_400_000).toISOString();
+    const body = (days: number) => ({ startsAt: shift(ev?.startsAt, days), endsAt: shift(ev?.endsAt, days), salesEndAt: shift(ev?.startsAt, days), rescheduleReason: 'Météo' });
+    await login('owner@nuits.test', DEMO_PASSWORD);
+    const first = body(1);
+    const updated = await apiRequest<EventAdmin>(evPath, { method: 'PATCH', body: first });
+    expect(updated.reschedulePendingOrders).toBe(1);
+    await expect(apiRequest(evPath, { method: 'PATCH', body: body(2) })).rejects.toMatchObject({ status: 409, code: 'CONFLICT' });
+    await logout();
+    await login('admin@plateforme.test', DEMO_PASSWORD);
+    const r = mock.db.reschedules[0];
+    if (!r) throw new Error('report');
+    expect((await apiRequest<Page<unknown>>('/admin/stuck-reschedules')).items).toHaveLength(0); // lancé à l'instant
+    await expect(post(apiPath`/admin/stuck-reschedules/${r.id}/retry`)).rejects.toMatchObject({ status: 404 });
+    r.createdAt = new Date(Date.now() - 16 * 60_000).toISOString(); // worker arrêté depuis plus de 15 min
+    expect((await apiRequest<Page<{ pendingOrders: number; failedOrders: number }>>('/admin/stuck-reschedules')).items).toEqual([expect.objectContaining({ id: r.id, pendingOrders: 1, failedOrders: 0 })]);
+  });
+
   it('v1.10 : remboursements — liste filtrée, mark-done (note obligatoire), INVALID_STATE, refundsToProcess', async () => {
     await login('acheteur@example.test', DEMO_PASSWORD);
     const order = await post<Order>('/orders', { eventId: IDS.eventConcert, paymentMethod: 'TRANSFER', items: [{ ticketTypeId: IDS.ttFosse, quantity: 1 }] }, { 'Idempotency-Key': crypto.randomUUID() });

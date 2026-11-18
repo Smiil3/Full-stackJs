@@ -1,7 +1,7 @@
 /** Opérations métier du faux serveur (réservation, paiement, expiration, liste d'attente). */
-import { fail, mock } from './core';
+import { control, fail, mock } from './core';
 import { signQr, randomPublicId } from './crypto';
-import { effectiveRules, type MockOrder, type MockRefund, type MockTicketType, type MockWaitlist } from './state';
+import { effectiveRules, type MockOrder, type MockRefund, type MockReschedule, type MockTicketType, type MockWaitlist } from './state';
 
 const MIN = 60_000;
 const HOUR = 3_600_000;
@@ -88,6 +88,39 @@ export function offerToWaitlist(tt: MockTicketType, now = Date.now()): void {
     w.offeredAt = new Date(now).toISOString();
     w.offerExpiresAt = new Date(Math.min(now + minutes * MIN, salesClose)).toISOString();
   }
+}
+
+/** Report (v1.18) : échecs avant mise à l'écart d'une commande ; ancienneté au-delà de laquelle il est « bloqué ». */
+export const RESCHEDULE_MAX_FAILURES = 5;
+export const RESCHEDULE_STUCK_AFTER_MS = 15 * MIN;
+
+/** Application d'un report aux commandes, par passages successifs (remplace le worker). */
+export function runReschedule(r: MockReschedule): void {
+  const step = () => {
+    if (!mock.db.reschedules.includes(r)) return; // faux serveur réinitialisé
+    for (const id of [...r.pending]) {
+      if ((r.failures[id] ?? 0) >= RESCHEDULE_MAX_FAILURES) continue; // écartée jusqu'à relance
+      if (control.failingRescheduleOrders.has(id)) {
+        r.failures[id] = (r.failures[id] ?? 0) + 1;
+        continue;
+      }
+      const o = mock.db.orders.find((x) => x.id === id);
+      if (o?.status === 'PAID') {
+        o.refundPercent = 100;
+        o.serviceFeeRefundable = true;
+      }
+      r.pending = r.pending.filter((x) => x !== id);
+    }
+    if (r.pending.length === 0) r.completedAt = new Date().toISOString();
+    else if (r.pending.some((id) => (r.failures[id] ?? 0) < RESCHEDULE_MAX_FAILURES)) setTimeout(step, control.rescheduleBatchDelayMs);
+  };
+  setTimeout(step, control.rescheduleBatchDelayMs);
+}
+
+/** Bloqué : pas terminé ET (une commande écartée, ou lancé il y a plus de 15 min). */
+export function isRescheduleStuck(r: MockReschedule, now = Date.now()): boolean {
+  if (r.completedAt) return false;
+  return Object.values(r.failures).some((n) => n >= RESCHEDULE_MAX_FAILURES) || now - Date.parse(r.createdAt) > RESCHEDULE_STUCK_AFTER_MS;
 }
 
 export function holdDurations(eventId: string): { cardMs: number; transferMs: number } {

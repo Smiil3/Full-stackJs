@@ -143,6 +143,9 @@ export function toEventAdmin(e: MockEvent): EventAdmin {
     effectiveRules: effectiveRules(db(), e),
     ticketTypes: typesOf(e.id).map(toTicketTypeAdmin),
     cancellationPendingOrders: e.cancellationPending?.length ?? 0,
+    reschedulePendingOrders: db()
+      .reschedules.filter((r) => r.eventId === e.id && !r.completedAt)
+      .reduce((n, r) => n + r.pending.length, 0),
     createdAt: e.createdAt,
     updatedAt: e.updatedAt,
   };

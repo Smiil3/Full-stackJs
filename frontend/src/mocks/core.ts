@@ -18,6 +18,8 @@ export function resetMockDb(now?: number): MockDb {
   faults.length = 0;
   control.latencyMs = 0;
   control.cancelBatchDelayMs = 300;
+  control.rescheduleBatchDelayMs = 300;
+  control.failingRescheduleOrders.clear();
   return mock.db;
 }
 
@@ -37,7 +39,13 @@ export type Fault = {
   network?: boolean;
 };
 const faults: Fault[] = [];
-export const control = { latencyMs: 0, cancelBatchDelayMs: 300 };
+export const control = {
+  latencyMs: 0,
+  cancelBatchDelayMs: 300,
+  rescheduleBatchDelayMs: 300,
+  /** Commandes dont l'application d'un report échoue (simulation d'une panne persistante). */
+  failingRescheduleOrders: new Set<string>(),
+};
 
 export function injectFault(f: Fault): void {
   faults.push({ times: 1, ...f });

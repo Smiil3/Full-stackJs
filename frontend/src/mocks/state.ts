@@ -127,6 +127,24 @@ export type MockRefund = {
   /** Carte (v1.17) : état côté prestataire simulé, interrogé par mark-done. */
   pspState?: 'succeeded' | 'pending' | 'unreachable';
 };
+/**
+ * Report d'événement (v1.18) : appliqué aux commandes en arrière-plan ; une commande dont l'application
+ * échoue 5 fois est écartée jusqu'à relance par l'admin plateforme.
+ */
+export type MockReschedule = {
+  id: string;
+  orgId: string;
+  eventId: string;
+  oldStartsAt: string;
+  newStartsAt: string;
+  reason: string;
+  createdAt: string;
+  /** Commandes restant à traiter. */
+  pending: string[];
+  /** Échecs d'application par commande. */
+  failures: Record<string, number>;
+  completedAt: string | null;
+};
 export type MockCheckIn = { scanId: string; publicId: string | null; result: string; usedAt: string | null };
 
 export type MockDb = {
@@ -142,6 +160,7 @@ export type MockDb = {
   audit: (AuditLogEntry & { orgId: string })[];
   checkins: MockCheckIn[];
   refunds: MockRefund[];
+  reschedules: MockReschedule[];
   /** access token → session */
   accessTokens: Map<string, { userId: string; expiresAt: number }>;
   /** Simule le cookie HttpOnly `nuits_rt` (le navigateur ne le voit pas, le front non plus). */
@@ -368,6 +387,7 @@ export function createSeed(now: number = Date.now()): MockDb {
     audit,
     checkins: [],
     refunds: [],
+    reschedules: [],
     accessTokens: new Map(),
     refreshCookie: null,
     usedRefreshTokens: new Set(),

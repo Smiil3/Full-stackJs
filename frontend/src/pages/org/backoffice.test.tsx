@@ -4,7 +4,7 @@ import { delay, http } from 'msw';
 import { describe, expect, it, vi } from 'vitest';
 import { apiRequest, login, logout } from '../../api/client';
 import type { Order } from '../../api/types';
-import { injectFault, mock } from '../../mocks/core';
+import { control, injectFault, mock } from '../../mocks/core';
 import { server } from '../../mocks/server';
 import { DEMO_PASSWORD, IDS } from '../../mocks/state';
 import { renderApp } from '../../test/renderApp';
@@ -582,6 +582,47 @@ describe('admin plateforme : anomalies (v1.17 §8, audit B2 / B3)', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Relancer' }));
     await waitFor(() => expect(stored?.expireFailures).toBe(0));
     expect(await screen.findByText('Aucune commande bloquée.')).toBeInTheDocument();
+  });
+
+  /** Report du concert avec une commande dont l'application échoue en permanence ⇒ écartée après 5 échecs. */
+  async function stuckReschedule(): Promise<{ orderId: string }> {
+    await login('acheteur@example.test', DEMO_PASSWORD);
+    const order = await apiRequest<Order>('/orders', { method: 'POST', body: { eventId: IDS.eventConcert, paymentMethod: 'TRANSFER', items: [{ ticketTypeId: IDS.ttFosse, quantity: 1 }] }, headers: { 'Idempotency-Key': crypto.randomUUID() } });
+    await logout();
+    control.rescheduleBatchDelayMs = 1;
+    control.failingRescheduleOrders.add(order.id);
+    const ev = mock.db.events.find((e) => e.id === IDS.eventConcert);
+    const shift = (iso: string | undefined) => new Date(Date.parse(iso ?? '') + 86_400_000).toISOString();
+    await login(OWNER, DEMO_PASSWORD);
+    await apiRequest(`/orgs/${IDS.orgNuits}/events/${IDS.eventConcert}`, { method: 'PATCH', body: { startsAt: shift(ev?.startsAt), endsAt: shift(ev?.endsAt), salesEndAt: shift(ev?.startsAt), rescheduleReason: 'Salle inondée' } });
+    await logout();
+    await waitFor(() => expect(mock.db.reschedules[0]?.failures[order.id]).toBe(5));
+    return { orderId: order.id };
+  }
+
+  it('B\'6 : report bloqué listé (ancien → nouveau début, motif, restantes / en échec) ; « Relancer » confirmé ⇒ reprise et fin du report', async () => {
+    const user = userEvent.setup();
+    const { orderId } = await stuckReschedule();
+    await renderApp('/admin/anomalies', { as: 'admin@plateforme.test' });
+    const section = (await screen.findByRole('heading', { name: 'Reports bloqués' })).closest('section') as HTMLElement;
+    const card = (await within(section).findByText(/Motif : Salle inondée/)).closest('li') as HTMLElement;
+    expect(card).toHaveTextContent('Garonne Électrique — soirée d’ouverture');
+    expect(card).toHaveTextContent(/Début déplacé du .+ au .+/);
+    expect(card).toHaveTextContent('1 commande restante · 1 en échec');
+    await user.click(within(card).getByRole('button', { name: 'Relancer' }));
+    const dialog = screen.getByRole('dialog', { name: 'Relancer l’application de ce report ?' });
+    expect(dialog).toHaveTextContent('remis à zéro');
+    expect(mock.db.reschedules[0]?.failures[orderId]).toBe(5); // rien tant que non confirmé
+    control.failingRescheduleOrders.delete(orderId); // panne réparée
+    await user.click(within(dialog).getByRole('button', { name: 'Relancer' }));
+    await waitFor(() => expect(mock.db.reschedules[0]?.completedAt).not.toBeNull());
+    expect(await within(section).findByText('Aucun report bloqué.')).toBeInTheDocument();
+  });
+
+  it('B\'6 : fiche événement ⇒ « Report en cours : N commandes restantes »', async () => {
+    await stuckReschedule();
+    await renderApp(EVENT, { as: OWNER });
+    expect(await screen.findByText('Report en cours : 1 commande restante (mise à jour automatique).')).toBeInTheDocument();
   });
 
   it('non-admin ⇒ page introuvable', async () => {
