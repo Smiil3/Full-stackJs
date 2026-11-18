@@ -10,7 +10,7 @@ import { Icon } from '../../components/Icon';
 import { PageLoader } from '../../components/PageLoader';
 import { estimateServiceFeeCents, formatCents } from '../../lib/money';
 import { formatDate, formatTime } from '../../lib/time';
-import { positionLabel } from '../../lib/waitlist';
+import { positionLabel, unhonoredOffersNotice } from '../../lib/waitlist';
 
 /** Écran d'une inscription en liste d'attente : parcours, puis offre (anneau de temps, récapitulatif, accepter / laisser). */
 export function WaitlistOfferPage() {
@@ -33,6 +33,7 @@ export function WaitlistOfferPage() {
   const total = subtotal !== null && fee !== null ? subtotal + fee : null;
   const offered = entry.status === 'OFFERED' && entry.offerExpiresAt !== null && !left;
   const tz = event?.timezone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const unhonored = unhonoredOffersNotice(entry.unhonoredOffers);
 
   return (
     <section className="page narrow">
@@ -57,8 +58,8 @@ export function WaitlistOfferPage() {
         </>
       ) : entry.status === 'EXPIRED' ? (
         <>
-          <h1>L’offre a expiré</h1>
-          <p>Les places passent à la personne suivante. Vous restez inscrit·e sur la liste si d’autres se libèrent.</p>
+          <h1>{entry.offerExpiresAt ? 'L’offre a expiré' : 'Inscription close'}</h1>
+          <p>Les places passent à la personne suivante. Cette inscription est close.</p>
         </>
       ) : left || entry.status === 'LEFT' ? (
         <>
@@ -68,6 +69,12 @@ export function WaitlistOfferPage() {
       ) : (
         <h1>Vous êtes sur la liste d’attente</h1>
       )}
+      {unhonored ? (
+        <p className="notice" role="note">
+          <Icon name="info" />
+          <span>{unhonored}</span>
+        </p>
+      ) : null}
 
       <div className="card stack" data-theme="light">
         <p className="card__title">{entry.eventTitle}</p>

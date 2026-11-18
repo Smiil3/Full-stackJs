@@ -8,8 +8,16 @@ import type { User } from '../api/types';
 import { AuthContext, type AuthContextValue, type AuthNotice, type AuthStatus } from './AuthContext';
 import { runSessionCleanups } from './sessionCleanup';
 
-/** Durée maximale du masquage au retour depuis le cache du navigateur (la revérification continue). */
-export const BFCACHE_MASK_MAX_MS = 3000;
+/**
+ * Retour depuis le cache du navigateur : au-delà de ce délai sans réponse du serveur, l'attente
+ * devient un état « session non vérifiée » explicite (contenu toujours masqué, revérification continue).
+ */
+export const BFCACHE_CHECK_MAX_MS = 10_000;
+
+/** Serveur injoignable (réseau, délai, 5xx) : la session n'a pas pu être vérifiée. */
+function isUnreachable(err: unknown): boolean {
+  return isApiError(err) && (err.code === 'NETWORK_ERROR' || err.code === 'TIMEOUT' || err.status >= 500);
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
@@ -84,7 +92,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setStatus((s) => (s === 'loading' ? 'anonymous' : s));
           return;
         }
-        if (isApiError(err) && (err.code === 'NETWORK_ERROR' || err.code === 'TIMEOUT' || err.status >= 500)) {
+        if (isUnreachable(err)) {
           setStatus((s) => (s === 'loading' ? 'offline' : s));
         } else {
           setStatus((s) => (s === 'loading' ? 'anonymous' : s));
@@ -112,44 +120,68 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Revérification de la session (pageshow persisté, page de QR redevenue visible).
   const [revalidating, setRevalidating] = useState(false);
-  const [restoredFromCache, setRestoredFromCache] = useState(false);
-  const revalidate = useCallback(async () => {
-    if (userIdRef.current === null) return; // rien de personnel chargé
+  /** Vrai si le serveur a répondu (ou rien de personnel n'est chargé) ; faux s'il est injoignable. */
+  const verifySession = useCallback(async (): Promise<boolean> => {
+    if (userIdRef.current === null) return true; // rien de personnel chargé
     setRevalidating(true);
     try {
       // Même compte ⇒ rien ne change ; autre compte (cookie remplacé par un autre onglet) ⇒ purge par
       // l'événement « session » ; session révoquée ⇒ purge par l'événement « expired ».
       await refreshSession();
-    } catch {
+      return true;
+    } catch (err) {
       // Réseau absent : affichage conservé (billets hors-ligne) ; les autres cas sont traités par le client.
+      return !isUnreachable(err);
     } finally {
       setRevalidating(false);
     }
   }, []);
+  const revalidate = useCallback(async () => {
+    await verifySession();
+  }, [verifySession]);
+
+  // Page restaurée depuis le cache avant/arrière (bfcache) : l'état mémoire peut être celui d'une
+  // session terminée ou d'un autre compte ⇒ contenu MASQUÉ (pas démonté : formulaires et défilement
+  // conservés, audit B17-f) jusqu'à ce que le SERVEUR ait répondu (audit n° 2, B'3) : jamais levé sur
+  // un simple minuteur. Sans réponse en BFCACHE_CHECK_MAX_MS, ou serveur injoignable, état explicite
+  // « session non vérifiée » (toujours masqué) ; nouvel essai au retour du réseau ou à la demande.
+  const [cacheMask, setCacheMask] = useState<'none' | 'checking' | 'unverified'>('none');
+  const checkGeneration = useRef(0);
+  const checkRestoredSession = useCallback(() => {
+    const generation = ++checkGeneration.current;
+    setCacheMask('checking');
+    const cap = setTimeout(() => {
+      if (generation === checkGeneration.current) setCacheMask('unverified');
+    }, BFCACHE_CHECK_MAX_MS);
+    void verifySession().then((reached) => {
+      // Une réponse tardive du serveur lève quand même le masque, y compris après le plafond.
+      if (reached) {
+        clearTimeout(cap);
+        setCacheMask('none');
+        checkGeneration.current++;
+      } else if (generation === checkGeneration.current) {
+        clearTimeout(cap);
+        setCacheMask('unverified');
+      }
+    });
+  }, [verifySession]);
   useEffect(() => {
-    // Page restaurée depuis le cache avant/arrière (bfcache) : l'état mémoire peut être celui d'une
-    // session terminée ou d'un autre compte ⇒ contenu masqué jusqu'à la revérification.
-    // Audit B17-f : contenu MASQUÉ (pas démonté : formulaires et défilement conservés), au plus
-    // BFCACHE_MASK_MAX_MS ; une session changée est purgée dès que la revérification aboutit.
-    let unmask: ReturnType<typeof setTimeout> | undefined;
     const onPageShow = (e: PageTransitionEvent) => {
-      if (!e.persisted) return;
-      setRestoredFromCache(true);
-      clearTimeout(unmask);
-      unmask = setTimeout(() => {
-        setRestoredFromCache(false);
-      }, BFCACHE_MASK_MAX_MS);
-      void revalidate().finally(() => {
-        clearTimeout(unmask);
-        setRestoredFromCache(false);
-      });
+      if (e.persisted) checkRestoredSession();
     };
     window.addEventListener('pageshow', onPageShow);
     return () => {
-      clearTimeout(unmask);
       window.removeEventListener('pageshow', onPageShow);
     };
-  }, [revalidate]);
+  }, [checkRestoredSession]);
+  useEffect(() => {
+    if (cacheMask !== 'unverified') return;
+    window.addEventListener('online', checkRestoredSession);
+    return () => {
+      window.removeEventListener('online', checkRestoredSession);
+    };
+  }, [cacheMask, checkRestoredSession]);
+  const masked = cacheMask !== 'none';
 
   // Accès au contrôle d'entrée réécrits à chaque utilisateur reçu du serveur (refresh, /auth/me) :
   // un contrôleur retiré perd la liste locale des événements de ce collectif. Chargement à la demande.
@@ -177,12 +209,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
   return (
     <AuthContext value={value}>
-      {restoredFromCache ? (
+      {cacheMask === 'checking' ? (
         <p className="page" role="status">
           Vérification de la session…
         </p>
       ) : null}
-      <div className={restoredFromCache ? 'session-masked' : 'session-visible'} inert={restoredFromCache ? true : undefined} aria-hidden={restoredFromCache ? true : undefined}>
+      {cacheMask === 'unverified' ? (
+        <div className="page" role="alert">
+          <p>Session non vérifiée : le serveur ne répond pas (hors connexion ?). Le contenu reste masqué tant que votre session n’a pas été vérifiée.</p>
+          <button type="button" className="btn" onClick={checkRestoredSession}>
+            Réessayer
+          </button>
+        </div>
+      ) : null}
+      <div className={masked ? 'session-masked' : 'session-visible'} inert={masked ? true : undefined} aria-hidden={masked ? true : undefined}>
         {children}
       </div>
     </AuthContext>

@@ -1,6 +1,6 @@
 import { act, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { delay, http } from 'msw';
+import { delay, http, HttpResponse } from 'msw';
 import { describe, expect, it, vi } from 'vitest';
 import { __resetClientForTests, apiRequest, login, logout } from '../../api/client';
 import type { Order } from '../../api/types';
@@ -9,7 +9,7 @@ import { markPaid, offerToWaitlist } from '../../mocks/domain';
 import { server } from '../../mocks/server';
 import { DEMO_PASSWORD, IDS } from '../../mocks/state';
 import { loadTickets } from '../../offline/tickets';
-import { BFCACHE_MASK_MAX_MS } from '../../auth/AuthProvider';
+import { BFCACHE_CHECK_MAX_MS } from '../../auth/AuthProvider';
 import { BUYER, expectLoggedOut, openMenu, renderApp } from '../../test/renderApp';
 
 async function buy(qty = 2) {
@@ -117,7 +117,7 @@ describe('mes billets', () => {
     expect(screen.queryByRole('img', { name: /QR code/ })).toBeNull();
   });
 
-  it('B17-f : revérification lente ⇒ masquage levé après 3 s (contenu jamais démonté)', async () => {
+  it('B\'3 : revérification lente ⇒ masque maintenu, « session non vérifiée » après 10 s, levé à la réponse du serveur (jamais démonté)', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ['setTimeout', 'clearTimeout'] });
     try {
       await buy(1);
@@ -125,18 +125,38 @@ describe('mes billets', () => {
       const heading = await screen.findByRole('heading', { name: 'Mes billets' });
       server.use(
         http.post('*/api/v1/auth/refresh', async () => {
-          await delay(10_000); // réseau très lent
+          await delay(12_000); // réseau très lent (sous le délai client de 15 s), puis réponse du serveur simulé
         }),
       );
       window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
       await screen.findByText('Vérification de la session…', { selector: 'p.page' });
-      await act(() => vi.advanceTimersByTimeAsync(BFCACHE_MASK_MAX_MS));
+      await act(() => vi.advanceTimersByTimeAsync(3000)); // l'ancien plafond : plus de levée sur minuteur
+      expect(heading.closest('[aria-hidden="true"]')).not.toBeNull();
+      await act(() => vi.advanceTimersByTimeAsync(BFCACHE_CHECK_MAX_MS - 3000));
+      expect(screen.getByRole('alert')).toHaveTextContent('Session non vérifiée');
       expect(screen.queryByText('Vérification de la session…', { selector: 'p.page' })).toBeNull();
-      expect(heading.closest('[aria-hidden="true"]')).toBeNull(); // de nouveau visible
+      expect(heading.closest('[aria-hidden="true"]')).not.toBeNull(); // toujours masqué
+      await act(() => vi.advanceTimersByTimeAsync(2000)); // le serveur répond enfin (même compte)
+      await waitFor(() => expect(heading.closest('[aria-hidden="true"]')).toBeNull());
+      expect(screen.queryByText(/Session non vérifiée/)).toBeNull();
       expect(screen.getByRole('heading', { name: 'Mes billets' })).toBe(heading); // même nœud : jamais démonté
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('B\'3 : serveur injoignable au retour du cache ⇒ état explicite, contenu masqué ; « Réessayer » une fois le réseau revenu ⇒ affiché', async () => {
+    await buy(1);
+    await renderApp('/me/tickets');
+    const heading = await screen.findByRole('heading', { name: 'Mes billets' });
+    server.use(http.post('*/api/v1/auth/refresh', () => HttpResponse.error()));
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Session non vérifiée');
+    expect(heading.closest('[aria-hidden="true"]')).not.toBeNull();
+    server.resetHandlers(); // réseau revenu
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Réessayer' }));
+    await waitFor(() => expect(heading.closest('[aria-hidden="true"]')).toBeNull());
+    expect(screen.queryByRole('alert')).toBeNull();
   });
 
   it('F6-M3 : retour du cache avant/arrière après fin de session ⇒ plus aucun billet affiché', async () => {
@@ -333,5 +353,43 @@ describe('Mes billets — direction « Miroir d’eau » (D1)', () => {
     expect(await screen.findByRole('button', { name: /^Accepter et payer \d+,\d{2}\s€$/ })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Je laisse ma place' }));
     expect(await screen.findByRole('heading', { name: 'C’est noté, merci !' })).toBeInTheDocument();
+  });
+
+  it('B\'4 : offre expirée ⇒ inscription close (jamais « vous restez inscrit·e ») et compteur 1 sur 2, repris après réinscription', async () => {
+    await login(BUYER, DEMO_PASSWORD);
+    const entry = await apiRequest<{ id: string }>(`/events/${IDS.eventSoldOut}/ticket-types/${IDS.ttSoldOut}/waitlist`, { method: 'POST', body: { quantity: 1 } });
+    const tt = mock.db.ticketTypes.find((t) => t.id === IDS.ttSoldOut);
+    if (!tt) throw new Error('type');
+    tt.held -= 2;
+    offerToWaitlist(tt);
+    const stored = mock.db.waitlist.find((w) => w.id === entry.id);
+    if (stored) stored.offerExpiresAt = new Date(Date.now() - 1000).toISOString(); // offre échue
+    const warning = '1 offre non honorée sur 2 : à la prochaine, vous sortez de la liste d’attente de cet événement.';
+    const { router, queryClient } = await renderApp(`/waitlist/${entry.id}`);
+    expect(await screen.findByRole('heading', { name: 'L’offre a expiré' })).toBeInTheDocument();
+    expect(screen.getByText(/Cette inscription est close/)).toBeInTheDocument();
+    expect(screen.queryByText(/restez inscrit/)).toBeNull();
+    expect(screen.getByRole('note')).toHaveTextContent(warning);
+    // Réinscription (type redevenu complet) : l'avertissement suit le compte sur l'événement.
+    tt.held = tt.capacity - tt.sold;
+    const again = await apiRequest<{ id: string }>(`/events/${IDS.eventSoldOut}/ticket-types/${IDS.ttSoldOut}/waitlist`, { method: 'POST', body: { quantity: 1 } });
+    await queryClient.invalidateQueries(); // comme après une inscription faite depuis l'interface
+    await act(() => router.navigate(`/waitlist/${again.id}`));
+    expect(await screen.findByRole('heading', { name: 'Vous êtes sur la liste d’attente' })).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('note')).toHaveTextContent(warning));
+    await act(() => router.navigate('/me/tickets'));
+    expect(await screen.findByText('Inscription close')).toBeInTheDocument();
+    expect(screen.getAllByText(warning)).toHaveLength(2); // l'inscription close et la nouvelle
+  });
+
+  it('B\'4 : deux offres non honorées ⇒ sortie de la liste annoncée', async () => {
+    await login(BUYER, DEMO_PASSWORD);
+    const entry = await apiRequest<{ id: string }>(`/events/${IDS.eventSoldOut}/ticket-types/${IDS.ttSoldOut}/waitlist`, { method: 'POST', body: { quantity: 1 } });
+    const stored = mock.db.waitlist.find((w) => w.id === entry.id);
+    if (!stored) throw new Error('entrée');
+    mock.db.waitlist.push({ ...stored, id: crypto.randomUUID(), status: 'EXPIRED', offerExpired: true }); // 1re offre non honorée
+    Object.assign(stored, { status: 'EXPIRED', offerExpired: true, offerExpiresAt: new Date().toISOString() });
+    await renderApp(`/waitlist/${entry.id}`);
+    expect(await screen.findByRole('note')).toHaveTextContent('2 offres non honorées sur 2 : vous êtes sorti·e de la liste d’attente de cet événement et ne pouvez plus vous y réinscrire.');
   });
 });

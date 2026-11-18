@@ -1,6 +1,6 @@
 import type { PaymentMethod } from '../../api/types';
 import { currentUser, fail, json, mock, noContent, notFound, param, paginate, readBody, readQuery, requireVerified, route } from '../core';
-import { cancelOrder, expireDueOrders, holdDurations, markPaid, transferReference } from '../domain';
+import { cancelOrder, expireDueOrders, holdDurations, markPaid, MAX_UNHONORED_OFFERS_PER_EVENT, offerToWaitlist, recordUnhonoredOffer, transferReference, unhonoredOffers, WAITLIST_LEAVE_GRACE_MS } from '../domain';
 import { salesOpen, toEventPublic, toEventSummary, toOrder, toTicket, toWaitlist } from '../serializers';
 import { currentPrice, effectiveRules, remaining, serviceFee, type MockOrder } from '../state';
 
@@ -193,9 +193,9 @@ export const buyerHandlers = [
     if (mock.db.waitlist.some((w) => w.userId === user.id && w.ticketTypeId === tt.id && (w.status === 'WAITING' || w.status === 'OFFERED'))) {
       fail(409, 'ALREADY_IN_WAITLIST', 'Déjà inscrit');
     }
-    // v1.17 : deux offres expirées sur l'événement ⇒ sortie de la liste, réinscription refusée.
-    if (mock.db.waitlist.filter((w) => w.userId === user.id && w.eventId === event.id && w.status === 'EXPIRED').length >= 2) fail(409, 'CONFLICT', 'Réinscription refusée');
-    const entry = { id: crypto.randomUUID(), userId: user.id, eventId: event.id, ticketTypeId: tt.id, quantity: quantity ?? 1, status: 'WAITING' as const, offerExpiresAt: null, createdAt: new Date().toISOString() };
+    // v1.18 : deux offres non honorées sur l'événement ⇒ sortie de la liste, réinscription refusée.
+    if (unhonoredOffers(user.id, event.id) >= MAX_UNHONORED_OFFERS_PER_EVENT) fail(409, 'CONFLICT', 'Réinscription refusée');
+    const entry = { id: crypto.randomUUID(), userId: user.id, eventId: event.id, ticketTypeId: tt.id, quantity: quantity ?? 1, status: 'WAITING' as const, offeredAt: null, offerExpiresAt: null, offerExpired: false, createdAt: new Date().toISOString() };
     mock.db.waitlist.push(entry);
     return json(toWaitlist(entry), 201);
   }),
@@ -217,6 +217,9 @@ export const buyerHandlers = [
     if (wasOffered) {
       const tt = mock.db.ticketTypes.find((t) => t.id === w.ticketTypeId);
       if (tt) tt.held -= w.quantity;
+      // v1.18 : offre quittée plus de 15 min après son émission ⇒ non honorée (sinon : gel sans pénalité).
+      if (w.offeredAt && Date.now() - Date.parse(w.offeredAt) > WAITLIST_LEAVE_GRACE_MS) recordUnhonoredOffer(w);
+      if (tt) offerToWaitlist(tt);
     }
     return noContent();
   }),

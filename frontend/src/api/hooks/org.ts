@@ -104,8 +104,8 @@ export const useOrgEvent = (orgId: string, eventId: string) =>
   useQuery({
     queryKey: qk.orgEvent(orgId, eventId),
     queryFn: ({ signal }) => apiRequest<EventAdmin>(ev(orgId, eventId), { signal }),
-    // Annulation en cours de traitement (v1.14) : suivi du reste à traiter.
-    refetchInterval: (q) => ((q.state.data?.cancellationPendingOrders ?? 0) > 0 ? 3000 : false),
+    // Annulation (v1.14) ou report (v1.18) en cours de traitement : suivi du reste à traiter.
+    refetchInterval: (q) => ((q.state.data?.cancellationPendingOrders ?? 0) + (q.state.data?.reschedulePendingOrders ?? 0) > 0 ? 3000 : false),
   });
 
 function useEventCache(orgId: string) {

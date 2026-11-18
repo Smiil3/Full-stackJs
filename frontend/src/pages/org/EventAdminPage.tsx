@@ -128,6 +128,11 @@ export function EventAdminPage() {
         </section>
       ) : null}
 
+      {!cancelled && event.reschedulePendingOrders > 0 ? (
+        <p className="alert alert--info" role="status">
+          Report en cours : {event.reschedulePendingOrders} commande{event.reschedulePendingOrders > 1 ? 's' : ''} restante{event.reschedulePendingOrders > 1 ? 's' : ''} (mise à jour automatique).
+        </p>
+      ) : null}
       {cancelled && event.cancellationPendingOrders > 0 ? (
         <p className="alert alert--info" role="status">
           Remboursements en cours : {event.cancellationPendingOrders} commande{event.cancellationPendingOrders > 1 ? 's' : ''} restante{event.cancellationPendingOrders > 1 ? 's' : ''} (mise à jour automatique).

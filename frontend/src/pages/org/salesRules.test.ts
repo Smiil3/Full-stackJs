@@ -64,7 +64,7 @@ describe('formulaire d’événement', () => {
   const event: EventAdmin = {
     id: 'e', orgId: 'o', title: 'Concert', description: null, venue: 'Salle', address: null, isOnline: false,
     startsAt: '2026-11-14T19:00:00.000Z', endsAt: '2026-11-14T23:00:00.000Z', timezone: 'Europe/Paris', status: 'PUBLISHED',
-    salesStartAt: '2026-10-01T08:00:00.000Z', salesEndAt: '2026-11-14T19:00:00.000Z', overrides: { ...NO_OVERRIDES }, offlineCheckinEnabled: false, cancellationPendingOrders: 0,
+    salesStartAt: '2026-10-01T08:00:00.000Z', salesEndAt: '2026-11-14T19:00:00.000Z', overrides: { ...NO_OVERRIDES }, offlineCheckinEnabled: false, cancellationPendingOrders: 0, reschedulePendingOrders: 0,
     effectiveRules: { maxPerOrder: 6, maxPerUser: 6, transferEnabled: true, cardHoldMinutes: 15, transferHoldHours: 72, selfCancellationEnabled: true, cancellationDeadlineHours: 48, refundPercent: 100, serviceFeeFixedCents: 50, serviceFeeBasisPoints: 250, waitlistEnabled: true },
     ticketTypes: [{ id: 't', name: 'Fosse', description: null, capacity: 100, sold: 3, held: 0, remaining: 97, priceCents: 2500, earlyPriceCents: null, earlyUntil: null, sortOrder: 0 }],
     createdAt: '', updatedAt: '',
@@ -75,6 +75,15 @@ describe('formulaire d’événement', () => {
     expect(f.startsAt).toBe('2026-11-14T20:00');
     const r = buildEventBody({ ...f, startsAt: '2026-07-10T20:30', endsAt: '2026-07-10T23:00', salesStartAt: '2026-06-01T10:00', salesEndAt: '2026-07-10T20:00' }, settings);
     expect(r.body?.startsAt).toBe('2026-07-10T18:30:00.000Z');
+  });
+
+  it('M\'4 : événement relu avec d’autres valeurs, formulaire non touché sur ces champs ⇒ rien n’est renvoyé', () => {
+    const f = initialEventForm(event, settings);
+    const f2 = { ...f, description: 'Nouvelle description' };
+    const body = buildEventBody(f2, settings).body;
+    if (!body) throw new Error('body');
+    const relu = { ...event, title: 'Titre changé ailleurs', venue: 'Autre lieu', overrides: { ...event.overrides, refundPercent: 40 } };
+    expect(diffPatch(relu, f, f2, body)).toEqual({ description: 'Nouvelle description' });
   });
 
   it('PATCH minimal : rien de modifié ⇒ objet vide ; titre seul ⇒ titre seul (pas de faux report)', () => {

@@ -1,10 +1,14 @@
 /** Opérations métier du faux serveur (réservation, paiement, expiration, liste d'attente). */
-import { fail, mock } from './core';
+import { control, fail, mock } from './core';
 import { signQr, randomPublicId } from './crypto';
-import { effectiveRules, type MockOrder, type MockRefund, type MockTicketType } from './state';
+import { effectiveRules, type MockOrder, type MockRefund, type MockReschedule, type MockTicketType, type MockWaitlist } from './state';
 
 const MIN = 60_000;
 const HOUR = 3_600_000;
+/** Anti-gel (contrat v1.18 §6). */
+export const WAITLIST_LEAVE_GRACE_MS = 15 * MIN;
+export const WAITLIST_OFFER_MIN_LEAD_MS = 15 * MIN;
+export const MAX_UNHONORED_OFFERS_PER_EVENT = 2;
 
 /** Expiration paresseuse : appelée avant chaque lecture/écriture de commandes (remplace le worker). */
 export function expireDueOrders(now = Date.now()): void {
@@ -13,16 +17,43 @@ export function expireDueOrders(now = Date.now()): void {
     if ((o.status === 'PENDING_PAYMENT' || o.status === 'AWAITING_TRANSFER') && o.expiresAt && Date.parse(o.expiresAt) <= now) {
       o.status = 'EXPIRED';
       releaseHeld(o);
+      // Commande issue d'une offre, expirée sans paiement ⇒ offre non honorée.
+      const fromOffer = o.bodyFingerprint.startsWith('waitlist:') ? db.waitlist.find((w) => `waitlist:${w.id}` === o.bodyFingerprint) : undefined;
+      if (fromOffer) recordUnhonoredOffer(fromOffer);
     }
   }
   for (const w of db.waitlist) {
     if (w.status === 'OFFERED' && w.offerExpiresAt && Date.parse(w.offerExpiresAt) <= now) {
       w.status = 'EXPIRED';
       const tt = db.ticketTypes.find((t) => t.id === w.ticketTypeId);
-      if (tt) {
-        tt.held -= w.quantity;
-        offerToWaitlist(tt);
-      }
+      if (tt) tt.held -= w.quantity;
+      recordUnhonoredOffer(w);
+      if (tt) offerToWaitlist(tt);
+    }
+  }
+}
+
+/** Nombre d'offres non honorées d'un compte sur un événement. */
+export function unhonoredOffers(userId: string, eventId: string): number {
+  return mock.db.waitlist.filter((w) => w.userId === userId && w.eventId === eventId && w.offerExpired).length;
+}
+
+/**
+ * Offre non honorée (v1.18 §6) : à la MAX_UNHONORED_OFFERS_PER_EVENT-ième sur l'événement, les autres
+ * inscriptions actives du compte sur cet événement passent EXPIRED (offres libérées, redistribuées).
+ */
+export function recordUnhonoredOffer(entry: MockWaitlist): void {
+  entry.offerExpired = true;
+  if (unhonoredOffers(entry.userId, entry.eventId) < MAX_UNHONORED_OFFERS_PER_EVENT) return;
+  for (const other of mock.db.waitlist) {
+    if (other.userId !== entry.userId || other.eventId !== entry.eventId) continue;
+    if (other.status !== 'WAITING' && other.status !== 'OFFERED') continue;
+    const wasOffered = other.status === 'OFFERED';
+    other.status = 'EXPIRED';
+    const tt = mock.db.ticketTypes.find((t) => t.id === other.ticketTypeId);
+    if (tt && wasOffered) {
+      tt.held -= other.quantity;
+      offerToWaitlist(tt);
     }
   }
 }
@@ -44,6 +75,9 @@ export function offerToWaitlist(tt: MockTicketType, now = Date.now()): void {
   const rules = effectiveRules(db, event);
   if (!rules.waitlistEnabled) return;
   const minutes = event.overrides.waitlistOfferMinutes ?? db.settings.get(event.orgId)?.waitlistOfferMinutes ?? 120;
+  // Anti-gel : aucune offre à moins de 15 min de la fin des ventes (les places vont au public).
+  const salesClose = Math.min(Date.parse(event.salesEndAt), Date.parse(event.startsAt));
+  if (salesClose - now < WAITLIST_OFFER_MIN_LEAD_MS) return;
   const queue = db.waitlist
     .filter((w) => w.ticketTypeId === tt.id && w.status === 'WAITING')
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
@@ -51,8 +85,42 @@ export function offerToWaitlist(tt: MockTicketType, now = Date.now()): void {
     if (tt.capacity - tt.sold - tt.held < w.quantity) break;
     tt.held += w.quantity;
     w.status = 'OFFERED';
-    w.offerExpiresAt = new Date(now + minutes * MIN).toISOString();
+    w.offeredAt = new Date(now).toISOString();
+    w.offerExpiresAt = new Date(Math.min(now + minutes * MIN, salesClose)).toISOString();
   }
+}
+
+/** Report (v1.18) : échecs avant mise à l'écart d'une commande ; ancienneté au-delà de laquelle il est « bloqué ». */
+export const RESCHEDULE_MAX_FAILURES = 5;
+export const RESCHEDULE_STUCK_AFTER_MS = 15 * MIN;
+
+/** Application d'un report aux commandes, par passages successifs (remplace le worker). */
+export function runReschedule(r: MockReschedule): void {
+  const step = () => {
+    if (!mock.db.reschedules.includes(r)) return; // faux serveur réinitialisé
+    for (const id of [...r.pending]) {
+      if ((r.failures[id] ?? 0) >= RESCHEDULE_MAX_FAILURES) continue; // écartée jusqu'à relance
+      if (control.failingRescheduleOrders.has(id)) {
+        r.failures[id] = (r.failures[id] ?? 0) + 1;
+        continue;
+      }
+      const o = mock.db.orders.find((x) => x.id === id);
+      if (o?.status === 'PAID') {
+        o.refundPercent = 100;
+        o.serviceFeeRefundable = true;
+      }
+      r.pending = r.pending.filter((x) => x !== id);
+    }
+    if (r.pending.length === 0) r.completedAt = new Date().toISOString();
+    else if (r.pending.some((id) => (r.failures[id] ?? 0) < RESCHEDULE_MAX_FAILURES)) setTimeout(step, control.rescheduleBatchDelayMs);
+  };
+  setTimeout(step, control.rescheduleBatchDelayMs);
+}
+
+/** Bloqué : pas terminé ET (une commande écartée, ou lancé il y a plus de 15 min). */
+export function isRescheduleStuck(r: MockReschedule, now = Date.now()): boolean {
+  if (r.completedAt) return false;
+  return Object.values(r.failures).some((n) => n >= RESCHEDULE_MAX_FAILURES) || now - Date.parse(r.createdAt) > RESCHEDULE_STUCK_AFTER_MS;
 }
 
 export function holdDurations(eventId: string): { cardMs: number; transferMs: number } {

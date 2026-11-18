@@ -7,10 +7,31 @@ import { formatWithZone } from '../../lib/time.js';
 import { withTxRetry } from '../../lib/txRetry.js';
 import { PERCENT_MAX } from '../../config/money.js';
 import { hours } from '../../config/units.js';
-import { RESCHEDULE_ORDERS_PER_TICK } from '../../config/worker.js';
+import { MAX_RESCHEDULE_FAILURES, RESCHEDULE_ORDERS_PER_TICK } from '../../config/worker.js';
 import { TimeBudget } from '../../lib/budget.js';
 
 const ACTIVE: readonly OrderStatus[] = ['PENDING_PAYMENT', 'AWAITING_TRANSFER', 'PAID'];
+
+/** Champs d'une commande que le report modifie. */
+interface RightsFields { status: OrderStatus; cancellableUntil: Date | null; expiresAt: Date | null }
+
+/**
+ * Droits d'une commande après un report (contrat §7.2) — calcul pur, partagé par l'application réelle et par
+ * l'aperçu des vues (une commande pas encore traitée par le worker affiche déjà ses nouveaux droits).
+ */
+export function rescheduledRights(job: EventReschedule, order: RightsFields) {
+  const deadlineMs = order.cancellableUntil
+    ? job.oldStartsAt.getTime() - order.cancellableUntil.getTime()
+    : hours(job.fallbackDeadlineHours);
+  const candidate = job.newStartsAt.getTime() - deadlineMs;
+  const cancellableUntil = new Date(Math.max(order.cancellableUntil?.getTime() ?? candidate, candidate));
+  const expiresAt = order.status === 'PAID' || order.status === 'EXPIRED' || !order.expiresAt || order.expiresAt <= job.newStartsAt
+    ? order.expiresAt : job.newStartsAt;
+  return { cancellableUntil, refundPercent: PERCENT_MAX, serviceFeeRefundable: true, expiresAt };
+}
+
+/** Statuts qui reçoivent les droits du report : actifs, et EXPIRED (un paiement tardif peut encore la reprendre). */
+const RIGHTS_STATUSES: readonly OrderStatus[] = [...ACTIVE, 'EXPIRED'];
 
 /**
  * Applique un report à UNE commande déjà verrouillée (FOR UPDATE) — contrat §7.2 :
@@ -27,23 +48,14 @@ async function applyToLockedOrder(tx: Tx, job: EventReschedule, orderId: string)
     },
   });
   if (order.pendingRescheduleId !== job.id) return;
-  if (!ACTIVE.includes(order.status)) {
+  if (!RIGHTS_STATUSES.includes(order.status)) {
     await tx.order.update({ where: { id: order.id }, data: { pendingRescheduleId: null } });
     return;
   }
-  const deadlineMs = order.cancellableUntil
-    ? job.oldStartsAt.getTime() - order.cancellableUntil.getTime()
-    : hours(job.fallbackDeadlineHours);
-  const candidate = job.newStartsAt.getTime() - deadlineMs;
-  const cancellableUntil = new Date(Math.max(order.cancellableUntil?.getTime() ?? candidate, candidate));
-  const expiresAt = order.expiresAt && order.expiresAt > job.newStartsAt ? job.newStartsAt : order.expiresAt;
-  await tx.order.update({
-    where: { id: order.id },
-    data: {
-      cancellableUntil, refundPercent: PERCENT_MAX, serviceFeeRefundable: true, pendingRescheduleId: null,
-      ...(order.status === 'PAID' ? {} : { expiresAt }),
-    },
-  });
+  // Commande EXPIRED pendant le traitement (audit M'3) : droits posés, pour qu'un paiement tardif qui la reprend
+  // ne revienne pas aux anciennes règles ; pas de mail (la réservation n'existe plus pour l'acheteur).
+  await tx.order.update({ where: { id: order.id }, data: { ...rescheduledRights(job, order), pendingRescheduleId: null } });
+  if (order.status === 'EXPIRED') return;
   // Événement annulé entre-temps : les droits sont posés, mais pas de mail de report (le mail d'annulation suit).
   if (order.event.status === 'CANCELLED') return;
   const first = await tx.$queryRaw<{ userId: string }[]>`
@@ -59,7 +71,10 @@ async function applyToLockedOrder(tx: Tx, job: EventReschedule, orderId: string)
   });
 }
 
-/** Commande verrouillée qui attend encore son report : appliqué d'abord (auto-annulation pendant le traitement). */
+/**
+ * Commande verrouillée qui attend encore son report : appliqué d'abord. Appelé par `loadOrderForUpdate` (paiement,
+ * paiement tardif, virement, annulation…) et par l'expiration : aucune transition ne se fait sur d'anciens droits.
+ */
 export async function applyPendingReschedule(tx: Tx, order: { id: string; pendingRescheduleId: string | null }): Promise<boolean> {
   if (order.pendingRescheduleId === null) return false;
   const job = await tx.eventReschedule.findUniqueOrThrow({ where: { id: order.pendingRescheduleId } });
@@ -82,7 +97,8 @@ export async function processEventReschedules(budget: TimeBudget = TimeBudget.un
       const done = await withTxRetry(() => transaction(async (tx) => {
         const rows = await tx.$queryRaw<{ id: string; pendingRescheduleId: string }[]>`
           SELECT "id", "pendingRescheduleId" FROM "orders"
-          WHERE "pendingRescheduleId" IS NOT NULL AND NOT ("id" = ANY(${skipped}::uuid[]))
+          WHERE "pendingRescheduleId" IS NOT NULL AND "rescheduleFailures" < ${MAX_RESCHEDULE_FAILURES}
+            AND NOT ("id" = ANY(${skipped}::uuid[]))
           ORDER BY "id" LIMIT 1
           FOR UPDATE SKIP LOCKED`;
         const row = rows[0];
@@ -98,11 +114,36 @@ export async function processEventReschedules(budget: TimeBudget = TimeBudget.un
       if (id === null) throw err;
       skipped.push(id);
       failed += 1;
-      getLogger().error({ err, orderId: id }, 'échec de l’application d’un report à une commande (repris au prochain passage)');
+      // Échecs comptés : au-delà de MAX_RESCHEDULE_FAILURES, la commande est écartée et le report apparaît dans
+      // /admin/stuck-reschedules (audit B'6) au lieu d'être réessayé indéfiniment.
+      const { rescheduleFailures } = await getDb().order.update({
+        where: { id }, data: { rescheduleFailures: { increment: 1 } }, select: { rescheduleFailures: true },
+      });
+      getLogger().error({ err, orderId: id, rescheduleFailures }, rescheduleFailures >= MAX_RESCHEDULE_FAILURES
+        ? 'commande écartée de l’application d’un report : intervention de l’admin plateforme requise'
+        : 'échec de l’application d’un report à une commande (repris au prochain passage)');
     }
   }
   const completed = await getDb().$executeRaw`
     UPDATE "event_reschedules" r SET "completedAt" = ${clock.now()}
     WHERE r."completedAt" IS NULL AND NOT EXISTS (SELECT 1 FROM "orders" o WHERE o."pendingRescheduleId" = r."id")`;
   return { processed, failed, completed };
+}
+
+/** Champs d'aperçu d'une commande. */
+interface PreviewFields extends RightsFields { pendingRescheduleId: string | null; refundPercent: number; serviceFeeRefundable: boolean }
+
+/**
+ * Vues de commande (Info audit) : une commande marquée par un report pas encore appliqué affiche DÉJÀ ses droits
+ * à venir (aperçu de remboursement, limite d'annulation), calculés par la même fonction que l'application réelle.
+ */
+export async function withPendingRights<T extends PreviewFields>(db: Tx, orders: T[]): Promise<T[]> {
+  const ids = [...new Set(orders.map((o) => o.pendingRescheduleId).filter((id): id is string => id !== null))];
+  if (ids.length === 0) return orders;
+  const jobs = new Map((await db.eventReschedule.findMany({ where: { id: { in: ids } } })).map((j) => [j.id, j]));
+  return orders.map((o) => {
+    const job = o.pendingRescheduleId === null ? undefined : jobs.get(o.pendingRescheduleId);
+    if (!job || !RIGHTS_STATUSES.includes(o.status)) return o;
+    return { ...o, ...rescheduledRights(job, o) };
+  });
 }

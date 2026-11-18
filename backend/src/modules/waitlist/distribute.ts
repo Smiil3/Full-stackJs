@@ -6,12 +6,8 @@ import { addMinutes, formatWithZone } from '../../lib/time.js';
 import { resolveEventSettings } from '../settings/resolveEventSettings.js';
 import { getLogger } from '../../lib/logger.js';
 import { alreadyOwned } from '../orders/repo.js';
-import { MAX_ACCUMULATION_MINUTES } from '../../config/waitlist.js';
-
-/** Ventes ouvertes au sens de la liste d'attente (contrat 1.14) : salesStartAt ≤ now < min(salesEndAt, startsAt). */
-export function salesOpen(event: { status: string; salesStartAt: Date; salesEndAt: Date; startsAt: Date }, now: Date): boolean {
-  return event.status === 'PUBLISHED' && now >= event.salesStartAt && now < event.salesEndAt && now < event.startsAt;
-}
+import { MAX_ACCUMULATION_MINUTES, MAX_UNHONORED_OFFERS_PER_EVENT } from '../../config/waitlist.js';
+import { offersCutoff, offersOpen } from './rules.js';
 
 /**
  * Distribue les places libres d'un type de place à la liste d'attente (contrat 1.14 §6), FIFO (createdAt, id) :
@@ -41,7 +37,7 @@ export async function distributeWaitlist(tx: Tx, ticketTypeId: string): Promise<
     include: { organization: { select: { settings: true } }, ticketTypes: { where: { id: ticketTypeId }, select: { name: true } } },
   });
   const settings = event?.organization.settings;
-  if (!event || !settings || !salesOpen(event, now)) return 0;
+  if (!event || !settings || !offersOpen(event, now)) return 0;
   const rules = resolveEventSettings(settings, event);
   if (!rules.waitlistEnabled) return 0;
 
@@ -102,8 +98,11 @@ export async function distributeWaitlist(tx: Tx, ticketTypeId: string): Promise<
 export async function waitlistBlockedTypes(db: Tx, ticketTypeIds: string[], now: Date): Promise<Set<string>> {
   if (ticketTypeIds.length === 0) return new Set();
   const rows = await db.$queryRaw<{ id: string }[]>`
-    SELECT t."id" FROM "ticket_types" t
-    WHERE t."id" = ANY(${ticketTypeIds}::uuid[]) AND EXISTS (
+    SELECT t."id" FROM "ticket_types" t JOIN "events" e ON e."id" = t."eventId"
+    WHERE t."id" = ANY(${ticketTypeIds}::uuid[])
+      -- Plus aucune offre possible (fin des ventes trop proche) : la liste d'attente ne prime plus.
+      AND LEAST(e."salesEndAt", e."startsAt") >= ${offersCutoff(now)}
+      AND EXISTS (
       SELECT 1 FROM "waitlist_entries" w
       WHERE w."ticketTypeId" = t."id" AND w."status" = 'WAITING'
         AND (w."quantity" <= t."capacity" - t."sold" - t."held"
@@ -136,4 +135,31 @@ export async function releaseOffer(tx: Tx, entry: { ticketTypeId: string; eventI
     UPDATE "ticket_types" SET "held" = "held" - ${entry.quantity}, "updatedAt" = ${clock.now()}
     WHERE "id" = ${entry.ticketTypeId}::uuid AND "eventId" = ${entry.eventId}::uuid AND "held" >= ${entry.quantity}`;
   if (changed !== 1) throw new Error('Incohérence de stock : places d’offre introuvables');
+}
+
+/**
+ * Offre NON HONORÉE (contrat 1.18 §6, audit M'2) : offre expirée, offre quittée plus de WAITLIST_LEAVE_GRACE_MINUTES
+ * après son émission, ou commande issue d'une offre expirée sans paiement. Marque l'entrée ; à la
+ * MAX_UNHONORED_OFFERS_PER_EVENT-ième sur l'événement, les autres inscriptions actives du compte sur cet événement
+ * passent EXPIRED (offres libérées). Pré-requis : entrées actives de TOUS les types de l'événement verrouillées
+ * (`lockWaitlistEntries`). Renvoie les types dont des places ont pu se libérer (à redistribuer par l'appelant).
+ */
+export async function recordUnhonoredOffer(tx: Tx, entryId: string): Promise<{ affected: Set<string>; excluded: boolean }> {
+  const entry = await tx.waitlistEntry.update({ where: { id: entryId }, data: { offerExpired: true } });
+  const affected = new Set([entry.ticketTypeId]);
+  const misses = await tx.waitlistEntry.count({ where: { userId: entry.userId, eventId: entry.eventId, offerExpired: true } });
+  if (misses < MAX_UNHONORED_OFFERS_PER_EVENT) return { affected, excluded: false };
+  const others = await tx.waitlistEntry.findMany({ where: { userId: entry.userId, eventId: entry.eventId, status: { in: ['WAITING', 'OFFERED'] } } });
+  for (const other of others) {
+    await tx.waitlistEntry.update({ where: { id: other.id }, data: { status: 'EXPIRED' } });
+    if (other.status === 'OFFERED') await releaseOffer(tx, other);
+    affected.add(other.ticketTypeId);
+  }
+  getLogger().warn({ userId: entry.userId, eventId: entry.eventId, misses }, 'liste d’attente : compte écarté de l’événement après des offres non honorées');
+  return { affected, excluded: true };
+}
+
+/** Types de places d'un événement (verrouillage des entrées de toute la liste d'attente de l'événement). */
+export async function eventTicketTypeIds(tx: Tx, eventId: string): Promise<string[]> {
+  return (await tx.ticketType.findMany({ where: { eventId }, select: { id: true } })).map((t) => t.id);
 }

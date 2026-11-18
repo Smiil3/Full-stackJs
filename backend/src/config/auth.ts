@@ -43,3 +43,5 @@ export const AUTH_EMAIL_QUOTAS = {
 export const ACCOUNT_LOCK_THRESHOLD = 50;
 export const ACCOUNT_FAILURE_WINDOW_MINUTES = 60;
 export const ACCOUNT_LOCK_MINUTES = 15;
+/** Mail « compte verrouillé » au titulaire : au plus un par période (audit M'1). */
+export const LOCK_NOTICE_INTERVAL_MS = hours(24);

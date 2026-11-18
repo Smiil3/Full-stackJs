@@ -11,8 +11,10 @@ import { formatWithZone } from '../../lib/time.js';
 import { alreadyOwned, heldToSold, lockBuyerEvent, releaseHeld } from '../orders/repo.js';
 import { resolveEventSettings } from '../settings/resolveEventSettings.js';
 import { distributeMany, lockWaitlistEntries } from '../waitlist/distribute.js';
+import { offersCutoff } from '../waitlist/rules.js';
 import { issueTickets } from '../tickets/issue.js';
 import { HTTP_STATUS } from '../../config/http.js';
+import { applyPendingReschedule } from '../events/reschedule.js';
 
 export const orderForSettlement = {
   items: { orderBy: { ticketTypeId: 'asc' } },
@@ -34,6 +36,10 @@ export async function loadOrderForUpdate(tx: Tx, orderId: string) {
   await tx.$queryRaw`SELECT "id" FROM "events" WHERE "id" = ${target.eventId}::uuid FOR KEY SHARE`;
   const rows = await tx.$queryRaw<{ id: string }[]>`SELECT "id" FROM "orders" WHERE "id" = ${orderId}::uuid FOR UPDATE`;
   if (rows.length === 0) return null;
+  // Report en cours de traitement : ses droits s'appliquent AVANT toute transition (paiement, paiement tardif,
+  // virement, annulation) — audit M'3.
+  const pending = await tx.order.findUniqueOrThrow({ where: { id: orderId }, select: { pendingRescheduleId: true } });
+  await applyPendingReschedule(tx, { id: orderId, pendingRescheduleId: pending.pendingRescheduleId });
   return tx.order.findUnique({ where: { id: orderId }, include: orderForSettlement });
 }
 
@@ -108,7 +114,9 @@ export async function tryResettleExpiredOrder(tx: Tx, order: SettlementOrder): P
   for (const item of order.items) {
     const rows = await tx.$queryRaw<{ ok: boolean }[]>`
       SELECT ("sold" + "held" + ${item.quantity} <= "capacity"
-              AND NOT EXISTS (SELECT 1 FROM "waitlist_entries" w WHERE w."ticketTypeId" = t."id" AND w."status" = 'WAITING'
+              AND NOT EXISTS (SELECT 1 FROM "waitlist_entries" w JOIN "events" e ON e."id" = w."eventId"
+                              WHERE w."ticketTypeId" = t."id" AND w."status" = 'WAITING'
+                                AND LEAST(e."salesEndAt", e."startsAt") >= ${offersCutoff(clock.now())}
                                 AND (w."quantity" <= t."capacity" - t."sold" - t."held"
                                      OR (w."accumulatingUntil" > ${clock.now()} AND NOT w."accumulationSkipped")))) AS ok
       FROM "ticket_types" t WHERE t."id" = ${item.ticketTypeId}::uuid AND t."eventId" = ${order.eventId}::uuid FOR UPDATE`;

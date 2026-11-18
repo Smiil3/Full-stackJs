@@ -1,8 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { runSessionCleanups } from '../../auth/sessionCleanup';
 import { ApiError } from '../errors';
 import type { Order } from '../types';
-import { ATTEMPT_KEY_TTL_MS, createOrderWithKey, forgetIdempotencyKey, idempotencyKeyFor, orderFingerprint } from './orders';
+import { createOrderWithKey, forgetIdempotencyKey, idempotencyKeyFor, orderFingerprint } from './orders';
 
 const body = (items: { ticketTypeId: string; quantity: number }[]) => ({ eventId: 'e', paymentMethod: 'CARD' as const, items });
 
@@ -30,11 +30,27 @@ describe('clés d’idempotence (revue F2.1 — B5)', () => {
     expect(idempotencyKeyFor('u1', fp)).not.toBe(k);
   });
 
-  it('M5 : TTL — au-delà de 30 min, nouvelle clé', () => {
+  it('B\'1 : pas de durée de vie — après 240 h (virement), même panier ⇒ toujours la même clé', () => {
     const fp = orderFingerprint(body([{ ticketTypeId: 'ttl', quantity: 1 }]));
-    const k = idempotencyKeyFor('u1', fp, 0);
-    expect(idempotencyKeyFor('u1', fp, ATTEMPT_KEY_TTL_MS - 1)).toBe(k);
-    expect(idempotencyKeyFor('u1', fp, ATTEMPT_KEY_TTL_MS)).not.toBe(k);
+    const k = idempotencyKeyFor('u1', fp);
+    const now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now + 241 * 3_600_000);
+    expect(idempotencyKeyFor('u1', fp)).toBe(k);
+    clock.mockRestore();
+  });
+
+  it('B\'1 : réponse 2xx illisible (UNEXPECTED_RESPONSE) ⇒ clé CONSERVÉE (la commande a pu être créée) ; 4xx illisible ⇒ oubliée', async () => {
+    const b = body([{ ticketTypeId: 'unexpected', quantity: 1 }]);
+    const sent: string[] = [];
+    const failWith = (e: ApiError) => (key: string) => {
+      sent.push(key);
+      return Promise.reject(e);
+    };
+    await expect(createOrderWithKey('u1', b, failWith(new ApiError({ status: 201, code: 'UNEXPECTED_RESPONSE', message: 'empty body' })))).rejects.toThrow();
+    await expect(createOrderWithKey('u1', b, failWith(new ApiError({ status: 409, code: 'UNEXPECTED_RESPONSE', message: '' })))).rejects.toThrow();
+    expect(sent[1]).toBe(sent[0]); // 201 illisible : même clé au rejeu
+    await expect(createOrderWithKey('u1', b, failWith(new ApiError({ status: 400, code: 'VALIDATION_ERROR', message: '' })))).rejects.toThrow();
+    expect(sent[2]).not.toBe(sent[0]); // le 409 illisible (non transitoire) l'avait oubliée
   });
 
   it('M5 : erreur transitoire ⇒ même clé au rejeu ; erreur non transitoire ⇒ clé oubliée', async () => {

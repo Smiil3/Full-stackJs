@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { isApiError } from '../../api/errors';
-import { useAdminMarkRefundDone, useAdminRefunds, useRetryStuckOrder, useStuckOrders } from '../../api/hooks/admin';
-import type { RefundAdmin, StuckOrder } from '../../api/types';
+import { useAdminMarkRefundDone, useAdminRefunds, useRetryStuckOrder, useRetryStuckReschedule, useStuckOrders, useStuckReschedules } from '../../api/hooks/admin';
+import type { RefundAdmin, StuckOrder, StuckReschedule } from '../../api/types';
 import { ConfirmDialog } from '../../components/ConfirmDialog';
 import { ErrorAlert } from '../../components/ErrorAlert';
 import { PageLoader } from '../../components/PageLoader';
@@ -16,8 +16,8 @@ import { AdminNav } from './AdminNav';
 const TO_PROCESS = new Set(['MANUAL_REQUIRED', 'FAILED']);
 
 /**
- * Anomalies de la plateforme (contrat v1.17 §8, audit B2 / B3) : remboursements de paiements sans
- * commande rattachée, et commandes écartées de l'expiration automatique (bouton « Relancer »).
+ * Anomalies de la plateforme (contrat v1.18 §8, audits B2 / B3 et n° 2 B'6) : remboursements de paiements
+ * sans commande rattachée, commandes écartées de l'expiration automatique et reports bloqués (« Relancer »).
  */
 export function AdminAnomaliesPage() {
   return (
@@ -26,6 +26,7 @@ export function AdminAnomaliesPage() {
       <AdminNav />
       <OrphanRefunds />
       <StuckOrders />
+      <StuckReschedules />
     </section>
   );
 }
@@ -159,6 +160,69 @@ function StuckOrders() {
             ? [
                 'Le compteur d’échecs est remis à zéro : le traitement automatique réessaie au prochain passage.',
                 `Si l’échéance est dépassée, la commande (${formatCents(target.totalCents)}, ${target.buyerEmail}) expire et ses places sont libérées.`,
+                'L’action est tracée dans le journal.',
+              ]
+            : []
+        }
+        onCancel={() => setTarget(null)}
+        onConfirm={() => {
+          if (target) retry.mutate(target.id, { onSettled: () => setTarget(null) });
+        }}
+      />
+    </section>
+  );
+}
+
+function StuckReschedules() {
+  const [page, setPage] = useState(1);
+  const { data, error, isPending, refetch } = useStuckReschedules(page);
+  const retry = useRetryStuckReschedule();
+  const [target, setTarget] = useState<StuckReschedule | null>(null);
+  const tz = userTimeZone();
+  return (
+    <section className="stack" aria-labelledby="titre-reports-bloques">
+      <h2 id="titre-reports-bloques">Reports bloqués</h2>
+      <p className="muted">
+        Reports d’événement dont l’application aux commandes n’aboutit pas (commande en échec 5 fois, ou report lancé il y a plus de 15 min) : tant qu’ils ne sont pas terminés, l’événement ne
+        peut pas être reporté de nouveau.
+      </p>
+      {isPending ? <PageLoader shape="text" /> : null}
+      <ErrorAlert error={error} onRetry={() => void refetch()} />
+      {data && data.items.length === 0 ? <p className="muted">Aucun report bloqué.</p> : null}
+      <ul className="list-reset stack">
+        {data?.items.map((r) => (
+          <li key={r.id} className="card stack card--attention">
+            <p className="card__title">{r.eventTitle}</p>
+            <p>
+              Début déplacé du {formatDateTime(r.oldStartsAt, tz)} au {formatDateTime(r.newStartsAt, tz)}
+            </p>
+            <p className="pre-line muted">Motif : {r.reason}</p>
+            <p>
+              {r.pendingOrders} commande{r.pendingOrders > 1 ? 's' : ''} restante{r.pendingOrders > 1 ? 's' : ''} · {r.failedOrders} en échec
+            </p>
+            <p className="muted">Lancé le {formatDateTime(r.createdAt, tz)}</p>
+            <p>
+              <button type="button" className="btn btn--secondary btn--small" onClick={() => setTarget(r)}>
+                Relancer
+              </button>
+            </p>
+          </li>
+        ))}
+      </ul>
+      <Pager page={page} total={data?.total ?? 0} pageSize={data?.pageSize ?? 20} onPage={setPage} />
+      <ErrorAlert error={retry.error} />
+      <ConfirmDialog
+        open={target !== null}
+        title="Relancer l’application de ce report ?"
+        icon="retry"
+        confirmLabel="Relancer"
+        cancelLabel="Ne rien faire"
+        busy={retry.isPending}
+        consequences={
+          target
+            ? [
+                'Les compteurs d’échecs des commandes du report sont remis à zéro : le traitement automatique réessaie au prochain passage.',
+                `${target.pendingOrders} commande${target.pendingOrders > 1 ? 's' : ''} de « ${target.eventTitle} » ${target.pendingOrders > 1 ? 'recevront' : 'recevra'} les droits liés au report.`,
                 'L’action est tracée dans le journal.',
               ]
             : []

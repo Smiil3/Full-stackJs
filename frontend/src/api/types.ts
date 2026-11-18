@@ -212,6 +212,8 @@ export type WaitlistEntry = {
   status: WaitlistStatus;
   position: number | null;
   offerExpiresAt: IsoDateTime | null;
+  /** Offres non honorées de ce compte sur CET événement (0–2, contrat v1.18 §6 anti-gel). */
+  unhonoredOffers: number;
   createdAt: IsoDateTime;
 };
 
@@ -302,6 +304,8 @@ export type EventAdmin = {
   ticketTypes: TicketTypeAdmin[];
   /** Annulation d'événement traitée en arrière-plan : commandes restant à traiter (v1.14). */
   cancellationPendingOrders: number;
+  /** Report en cours d'application aux commandes : commandes restant à traiter (v1.18). */
+  reschedulePendingOrders: number;
   createdAt: IsoDateTime;
   updatedAt: IsoDateTime;
 };
@@ -395,6 +399,19 @@ export type RefundAdmin = {
 };
 export type RefundsQuery = PageQuery & { status?: RefundStatus; eventId?: Uuid };
 /** v1.17 §8 : commande écartée de l'expiration automatique après 5 échecs (admin plateforme). */
+/** Report non terminé : une commande écartée après 5 échecs, ou lancé il y a plus de 15 min (v1.18 §8). */
+export type StuckReschedule = {
+  id: Uuid;
+  orgId: Uuid;
+  eventId: Uuid;
+  eventTitle: string;
+  oldStartsAt: IsoDateTime;
+  newStartsAt: IsoDateTime;
+  reason: string;
+  createdAt: IsoDateTime;
+  pendingOrders: number;
+  failedOrders: number;
+};
 export type StuckOrder = {
   id: Uuid;
   orgId: Uuid;

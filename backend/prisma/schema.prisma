@@ -95,8 +95,12 @@ model User {
   isPlatformAdmin  Boolean   @default(false)
   failedLoginCount Int       @default(0)
   lockedUntil      DateTime? @db.Timestamptz(3)
-  /// Dernier échec : le compteur repart de zéro après 15 min sans échec (fenêtre glissante).
+  /// Dernier échec de connexion (information) ; la fenêtre du plafond global part de failureWindowStartAt.
   lastFailedLoginAt DateTime? @db.Timestamptz(3)
+  /// Début de la fenêtre du plafond GLOBAL d'échecs (comptée depuis le PREMIER échec, audit M'1).
+  failureWindowStartAt DateTime? @db.Timestamptz(3)
+  /// Dernier mail « compte verrouillé » envoyé au titulaire (au plus un par 24 h).
+  lockNoticeSentAt  DateTime? @db.Timestamptz(3)
   /// Version des access tokens (claim `ver`) : incrémentée à chaque changement / reset de mot de passe,
   /// ce qui invalide immédiatement tous les access tokens en cours.
   tokenVersion     Int       @default(0)
@@ -318,6 +322,8 @@ model Order {
   cancellableUntil     DateTime? @db.Timestamptz(3)
   /// Report en cours de traitement par le worker pour cette commande (droits et mail pas encore appliqués).
   pendingRescheduleId  String?   @db.Uuid
+  /// Échecs d'application du report à cette commande ; au-delà de 5, écartée (relance par l'admin, audit B'6).
+  rescheduleFailures   Int       @default(0)
   refundAmountCents    Int?
 
   expiresAt   DateTime? @db.Timestamptz(3)

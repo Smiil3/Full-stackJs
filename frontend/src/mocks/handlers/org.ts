@@ -4,7 +4,7 @@ import { ORDER_STATUSES } from '../../api/types';
 import { base64urlToBytes } from '../../lib/base64url';
 import { audit, control, fail, json, mock, noContent, notFound, param, paginate, readBody, readQuery, requireOrgRole, route, type Validator } from '../core';
 import { mockPublicKeyJwk } from '../crypto';
-import { cancelOrder, expireDueOrders, markPaid, markRefundDone } from '../domain';
+import { cancelOrder, expireDueOrders, markPaid, markRefundDone, runReschedule } from '../domain';
 import { toEventAdmin, toMember, toOrderAdmin, toRefund, toSettings, toTicketTypeAdmin, typesOf } from '../serializers';
 import { maskIban, NO_OVERRIDES, remaining, type MockEvent, type MockSettings } from '../state';
 
@@ -359,11 +359,23 @@ export const orgHandlers = [
     }
     merged.offlineCheckinEnabled = e.offlineCheckinEnabled; // la copie fusionnée ne doit pas réécrire l'ancienne valeur
     if (isReschedule && mock.db.memberships.find((m) => m.orgId === orgId && m.userId === actor.id)?.role !== 'OWNER') fail(403, 'FORBIDDEN', 'Report réservé au propriétaire');
+    if (isReschedule && mock.db.reschedules.some((r) => r.eventId === e.id && !r.completedAt)) fail(409, 'CONFLICT', 'Report précédent en cours de traitement');
     if (isReschedule) {
-      for (const o of mock.db.orders.filter((x) => x.eventId === e.id && x.status === 'PAID')) {
-        o.refundPercent = 100;
-        o.serviceFeeRefundable = true;
-      }
+      // v1.18 : appliqué aux commandes en arrière-plan (droits au remboursement intégral des commandes payées).
+      const r = {
+        id: crypto.randomUUID(),
+        orgId,
+        eventId: e.id,
+        oldStartsAt: e.startsAt,
+        newStartsAt: merged.startsAt,
+        reason: rescheduleReason ?? '',
+        createdAt: new Date().toISOString(),
+        pending: mock.db.orders.filter((x) => x.eventId === e.id && ['PENDING_PAYMENT', 'AWAITING_TRANSFER', 'PAID'].includes(x.status)).map((o) => o.id),
+        failures: {},
+        completedAt: null,
+      };
+      mock.db.reschedules.push(r);
+      runReschedule(r);
       audit(orgId, actor, 'event.reschedule', `event:${e.id}`, { reason: rescheduleReason });
     }
     Object.assign(e, merged, { overrides: { ...e.overrides, ...(d.overrides as object | undefined) }, updatedAt: new Date().toISOString() });

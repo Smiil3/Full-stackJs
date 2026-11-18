@@ -1,3 +1,5 @@
+import { minutes } from './units.js';
+
 /** Commandes expirées au plus par passage du worker (une transaction chacune). */
 export const EXPIRE_ORDERS_PER_TICK = 200;
 /** Échecs d'expiration avant mise à l'écart d'une commande (alerte, intervention manuelle). */
@@ -18,3 +20,7 @@ export const JOB_TIME_BUDGET_MS = 20_000;
 export const RECONCILE_CONCURRENCY = 5;
 /** Lignes supprimées au plus par requête de purge (verrous courts). */
 export const RETENTION_DELETE_BATCH = 5000;
+/** Échecs d'application d'un report à une commande avant mise à l'écart (relance par l'admin plateforme). */
+export const MAX_RESCHEDULE_FAILURES = 5;
+/** Report non terminé depuis ce délai : considéré bloqué (worker arrêté…) et listé pour l'admin plateforme. */
+export const STUCK_RESCHEDULE_AFTER_MS = minutes(15);

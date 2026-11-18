@@ -10,12 +10,13 @@ import { addHours, addMinutes } from '../../lib/time.js';
 import { alreadyOwned, lockBuyerEvent, lockEventShared } from '../orders/repo.js';
 import { viewOwnOrder } from '../orders/service.js';
 import { resolveEventSettings } from '../settings/resolveEventSettings.js';
-import { distributeMany, distributeWaitlist, lockWaitlistEntries, releaseOffer, salesOpen } from './distribute.js';
-import { getLogger } from '../../lib/logger.js';
+import { distributeMany, distributeWaitlist, eventTicketTypeIds, lockWaitlistEntries, recordUnhonoredOffer, releaseOffer } from './distribute.js';
+import { salesOpen } from './rules.js';
 import { withTxRetry } from '../../lib/txRetry.js';
 import { SHA256_HEX_LENGTH } from '../../config/crypto.js';
 import { WAITLIST_OFFERS_PER_TICK, WAITLIST_SWEEP_TYPES_PER_TICK } from '../../config/worker.js';
-import { MAX_EXPIRED_OFFERS_PER_EVENT } from '../../config/waitlist.js';
+import { MAX_UNHONORED_OFFERS_PER_EVENT, WAITLIST_LEAVE_GRACE_MINUTES } from '../../config/waitlist.js';
+import { minutes } from '../../config/units.js';
 import { TimeBudget } from '../../lib/budget.js';
 
 type EntryWithNames = WaitlistEntry & { event: { title: string }; ticketType: { name: string } };
@@ -30,9 +31,12 @@ async function position(db: Tx, entry: WaitlistEntry): Promise<number | null> {
 }
 
 async function toView(db: Tx, e: EntryWithNames) {
+  // Offres non honorées du compte sur CET événement (contrat 1.18 §6) : 0 à MAX_UNHONORED_OFFERS_PER_EVENT.
+  const unhonoredOffers = await db.waitlistEntry.count({ where: { userId: e.userId, eventId: e.eventId, offerExpired: true } });
   return {
     id: e.id, eventId: e.eventId, eventTitle: e.event.title, ticketTypeId: e.ticketTypeId, ticketTypeName: e.ticketType.name,
-    quantity: e.quantity, status: e.status, position: await position(db, e), offerExpiresAt: iso(e.offerExpiresAt), createdAt: iso(e.createdAt),
+    quantity: e.quantity, status: e.status, position: await position(db, e), offerExpiresAt: iso(e.offerExpiresAt),
+    unhonoredOffers: Math.min(unhonoredOffers, MAX_UNHONORED_OFFERS_PER_EVENT), createdAt: iso(e.createdAt),
   };
 }
 
@@ -59,9 +63,9 @@ export async function join(userId: string, eventId: string, ticketTypeId: string
     if (quantity > rules.maxPerOrder) {
       throw errors.unprocessable('LIMIT_EXCEEDED', `Au plus ${rules.maxPerOrder} place(s) par demande.`, { max: rules.maxPerOrder, alreadyOwned: 0 });
     }
-    // Anti-gel (contrat 1.17 §6) : un compte qui a laissé expirer deux offres sur l'événement n'y revient pas.
-    if (await tx.waitlistEntry.count({ where: { userId, eventId, offerExpired: true } }) >= MAX_EXPIRED_OFFERS_PER_EVENT) {
-      throw errors.conflict('Vous avez laissé expirer plusieurs offres pour cet événement : la liste d’attente ne vous est plus ouverte.');
+    // Anti-gel (contrat 1.18 §6) : un compte qui n'a pas honoré deux offres sur l'événement n'y revient pas.
+    if (await tx.waitlistEntry.count({ where: { userId, eventId, offerExpired: true } }) >= MAX_UNHONORED_OFFERS_PER_EVENT) {
+      throw errors.conflict('Vous n’avez pas donné suite à plusieurs offres pour cet événement : la liste d’attente ne vous est plus ouverte.');
     }
     if (await tx.waitlistEntry.findFirst({ where: { userId, ticketTypeId, status: { in: ['WAITING', 'OFFERED'] } } })) {
       throw errors.state('ALREADY_IN_WAITLIST', 'Vous êtes déjà en liste d’attente pour ce type de place.');
@@ -98,20 +102,25 @@ async function lockOwnEntry(tx: Tx, userId: string, entryId: string): Promise<Wa
   return tx.waitlistEntry.findUniqueOrThrow({ where: { id: entryId } });
 }
 
-/** Quitter la liste : une offre en cours libère ses places, qui passent aussitôt au suivant. */
+/**
+ * Quitter la liste : une offre en cours libère ses places, qui passent aussitôt au suivant. Quitter une offre plus
+ * de WAITLIST_LEAVE_GRACE_MINUTES après son émission compte comme une offre NON HONORÉE (contrat 1.18 §6, audit
+ * M'2 : sinon garder l'offre jusqu'au bout puis la quitter gelait les places sans pénalité).
+ */
 export async function leave(userId: string, entryId: string): Promise<void> {
   await withTxRetry(() => transaction(async (tx) => {
-    // Ordre unique (audit B1) : entrées actives du type (createdAt, id) AVANT l'entrée propre, comme la distribution.
-    const target = await tx.waitlistEntry.findFirst({ where: { id: entryId, userId }, select: { ticketTypeId: true } });
+    // Ordre unique (audit B1) : entrées actives de l'événement (createdAt, id) AVANT l'entrée propre.
+    const target = await tx.waitlistEntry.findFirst({ where: { id: entryId, userId }, select: { eventId: true } });
     if (!target) throw errors.notFound();
-    await lockWaitlistEntries(tx, [target.ticketTypeId]);
+    await lockWaitlistEntries(tx, await eventTicketTypeIds(tx, target.eventId));
     const entry = await lockOwnEntry(tx, userId, entryId);
     if (entry.status !== 'WAITING' && entry.status !== 'OFFERED') throw errors.state('INVALID_STATE', 'Cette inscription n’est plus active.');
     await tx.waitlistEntry.updateMany({ where: { id: entry.id, status: entry.status }, data: { status: 'LEFT' } });
-    if (entry.status === 'OFFERED') {
-      await releaseOffer(tx, entry);
-      await distributeWaitlist(tx, entry.ticketTypeId);
-    }
+    if (entry.status !== 'OFFERED') return;
+    await releaseOffer(tx, entry);
+    const late = entry.offeredAt !== null && clock.now().getTime() - entry.offeredAt.getTime() > minutes(WAITLIST_LEAVE_GRACE_MINUTES);
+    const affected = late ? (await recordUnhonoredOffer(tx, entry.id)).affected : new Set([entry.ticketTypeId]);
+    await distributeMany(tx, affected);
   }));
 }
 
@@ -199,30 +208,19 @@ export async function expireWaitlistOffers(budget: TimeBudget = TimeBudget.unlim
         ORDER BY "offerExpiresAt", "id" LIMIT 1`;
       const candidate = rows[0];
       if (!candidate) return false;
-      const typeIds = (await tx.ticketType.findMany({ where: { eventId: candidate.eventId }, select: { id: true } })).map((t) => t.id);
-      await lockWaitlistEntries(tx, typeIds);
+      await lockWaitlistEntries(tx, await eventTicketTypeIds(tx, candidate.eventId));
       const entry = await tx.waitlistEntry.findUniqueOrThrow({ where: { id: candidate.id } });
       // Acceptée, quittée ou déjà expirée entre-temps : rien à faire (plus jamais reprise dans ce passage).
       if (entry.status !== 'OFFERED' || !entry.offerExpiresAt || entry.offerExpiresAt > clock.now()) {
         skipped.push(entry.id);
         return true;
       }
-      await tx.waitlistEntry.update({ where: { id: entry.id }, data: { status: 'EXPIRED', offerExpired: true } });
+      await tx.waitlistEntry.update({ where: { id: entry.id }, data: { status: 'EXPIRED' } });
       await releaseOffer(tx, entry);
       expired += 1;
-      const misses = await tx.waitlistEntry.count({ where: { userId: entry.userId, eventId: entry.eventId, offerExpired: true } });
-      const affected = new Set([entry.ticketTypeId]);
-      if (misses >= MAX_EXPIRED_OFFERS_PER_EVENT) {
-        const others = await tx.waitlistEntry.findMany({ where: { userId: entry.userId, eventId: entry.eventId, status: { in: ['WAITING', 'OFFERED'] } } });
-        for (const other of others) {
-          await tx.waitlistEntry.update({ where: { id: other.id }, data: { status: 'EXPIRED' } });
-          if (other.status === 'OFFERED') await releaseOffer(tx, other);
-          affected.add(other.ticketTypeId);
-        }
-        excluded += 1;
-        getLogger().warn({ userId: entry.userId, eventId: entry.eventId, misses }, 'liste d’attente : compte écarté de l’événement après des offres expirées');
-      }
-      await distributeMany(tx, affected);
+      const outcome = await recordUnhonoredOffer(tx, entry.id);
+      if (outcome.excluded) excluded += 1;
+      await distributeMany(tx, outcome.affected);
       return true;
     }));
     if (!done) break;

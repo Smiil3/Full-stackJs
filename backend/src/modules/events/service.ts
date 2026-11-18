@@ -32,7 +32,7 @@ export function toTicketTypeAdmin(tt: TicketType) {
   };
 }
 
-export function toEventAdmin(event: EventWithTypes, settings: OrganizationSettings, cancellationPendingOrders = 0) {
+export function toEventAdmin(event: EventWithTypes, settings: OrganizationSettings, cancellationPendingOrders = 0, reschedulePendingOrders = 0) {
   return {
     id: event.id,
     orgId: event.orgId,
@@ -52,6 +52,7 @@ export function toEventAdmin(event: EventWithTypes, settings: OrganizationSettin
     effectiveRules: toPublicRules(resolveEventSettings(settings, event)),
     ticketTypes: event.ticketTypes.map(toTicketTypeAdmin),
     cancellationPendingOrders,
+    reschedulePendingOrders,
     createdAt: iso(event.createdAt),
     updatedAt: iso(event.updatedAt),
   };
@@ -94,6 +95,11 @@ function overridesData(input: OverridesInput | undefined): Partial<EventOverride
 }
 
 /** Commandes d'un événement annulé restant à traiter par le worker (0 si l'événement n'est pas annulé). */
+/** Commandes restant à traiter pour le report en cours (contrat 1.18 §7.2). */
+function pendingReschedules(db: Tx, eventId: string): Promise<number> {
+  return db.order.count({ where: { eventId, pendingRescheduleId: { not: null } } });
+}
+
 async function pendingCancellations(db: Tx, event: { id: string; status: string }): Promise<number> {
   if (event.status !== 'CANCELLED') return 0;
   return db.order.count({ where: { eventId: event.id, status: { in: ['PENDING_PAYMENT', 'AWAITING_TRANSFER', 'PAID'] } } });
@@ -102,14 +108,14 @@ async function pendingCancellations(db: Tx, event: { id: string; status: string 
 async function load(tx: Tx, orgId: string, eventId: string) {
   const event = await repo.findEvent(tx, orgId, eventId);
   if (!event) throw errors.notFound();
-  return toEventAdmin(event, await getSettings(tx, orgId), await pendingCancellations(tx, event));
+  return toEventAdmin(event, await getSettings(tx, orgId), await pendingCancellations(tx, event), await pendingReschedules(tx, event.id));
 }
 
 export async function listEvents(orgId: string, status: EventStatusFilter, page: number, pageSize: number) {
   const [rows, total] = await repo.listEvents(orgId, status, page, pageSize);
   const settings = await transaction((tx) => getSettings(tx, orgId));
   const db = getDb();
-  const items = await Promise.all(rows.map(async (e) => toEventAdmin(e, settings, await pendingCancellations(db, e))));
+  const items = await Promise.all(rows.map(async (e) => toEventAdmin(e, settings, await pendingCancellations(db, e), await pendingReschedules(db, e.id))));
   return { items, page, pageSize, total };
 }
 type EventStatusFilter = 'DRAFT' | 'PUBLISHED' | 'CANCELLED' | undefined;
@@ -147,7 +153,7 @@ export async function createEvent(orgId: string, actorId: string, body: EventCre
         ...overrides,
       },
     });
-    await writeAudit(tx, { orgId, actorId, action: 'event.create', target: `event:${event.id}`, meta: { title: event.title } });
+    await writeAudit(tx, { orgId, actorId, action: 'event.create', target: `event:${event.id}`, meta: { title: event.title, overrides } });
     await recordFinancialChanges(tx, orgId, actorId, event, financial);
     return load(tx, orgId, event.id);
   }));
@@ -267,13 +273,13 @@ export async function updateEvent(orgId: string, actorId: string, eventId: strin
       });
     }
     await recordFinancialChanges(tx, orgId, actor.userId, current, financial);
+    // Toujours tracé, report ou non (Info audit n° 2 : les autres champs d'un PATCH-report n'étaient pas audités).
+    await writeAudit(tx, {
+      orgId, actorId: actor.userId, action: 'event.update', target: `event:${eventId}`,
+      meta: { fields: Object.keys(body).filter((k) => k !== 'overrides' && k !== 'offlineCheckinEnabled' && k !== 'rescheduleReason'), overrides },
+    });
     if (isReport && body.rescheduleReason) {
       await startReschedule(tx, current, dates, body.timezone ?? current.timezone, body.rescheduleReason, settings, actor.userId);
-    } else {
-      await writeAudit(tx, {
-        orgId, actorId: actor.userId, action: 'event.update', target: `event:${eventId}`,
-        meta: { fields: Object.keys(body).filter((k) => k !== 'overrides' && k !== 'offlineCheckinEnabled'), overrides },
-      });
     }
     return load(tx, orgId, eventId);
   }));

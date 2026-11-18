@@ -13,6 +13,7 @@ import type {
   WaitlistEntry,
 } from '../api/types';
 import { mock } from './core';
+import { MAX_UNHONORED_OFFERS_PER_EVENT, unhonoredOffers } from './domain';
 import {
   availability,
   currentPrice,
@@ -142,6 +143,9 @@ export function toEventAdmin(e: MockEvent): EventAdmin {
     effectiveRules: effectiveRules(db(), e),
     ticketTypes: typesOf(e.id).map(toTicketTypeAdmin),
     cancellationPendingOrders: e.cancellationPending?.length ?? 0,
+    reschedulePendingOrders: db()
+      .reschedules.filter((r) => r.eventId === e.id && !r.completedAt)
+      .reduce((n, r) => n + r.pending.length, 0),
     createdAt: e.createdAt,
     updatedAt: e.updatedAt,
   };
@@ -250,6 +254,7 @@ export function toWaitlist(w: MockWaitlist): WaitlistEntry {
     status: w.status,
     position: w.status === 'WAITING' ? queue.findIndex((x) => x.id === w.id) + 1 : null,
     offerExpiresAt: w.offerExpiresAt,
+    unhonoredOffers: Math.min(unhonoredOffers(w.userId, w.eventId), MAX_UNHONORED_OFFERS_PER_EVENT),
     createdAt: w.createdAt,
   };
 }

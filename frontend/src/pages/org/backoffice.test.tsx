@@ -4,7 +4,7 @@ import { delay, http } from 'msw';
 import { describe, expect, it, vi } from 'vitest';
 import { apiRequest, login, logout } from '../../api/client';
 import type { Order } from '../../api/types';
-import { injectFault, mock } from '../../mocks/core';
+import { control, injectFault, mock } from '../../mocks/core';
 import { server } from '../../mocks/server';
 import { DEMO_PASSWORD, IDS } from '../../mocks/state';
 import { renderApp } from '../../test/renderApp';
@@ -584,6 +584,47 @@ describe('admin plateforme : anomalies (v1.17 §8, audit B2 / B3)', () => {
     expect(await screen.findByText('Aucune commande bloquée.')).toBeInTheDocument();
   });
 
+  /** Report du concert avec une commande dont l'application échoue en permanence ⇒ écartée après 5 échecs. */
+  async function stuckReschedule(): Promise<{ orderId: string }> {
+    await login('acheteur@example.test', DEMO_PASSWORD);
+    const order = await apiRequest<Order>('/orders', { method: 'POST', body: { eventId: IDS.eventConcert, paymentMethod: 'TRANSFER', items: [{ ticketTypeId: IDS.ttFosse, quantity: 1 }] }, headers: { 'Idempotency-Key': crypto.randomUUID() } });
+    await logout();
+    control.rescheduleBatchDelayMs = 1;
+    control.failingRescheduleOrders.add(order.id);
+    const ev = mock.db.events.find((e) => e.id === IDS.eventConcert);
+    const shift = (iso: string | undefined) => new Date(Date.parse(iso ?? '') + 86_400_000).toISOString();
+    await login(OWNER, DEMO_PASSWORD);
+    await apiRequest(`/orgs/${IDS.orgNuits}/events/${IDS.eventConcert}`, { method: 'PATCH', body: { startsAt: shift(ev?.startsAt), endsAt: shift(ev?.endsAt), salesEndAt: shift(ev?.startsAt), rescheduleReason: 'Salle inondée' } });
+    await logout();
+    await waitFor(() => expect(mock.db.reschedules[0]?.failures[order.id]).toBe(5));
+    return { orderId: order.id };
+  }
+
+  it('B\'6 : report bloqué listé (ancien → nouveau début, motif, restantes / en échec) ; « Relancer » confirmé ⇒ reprise et fin du report', async () => {
+    const user = userEvent.setup();
+    const { orderId } = await stuckReschedule();
+    await renderApp('/admin/anomalies', { as: 'admin@plateforme.test' });
+    const section = (await screen.findByRole('heading', { name: 'Reports bloqués' })).closest('section') as HTMLElement;
+    const card = (await within(section).findByText(/Motif : Salle inondée/)).closest('li') as HTMLElement;
+    expect(card).toHaveTextContent('Garonne Électrique — soirée d’ouverture');
+    expect(card).toHaveTextContent(/Début déplacé du .+ au .+/);
+    expect(card).toHaveTextContent('1 commande restante · 1 en échec');
+    await user.click(within(card).getByRole('button', { name: 'Relancer' }));
+    const dialog = screen.getByRole('dialog', { name: 'Relancer l’application de ce report ?' });
+    expect(dialog).toHaveTextContent('remis à zéro');
+    expect(mock.db.reschedules[0]?.failures[orderId]).toBe(5); // rien tant que non confirmé
+    control.failingRescheduleOrders.delete(orderId); // panne réparée
+    await user.click(within(dialog).getByRole('button', { name: 'Relancer' }));
+    await waitFor(() => expect(mock.db.reschedules[0]?.completedAt).not.toBeNull());
+    expect(await within(section).findByText('Aucun report bloqué.')).toBeInTheDocument();
+  });
+
+  it('B\'6 : fiche événement ⇒ « Report en cours : N commandes restantes »', async () => {
+    await stuckReschedule();
+    await renderApp(EVENT, { as: OWNER });
+    expect(await screen.findByText('Report en cours : 1 commande restante (mise à jour automatique).')).toBeInTheDocument();
+  });
+
   it('non-admin ⇒ page introuvable', async () => {
     await renderApp('/admin/anomalies', { as: OWNER });
     expect(await screen.findByRole('heading', { level: 1 })).not.toHaveTextContent('Administration');
@@ -620,6 +661,56 @@ describe('éditeur d’événement : modifications extérieures et double envoi 
     await externalUpdate(queryClient, 'Nouveau titre venu d’ailleurs');
     await waitFor(() => expect(screen.getByLabelText('Titre')).toHaveValue('Nouveau titre venu d’ailleurs'));
     expect(screen.queryByText(/modifié entre-temps/)).toBeNull();
+  });
+
+  /** Corps des PATCH de l'événement réellement envoyés au serveur. */
+  function capturePatchBodies(): unknown[] {
+    const bodies: unknown[] = [];
+    server.events.on('request:start', ({ request }) => {
+      if (request.method === 'PATCH' && /\/events\/[^/]+$/.test(new URL(request.url).pathname)) void request.clone().json().then((b: unknown) => bodies.push(b));
+    });
+    return bodies;
+  }
+
+  it('M\'4 : champs modifiés ailleurs pendant l’édition ⇒ le PATCH ne contient QUE le champ touché (corps vérifié)', async () => {
+    const user = userEvent.setup();
+    const bodies = capturePatchBodies();
+    const { queryClient } = await renderApp(EVENT, { as: OWNER });
+    await user.click(await screen.findByRole('button', { name: 'Modifier l’événement' }));
+    // Un autre membre change le titre et une surcharge financière ; l'événement est relu.
+    await user.type(screen.getByLabelText('Description'), ' — portes à 19h'); // A commence à modifier…
+    const e = mock.db.events.find((x) => x.id === IDS.eventConcert);
+    if (!e) throw new Error('événement absent');
+    // … pendant qu'un autre membre change le titre et une surcharge financière ; l'événement est relu.
+    Object.assign(e, { title: 'Titre changé ailleurs', overrides: { ...e.overrides, refundPercent: 40 }, updatedAt: new Date(Date.now() + 1000).toISOString() });
+    await act(() => queryClient.invalidateQueries({ queryKey: ['org', IDS.orgNuits, 'event', IDS.eventConcert] }));
+    await screen.findByText(/Cet événement a été modifié entre-temps/);
+    await user.click(screen.getByRole('button', { name: 'Enregistrer les modifications' }));
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    server.events.removeAllListeners();
+    expect(Object.keys(bodies[0] as object)).toEqual(['description']);
+    expect(e.title).toBe('Titre changé ailleurs'); // jamais écrasé
+    expect(e.overrides.refundPercent).toBe(40);
+  });
+
+  it('M\'4 : un MANAGER qui modifie le lieu ne renvoie jamais une surcharge financière (pas de 403 incompréhensible)', async () => {
+    const user = userEvent.setup();
+    const bodies = capturePatchBodies();
+    const { queryClient } = await renderApp(EVENT, { as: MANAGER });
+    await user.click(await screen.findByRole('button', { name: 'Modifier l’événement' }));
+    await user.clear(screen.getByLabelText('Lieu'));
+    await user.type(screen.getByLabelText('Lieu'), 'Salle des fêtes'); // le MANAGER commence à modifier…
+    const e = mock.db.events.find((x) => x.id === IDS.eventConcert);
+    if (!e) throw new Error('événement absent');
+    Object.assign(e, { overrides: { ...e.overrides, refundPercent: 40 }, updatedAt: new Date(Date.now() + 1000).toISOString() }); // … pendant que l'OWNER fixe 40 %
+    await act(() => queryClient.invalidateQueries({ queryKey: ['org', IDS.orgNuits, 'event', IDS.eventConcert] }));
+    await screen.findByText(/Cet événement a été modifié entre-temps/);
+    await user.click(screen.getByRole('button', { name: 'Enregistrer les modifications' }));
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    server.events.removeAllListeners();
+    expect(bodies[0]).toEqual({ venue: 'Salle des fêtes' });
+    expect(screen.queryByText(/Seul le propriétaire/)).toBeNull();
+    expect(e.overrides.refundPercent).toBe(40);
   });
 
   it('double clic sur « Enregistrer » pendant la revérification des ventes ⇒ un seul envoi', async () => {

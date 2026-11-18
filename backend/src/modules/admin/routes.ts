@@ -19,5 +19,8 @@ export function adminRouter(): Router {
   // Commandes écartées de l'expiration automatique (contrat 1.17 §8, audit B2).
   r.get('/stuck-orders', ...endpoint({ query: s.adminOrgsQuery, response: s.stuckOrderPage }, c.listStuckOrders));
   r.post('/stuck-orders/:orderId/retry', ...endpoint({ params: s.stuckOrderParams, response: s.stuckOrderResponse }, c.retryStuckOrder));
+  // Reports bloqués (contrat 1.18 §8, audit B'6).
+  r.get('/stuck-reschedules', ...endpoint({ query: s.adminOrgsQuery, response: s.stuckReschedulePage }, c.listStuckReschedules));
+  r.post('/stuck-reschedules/:rescheduleId/retry', ...endpoint({ params: s.stuckRescheduleParams, response: s.stuckRescheduleResponse }, c.retryStuckReschedule));
   return r;
 }

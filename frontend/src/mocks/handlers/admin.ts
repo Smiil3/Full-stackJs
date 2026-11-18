@@ -1,5 +1,5 @@
 import { currentUser, fail, json, mock, notFound, paginate, param, readBody, readQuery, route } from '../core';
-import { markRefundDone } from '../domain';
+import { isRescheduleStuck, markRefundDone, RESCHEDULE_MAX_FAILURES, runReschedule } from '../domain';
 import { toRefund } from '../serializers';
 import { DEFAULT_SETTINGS } from '../state';
 
@@ -72,7 +72,41 @@ export const adminHandlers = [
     o.expireFailures = 0; // reprise au prochain passage du worker
     return json(toStuckOrder(o));
   }),
+
+  // ---------------- Reports bloqués (contrat v1.18 §8) ----------------
+  route('get', '/admin/stuck-reschedules', ({ request, url }) => {
+    requirePlatformAdmin(request);
+    const q = readQuery(url, []);
+    const items = mock.db.reschedules
+      .filter((r) => isRescheduleStuck(r))
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      .map(toStuckReschedule);
+    return json(paginate(items, q.page, q.pageSize));
+  }),
+
+  route('post', '/admin/stuck-reschedules/:rescheduleId/retry', ({ request, params }) => {
+    requirePlatformAdmin(request);
+    const r = mock.db.reschedules.find((x) => x.id === param(params, 'rescheduleId') && isRescheduleStuck(x)) ?? notFound();
+    r.failures = {}; // reprise au prochain passage du worker
+    runReschedule(r);
+    return json(toStuckReschedule(r));
+  }),
 ];
+
+function toStuckReschedule(r: (typeof mock.db.reschedules)[number]) {
+  return {
+    id: r.id,
+    orgId: r.orgId,
+    eventId: r.eventId,
+    eventTitle: mock.db.events.find((e) => e.id === r.eventId)?.title ?? '',
+    oldStartsAt: r.oldStartsAt,
+    newStartsAt: r.newStartsAt,
+    reason: r.reason,
+    createdAt: r.createdAt,
+    pendingOrders: r.pending.length,
+    failedOrders: Object.values(r.failures).filter((n) => n >= RESCHEDULE_MAX_FAILURES).length,
+  };
+}
 
 function toStuckOrder(o: (typeof mock.db.orders)[number]) {
   const e = mock.db.events.find((x) => x.id === o.eventId);
