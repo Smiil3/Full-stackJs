@@ -32,7 +32,7 @@ printf 'SEED_PASSWORD=%s\n' "$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-2
 
 # 3. Backend : configuration, clés, base, puis API + worker + prestataire simulé
 cd backend && npm ci && cp .env.example .env   # renseigner les secrets (commandes dans le fichier)
-npm run keys:generate && npm run db:migrate && npm run db:seed
+npm run keys:generate && npm run db:migrate && ALLOW_SEED=1 npm run db:seed   # ALLOW_SEED : base de démonstration uniquement
 npm run dev        # API      http://localhost:4000
 npm run dev:worker # worker (expirations, remboursements, mails, liste d'attente)
 npm run dev:psp    # prestataire de paiement simulé http://localhost:4001

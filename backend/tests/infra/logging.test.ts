@@ -87,6 +87,18 @@ describe('journalisation (B1.1 M4)', () => {
     });
   });
 
+  it('X-Forwarded-For avec TRUST_PROXY_HOPS=0 ⇒ un seul avertissement « proxy non déclaré »', async () => {
+    await withLogLevel(async () => {
+      const { lines, stream } = capture();
+      const app = supertest(createApp({ rateLimitMultiplier: 1000, logger: buildLogger(stream) }));
+      await app.get('/health');
+      expect(lines.join('')).not.toContain('proxy non déclaré');
+      await app.get('/health').set('X-Forwarded-For', '203.0.113.7');
+      await app.get('/health').set('X-Forwarded-For', '203.0.113.8');
+      expect(lines.filter((l) => l.includes('proxy non déclaré'))).toHaveLength(1);
+    });
+  });
+
   it('sérialiseur : ne garde que type, code et cible d’une erreur Prisma', async () => {
     let caught: unknown;
     try {

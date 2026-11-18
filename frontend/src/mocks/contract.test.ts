@@ -199,14 +199,14 @@ describe('MSW — couverture du contrat', () => {
     await login('manager@nuits.test', DEMO_PASSWORD);
     const base = apiPath`/orgs/${IDS.orgNuits}/events`;
     const ev = await post<EventAdmin>(base, {
-      title: 'Test', isOnline: false, startsAt: '2027-01-10T19:00:00.000Z', endsAt: '2027-01-10T23:00:00.000Z', timezone: 'Europe/Paris',
-      salesStartAt: '2026-10-01T08:00:00.000Z', salesEndAt: '2027-01-10T19:00:00.000Z', overrides: { maxPerOrder: 2 },
+      title: 'Test', isOnline: false, startsAt: '2031-01-10T19:00:00.000Z', endsAt: '2031-01-10T23:00:00.000Z', timezone: 'Europe/Paris',
+      salesStartAt: '2026-10-01T08:00:00.000Z', salesEndAt: '2031-01-10T19:00:00.000Z', overrides: { maxPerOrder: 2 },
     });
     expect(ev.status).toBe('DRAFT');
     expect(ev.effectiveRules.maxPerOrder).toBe(2);
     const evPath = `${base}/${encodeURIComponent(ev.id)}`;
     await expect(post(`${evPath}/publish`)).rejects.toMatchObject({ code: 'CONFLICT' });
-    await expect(post(`${evPath}/ticket-types`, { name: 'VIP', capacity: 10, priceCents: 1000, earlyPriceCents: 1200, earlyUntil: '2026-12-01T00:00:00.000Z' })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
+    await expect(post(`${evPath}/ticket-types`, { name: 'VIP', capacity: 10, priceCents: 1000, earlyPriceCents: 1200, earlyUntil: '2030-12-01T00:00:00.000Z' })).rejects.toMatchObject({ code: 'VALIDATION_ERROR' });
     const tt = await post<{ id: string }>(`${evPath}/ticket-types`, { name: 'VIP', capacity: 10, priceCents: 1000 });
     await apiRequest(`${evPath}/ticket-types/${tt.id}`, { method: 'PATCH', body: { capacity: 12 } });
     expect((await post<EventAdmin>(`${evPath}/publish`)).status).toBe('PUBLISHED');

@@ -278,8 +278,8 @@ export function createSeed(now: number = Date.now()): MockDb {
     createdAt: created,
     updatedAt: created,
   });
-  // 14 nov. 2026 20:00 heure de Paris (UTC+1) = 19:00Z — gardé fixe pour des captures stables.
-  const concertStart = Date.parse('2026-11-14T19:00:00.000Z');
+  // Concert de démonstration toujours à venir (dans 20 jours) : la démo ne se périme pas.
+  const concertStart = now + 20 * DAY;
   const events: MockEvent[] = [
     ev({
       id: IDS.eventConcert,
@@ -289,12 +289,12 @@ export function createSeed(now: number = Date.now()): MockDb {
       venue: 'Le Rocher de Palmer',
       address: '1 rue Aristide Briand, 33150 Cenon',
       isOnline: false,
-      startsAt: iso(Math.max(concertStart, now + 20 * DAY)),
-      endsAt: iso(Math.max(concertStart, now + 20 * DAY) + 5 * 3_600_000),
+      startsAt: iso(concertStart),
+      endsAt: iso(concertStart + 5 * 3_600_000),
       timezone: 'Europe/Paris',
       status: 'PUBLISHED',
       salesStartAt: iso(now - 10 * DAY),
-      salesEndAt: iso(Math.max(concertStart, now + 20 * DAY)),
+      salesEndAt: iso(concertStart),
       offlineCheckinEnabled: true, // démo du mode secours
     }),
     ev({
