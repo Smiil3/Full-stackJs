@@ -136,13 +136,13 @@ describe('back-office : événements', () => {
     const { router } = await renderApp(`${ORG}/events/new`, { as: MANAGER });
     await user.type(await screen.findByLabelText('Titre'), 'Nouvelle soirée');
     await user.selectOptions(screen.getByLabelText('Fuseau horaire de l’événement'), 'America/New_York');
-    for (const [label, v] of [['Début de l’événement', '2027-01-15T20:00'], ['Fin de l’événement', '2027-01-15T23:30'], ['Ouverture des ventes', '2026-12-01T10:00'], ['Fin des ventes', '2027-01-15T19:00']] as const) {
+    for (const [label, v] of [['Début de l’événement', '2031-01-15T20:00'], ['Fin de l’événement', '2031-01-15T23:30'], ['Ouverture des ventes', '2030-12-01T10:00'], ['Fin des ventes', '2031-01-15T19:00']] as const) {
       await user.type(screen.getByLabelText(label), v);
     }
     await user.click(screen.getByRole('button', { name: 'Créer le brouillon' }));
     await waitFor(() => expect(router.state.location.pathname).toMatch(/\/events\/[0-9a-f-]{36}$/));
     server.events.removeAllListeners();
-    expect(created).toMatchObject({ timezone: 'America/New_York', startsAt: '2027-01-16T01:00:00.000Z' });
+    expect(created).toMatchObject({ timezone: 'America/New_York', startsAt: '2031-01-16T01:00:00.000Z' });
     expect(Object.values(created?.overrides as object).every((v) => v === null)).toBe(true);
 
     await user.click(await screen.findByRole('button', { name: 'Ajouter un type de place' }));
