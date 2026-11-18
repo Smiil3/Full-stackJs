@@ -808,9 +808,12 @@ a.card:hover { border-color: var(--color-border-strong); }
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
+  gap: var(--space-3);
   padding-top: var(--space-3);
   border-top: 1px dashed #CFC8BA;
 }
+/* Identifiant public long et sans espace : il passe à la ligne au lieu de déborder de la carte. */
+.qr-full__ticket .mono { min-width: 0; overflow-wrap: anywhere; text-align: right; }
 .qr-full__type { font-family: var(--font-display); font-weight: 800; font-size: 1.875rem; line-height: 1; text-transform: uppercase; }
 .qr-full__nav { display: flex; align-items: center; justify-content: space-between; font-weight: 700; }
 .qr-full__tip { margin-top: auto; display: flex; gap: var(--space-3); font-size: var(--text-sm); color: #B9B2CF; }
