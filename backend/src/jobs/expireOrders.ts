@@ -10,6 +10,7 @@ import { distributeMany, eventTicketTypeIds, lockWaitlistEntries, recordUnhonore
 import { reconcileOrder } from './reconcilePayments.js';
 import { EXPIRE_ORDERS_PER_TICK, MAX_EXPIRE_FAILURES, RECONCILE_CONCURRENCY } from '../config/worker.js';
 import { RECONCILE_GRACE_MS } from '../config/payments.js';
+import { applyPendingReschedule } from '../modules/events/reschedule.js';
 
 /**
  * Expire les réservations non payées à temps et libère leurs places, UNE TRANSACTION PAR COMMANDE :
@@ -64,6 +65,10 @@ export async function expireOrders(budget: TimeBudget = TimeBudget.unlimited()):
         const id = rows[0]?.id;
         if (!id) return null;
         current.id = id;
+        // Report pas encore appliqué : droits posés AVANT l'expiration (audit M'3 : un paiement tardif qui reprendrait
+        // la commande garde les droits du report).
+        const pending = await tx.order.findUniqueOrThrow({ where: { id }, select: { pendingRescheduleId: true } });
+        await applyPendingReschedule(tx, { id, pendingRescheduleId: pending.pendingRescheduleId });
         const { count } = await tx.order.updateMany({
           where: { id, status: { in: ['PENDING_PAYMENT', 'AWAITING_TRANSFER'] } },
           // Succès : le compteur d'échecs repart de zéro (audit B2).

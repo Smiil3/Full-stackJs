@@ -14,6 +14,7 @@ import { distributeMany, lockWaitlistEntries } from '../waitlist/distribute.js';
 import { offersCutoff } from '../waitlist/rules.js';
 import { issueTickets } from '../tickets/issue.js';
 import { HTTP_STATUS } from '../../config/http.js';
+import { applyPendingReschedule } from '../events/reschedule.js';
 
 export const orderForSettlement = {
   items: { orderBy: { ticketTypeId: 'asc' } },
@@ -35,6 +36,10 @@ export async function loadOrderForUpdate(tx: Tx, orderId: string) {
   await tx.$queryRaw`SELECT "id" FROM "events" WHERE "id" = ${target.eventId}::uuid FOR KEY SHARE`;
   const rows = await tx.$queryRaw<{ id: string }[]>`SELECT "id" FROM "orders" WHERE "id" = ${orderId}::uuid FOR UPDATE`;
   if (rows.length === 0) return null;
+  // Report en cours de traitement : ses droits s'appliquent AVANT toute transition (paiement, paiement tardif,
+  // virement, annulation) — audit M'3.
+  const pending = await tx.order.findUniqueOrThrow({ where: { id: orderId }, select: { pendingRescheduleId: true } });
+  await applyPendingReschedule(tx, { id: orderId, pendingRescheduleId: pending.pendingRescheduleId });
   return tx.order.findUnique({ where: { id: orderId }, include: orderForSettlement });
 }
 

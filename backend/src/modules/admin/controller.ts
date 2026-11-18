@@ -6,6 +6,7 @@ import * as service from './service.js';
 import type { CreateOrgBody } from './schemas.js';
 import * as refunds from '../refunds/service.js';
 import * as stuck from './stuckOrders.js';
+import * as stuckReschedules from './stuckReschedules.js';
 import type { OrphanRefundsQuery } from '../refunds/schemas.js';
 
 type Empty = Record<string, never>;
@@ -22,3 +23,7 @@ export const markOrphanRefundDone = (
 export const listStuckOrders = ({ query }: ValidatedInput<Empty, PageQuery, Empty, Empty>) => stuck.listStuckOrders(query.page, query.pageSize);
 export const retryStuckOrder = ({ params }: ValidatedInput<{ orderId: string }, Empty, Empty, Empty>, _q: Request, res: Response) =>
   stuck.retryStuckOrder(getAuth(res).userId, params.orderId);
+
+export const listStuckReschedules = ({ query }: ValidatedInput<Empty, PageQuery, Empty, Empty>) => stuckReschedules.listStuckReschedules(query.page, query.pageSize);
+export const retryStuckReschedule = ({ params }: ValidatedInput<{ rescheduleId: string }, Empty, Empty, Empty>, _q: Request, res: Response) =>
+  stuckReschedules.retryStuckReschedule(getAuth(res).userId, params.rescheduleId);

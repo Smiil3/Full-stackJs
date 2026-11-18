@@ -61,24 +61,30 @@ describe('worker : un PSP muet ne bloque plus le reste (M3)', () => {
   it('les mails partent pendant qu’un rapprochement attend le PSP ; l’arrêt est pris en compte entre les jobs', async () => {
     const { orderId } = await cardOrder();
     await withSession(orderId, { expiresAt: new Date(Date.now() - 1000) });
-    const stats = slowPsp(2500);
-    await transaction((tx) => enqueueEmail(tx, 'quelquun@test.fr', 'orderExpired', { displayName: 'Q', eventTitle: 'E' }));
+    const stats = slowPsp(5000);
     const sent: MailMessage[] = [];
     const stop = new AbortController();
-    const t0 = Date.now();
     const running = runWorker({
       transport: { sendMail: (m: MailMessage) => { sent.push(m); return Promise.resolve(); } },
       intervalMs: 50, signal: stop.signal, logger: getLogger(),
     });
-    for (let i = 0; i < 100 && sent.length === 0; i += 1) await sleep(20);
-    expect(sent).toHaveLength(1);
-    expect(Date.now() - t0).toBeLessThan(2000); // avant la réponse du PSP
-    expect(stats.calls).toBeGreaterThan(0);
-    stop.abort();
-    await running;
-    // Le job en cours se termine, les suivants ne sont pas lancés : la commande n'a pas été expirée dans ce passage.
-    expect(Date.now() - t0).toBeLessThan(6000);
-  }, 15_000);
+    try {
+      // 1. Un appel au PSP est EN COURS (la boucle des jobs est bloquée dessus pour 5 s)…
+      for (let i = 0; i < 500 && stats.active === 0; i += 1) await sleep(10);
+      expect(stats.active).toBe(1);
+      // 2. … un mail mis en file à cet instant part quand même, avant la réponse du PSP.
+      await transaction((tx) => enqueueEmail(tx, 'quelquun@test.fr', 'orderExpired', { displayName: 'Q', eventTitle: 'E' }));
+      for (let i = 0; i < 300 && sent.length === 0; i += 1) await sleep(10);
+      expect(sent.map((m) => m.to)).toEqual(['quelquun@test.fr']);
+      expect(stats.active).toBe(1);
+    } finally {
+      // Toujours arrêter le worker : une boucle restée active perturberait les tests suivants.
+      stop.abort();
+      await running;
+    }
+    // Arrêt pris en compte : le job en cours se termine, les suivants ne sont pas relancés.
+    expect(stats.active).toBe(0);
+  }, 30_000);
 
   it('rapprochement : consultations en parallèle borné', async () => {
     const stats = slowPsp(300);

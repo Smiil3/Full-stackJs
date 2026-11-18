@@ -20,3 +20,10 @@ export const stuckOrderResponse = Joi.object({
 });
 export const stuckOrderPage = pageOf(stuckOrderResponse);
 export const stuckOrderParams = Joi.object<{ orderId: string }>({ orderId: Joi.string().guid({ version: ['uuidv4', 'uuidv7'] }).lowercase().required() });
+
+export const stuckRescheduleResponse = Joi.object({
+  id: uuidStrict, orgId: uuidStrict, eventId: uuidStrict, eventTitle: Joi.string(), oldStartsAt: isoDateOutput, newStartsAt: isoDateOutput,
+  reason: Joi.string(), createdAt: isoDateOutput, pendingOrders: Joi.number().integer(), failedOrders: Joi.number().integer(),
+});
+export const stuckReschedulePage = pageOf(stuckRescheduleResponse);
+export const stuckRescheduleParams = Joi.object<{ rescheduleId: string }>({ rescheduleId: Joi.string().guid({ version: ['uuidv4', 'uuidv7'] }).lowercase().required() });

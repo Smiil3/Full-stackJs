@@ -322,6 +322,8 @@ model Order {
   cancellableUntil     DateTime? @db.Timestamptz(3)
   /// Report en cours de traitement par le worker pour cette commande (droits et mail pas encore appliqués).
   pendingRescheduleId  String?   @db.Uuid
+  /// Échecs d'application du report à cette commande ; au-delà de 5, écartée (relance par l'admin, audit B'6).
+  rescheduleFailures   Int       @default(0)
   refundAmountCents    Int?
 
   expiresAt   DateTime? @db.Timestamptz(3)

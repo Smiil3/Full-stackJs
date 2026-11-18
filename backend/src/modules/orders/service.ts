@@ -21,6 +21,7 @@ import { refundPreview } from './refund.js';
 import * as repo from './repo.js';
 import type { CreateOrderBody } from './schemas.js';
 import { TRANSFER_REFERENCE_ATTEMPTS } from '../../config/banking.js';
+import { withPendingRights } from '../events/reschedule.js';
 
 type Viewer = 'owner' | 'admin';
 
@@ -79,7 +80,10 @@ export function toOrderView(order: repo.OrderWithDetails, scanned: number, viewe
 }
 
 export async function viewOwnOrder(tx: Tx, userId: string, orderId: string, viewer: Viewer = 'owner') {
-  const order = await repo.findOwnOrder(tx, userId, orderId);
+  const found = await repo.findOwnOrder(tx, userId, orderId);
+  if (!found) throw errors.notFound();
+  // Report pas encore appliqué par le worker : la vue montre déjà les nouveaux droits.
+  const [order] = await withPendingRights(tx, [found]);
   if (!order) throw errors.notFound();
   const scanned = await repo.scannedCounts(tx, [order.id]);
   return toOrderView(order, scanned.get(order.id) ?? 0, viewer);
@@ -277,7 +281,8 @@ async function reserveAndCreate(tx: Tx, userId: string, idempotencyKey: string, 
 }
 
 export async function listOrders(userId: string, page: number, pageSize: number) {
-  const [rows, total] = await repo.listOwnOrders(userId, page, pageSize);
+  const [found, total] = await repo.listOwnOrders(userId, page, pageSize);
+  const rows = await withPendingRights(getDb(), found);
   const scanned = await transaction((tx) => repo.scannedCounts(tx, rows.map((o) => o.id)));
   const now = clock.now();
   return { items: rows.map((o) => toOrderView(o, scanned.get(o.id) ?? 0, 'owner', now)), page, pageSize, total };

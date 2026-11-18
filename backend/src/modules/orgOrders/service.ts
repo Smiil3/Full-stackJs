@@ -8,6 +8,7 @@ import { toOrderView } from '../orders/service.js';
 import { loadOrderForUpdate, settleHeldOrder, settleLateHeldOrder, tryResettleExpiredOrder } from '../payments/settle.js';
 import type { EventOrdersQuery } from './schemas.js';
 import { HTTP_STATUS } from '../../config/http.js';
+import { withPendingRights } from '../events/reschedule.js';
 
 const adminInclude = { ...orderInclude, user: { select: { id: true, email: true, displayName: true } } } satisfies Prisma.OrderInclude;
 type AdminOrder = Prisma.OrderGetPayload<{ include: typeof adminInclude }>;
@@ -28,10 +29,11 @@ export async function listEventOrders(orgId: string, eventId: string, query: Eve
     // Jokers LIKE (% et _) échappés : la recherche porte sur le texte saisi, pas sur un motif.
     ...(query.q ? { user: { email: { contains: query.q.toLowerCase().replace(/[\\%_]/g, (c) => `\\${c}`) } } } : {}),
   };
-  const [rows, total] = await Promise.all([
+  const [found, total] = await Promise.all([
     db.order.findMany({ where, include: adminInclude, orderBy: [{ createdAt: 'desc' }, { id: 'desc' }], skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
     db.order.count({ where }),
   ]);
+  const rows = await withPendingRights(db, found);
   const scanned = await scannedCounts(db, rows.map((o) => o.id));
   const now = clock.now();
   return { items: rows.map((o) => toOrderAdmin(o, scanned.get(o.id) ?? 0, now)), page: query.page, pageSize: query.pageSize, total };
