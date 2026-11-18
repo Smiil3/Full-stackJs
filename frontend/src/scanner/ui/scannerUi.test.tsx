@@ -309,10 +309,17 @@ describe('fenêtre de contrôle (v1.15)', () => {
     const e = mock.db.events.find((x) => x.id === IDS.eventSoldOut);
     if (e) e.startsAt = '2026-11-14T19:00:00.000Z';
     if (e) e.endsAt = '2026-11-14T23:00:00.000Z';
-    await renderApp('/scan', { as: 'scanner@nuits.test' });
-    const card = (await screen.findByRole('heading', { name: /Nuit Électro/ })).closest('li') as HTMLElement;
-    expect(within(card).getByText('Contrôle ouvert à partir du sam. 14 nov. 2026, 08:00.')).toBeInTheDocument();
-    expect(within(card).queryByRole('link', { name: 'Contrôler les entrées' })).toBeNull();
+    // Date figée avant l'événement : sans elle, le test casse dès que le 14 nov. 2026 est passé.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-01T12:00:00.000Z'));
+    try {
+      await renderApp('/scan', { as: 'scanner@nuits.test' });
+      const card = (await screen.findByRole('heading', { name: /Nuit Électro/ })).closest('li') as HTMLElement;
+      expect(within(card).getByText('Contrôle ouvert à partir du sam. 14 nov. 2026, 08:00.')).toBeInTheDocument();
+      expect(within(card).queryByRole('link', { name: 'Contrôler les entrées' })).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
