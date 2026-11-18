@@ -38,7 +38,7 @@ export const isoDateInput = Joi.string()
   .max(FIELD_LIMITS.isoDateInput)
   .pattern(/^\d{4}-\d{2}-\d{2}T[\d:.]{5,12}(?:Z|[+-]\d{2}:\d{2})$/)
   .isoDate()
-  .messages({ 'string.pattern.base': '{{#label}} doit être une date ISO 8601 avec fuseau (ex. 2026-11-14T19:00:00.000Z)' });
+  .messages({ 'string.pattern.base': '{{#label}} doit être une date ISO 8601 avec fuseau (ex. 2030-06-21T19:00:00.000Z)' });
 
 /** Date ISO 8601 UTC telle qu'émise par l'API (toISOString). */
 export const isoDateOutput = Joi.string().pattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
