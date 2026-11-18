@@ -31,6 +31,19 @@ export function createApp(options: AppOptions = {}): Express {
   app.set('trust proxy', env.trustProxyHops);
   app.set('query parser', 'simple');
 
+  // Un X-Forwarded-For avec TRUST_PROXY_HOPS=0 signale un proxy non déclaré : toutes les requêtes portent alors
+  // l'IP du proxy et partagent les mêmes plafonds de rate limiting. Avertissement journalisé une seule fois.
+  if (env.trustProxyHops === 0) {
+    let warned = false;
+    app.use((req, _res, next) => {
+      if (!warned && req.headers['x-forwarded-for'] !== undefined) {
+        warned = true;
+        (options.logger ?? getLogger()).warn('X-Forwarded-For reçu avec TRUST_PROXY_HOPS=0 : proxy non déclaré, rate limiting par IP partagé');
+      }
+      next();
+    });
+  }
+
   app.use(
     pinoHttp({
       logger: options.logger ?? getLogger(),
